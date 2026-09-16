@@ -2,6 +2,7 @@ import { ProductionOutsourcingRequestsPage } from '@/components/features/product
 import { getProductionOutsourcingSummary } from '@/lib/actions/outsourcing'
 import { hasPermission } from '@/lib/permissions/resources'
 import { requirePermission } from '@/lib/permissions/server'
+import { canAccessAllFactories } from '@/lib/permissions/factory-scope'
 import type { FactorySummary } from '@/lib/types'
 
 export const metadata = { title: 'Запросы производства | CRM Завода' }
@@ -28,9 +29,9 @@ export default async function ProductionOutsourcingRequestsRoute({
   }
 
   const allFactories = (factoriesData || []) as FactorySummary[]
-  const factories = context.role === 'production_manager'
-    ? allFactories.filter((factory) => factory.id === context.factoryId)
-    : allFactories
+  const factories = canAccessAllFactories(context, 'production_fact', 'view')
+    ? allFactories
+    : allFactories.filter((factory) => factory.id === context.factoryId)
   const requestedFactoryId = params?.factory || ''
   const activeFactoryId = factories.some((factory) => factory.id === requestedFactoryId)
     ? requestedFactoryId

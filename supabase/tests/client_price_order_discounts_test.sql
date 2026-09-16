@@ -11,11 +11,23 @@ insert into public.users(id, email, full_name, role, factory_id, is_active) valu
   ('71000000-0000-4000-8000-000000000103', 'admin@discount.test', 'Администратор скидок', 'planning_director', '71000000-0000-4000-8000-000000000001', true),
   ('71000000-0000-4000-8000-000000000104', 'other@discount.test', 'Чужой менеджер', 'sales_manager', '71000000-0000-4000-8000-000000000001', true);
 
-insert into public.departments(id, name, factory_id)
-values ('71000000-0000-4000-8000-000000000201', 'Администрирование скидок', '71000000-0000-4000-8000-000000000001');
+insert into public.departments(id, name, factory_id) values
+  ('71000000-0000-4000-8000-000000000201', 'Продажи скидок', '71000000-0000-4000-8000-000000000001'),
+  ('71000000-0000-4000-8000-000000000202', 'Финансы скидок', '71000000-0000-4000-8000-000000000001');
 insert into public.department_members(user_id, department_id, position_id)
 select '71000000-0000-4000-8000-000000000103', '71000000-0000-4000-8000-000000000201', id
 from public.positions where name = 'Администратор CRM';
+insert into public.department_members(user_id, department_id, is_department_head) values
+  ('71000000-0000-4000-8000-000000000101', '71000000-0000-4000-8000-000000000201', false),
+  ('71000000-0000-4000-8000-000000000102', '71000000-0000-4000-8000-000000000202', false);
+insert into public.department_access_permissions(
+  department_id, subject_scope, resource_key, can_view, can_manage,
+  company_view_scope, company_manage_scope
+) values
+  ('71000000-0000-4000-8000-000000000201', 'member', 'sales_plan', true, true, 'own', 'own'),
+  ('71000000-0000-4000-8000-000000000201', 'member', 'client_prices', true, true, 'own', 'own'),
+  ('71000000-0000-4000-8000-000000000202', 'member', 'sales_plan', true, true, 'own', 'own'),
+  ('71000000-0000-4000-8000-000000000202', 'member', 'client_prices', true, true, 'all', 'all');
 
 insert into public.clients(id, name, public_alias, responsible_user_id)
 values ('71000000-0000-4000-8000-000000000301', 'Клиент скидок', 'discount-test', '71000000-0000-4000-8000-000000000101');

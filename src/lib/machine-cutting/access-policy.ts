@@ -1,10 +1,7 @@
-import { isDirectorRole } from '@/lib/permissions/resources'
-import type { UserRole } from '@/lib/types'
-
 export type MachineCuttingUploadPolicyInput = {
   userId: string
-  role: UserRole
   canManage: boolean
+  canBypassOwnership: boolean
   isArchived: boolean
   completionCreatedBy: string | null
 }
@@ -14,6 +11,6 @@ export function canUploadMachineCutting(input: MachineCuttingUploadPolicyInput) 
     input.canManage &&
     !input.isArchived &&
     input.completionCreatedBy &&
-    (input.completionCreatedBy === input.userId || isDirectorRole(input.role)),
+    (input.completionCreatedBy === input.userId || input.canBypassOwnership),
   )
 }

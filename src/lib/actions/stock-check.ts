@@ -2,13 +2,12 @@
 
 import { revalidatePath } from 'next/cache'
 import { requirePermission } from '@/lib/permissions/server'
-import { DIRECTOR_ROLES } from '@/lib/constants/roles'
 import {
   bulkUpdateComponentStock,
   bulkUpdateKnifeStock,
   bulkUpdatePaintStock,
 } from '@/lib/actions/technologist-requests'
-import type { RequestComponents, RequestKnives, RequestPaint, RequestStatus, UserRole } from '@/lib/types'
+import type { RequestComponents, RequestKnives, RequestPaint, RequestStatus } from '@/lib/types'
 import type { AvailabilityInput } from '@/lib/types/request-schemas'
 
 type DbResult = { data: unknown; error: { message?: string } | null }
@@ -42,11 +41,8 @@ export type PaintingCheckListItem = {
   uncheckedPaint: number
 }
 
-async function requireStockAccess(operation: 'view' | 'manage', allowed: UserRole[]) {
-  const { supabase, user, role } = await requirePermission('technologist_requests', operation)
-  if (!allowed.includes(role) && !DIRECTOR_ROLES.includes(role)) {
-    throw new Error('Недостаточно прав для этой проверки склада')
-  }
+async function requireStockAccess(operation: 'view' | 'manage') {
+  const { supabase, user } = await requirePermission('technologist_requests', operation)
   return { db: supabase as unknown as LooseDb, user }
 }
 
@@ -87,7 +83,7 @@ async function getRequestHeader(db: LooseDb, requestId: string) {
 
 export async function getProcurementCheckList() {
   try {
-    const { db } = await requireStockAccess('view', ['procurement_head'])
+    const { db } = await requireStockAccess('view')
     const requests = await getRequests(db)
     const result: ProcurementCheckListItem[] = []
 
@@ -118,7 +114,7 @@ export async function getProcurementCheckList() {
 
 export async function getProcurementCheckDetail(requestId: string) {
   try {
-    const { db } = await requireStockAccess('view', ['procurement_head'])
+    const { db } = await requireStockAccess('view')
     const request = await getRequestHeader(db, requestId)
     const [knives, components] = await Promise.all([
       getSectionRows<RequestKnives>(db, 'request_knives', requestId),
@@ -145,7 +141,7 @@ export async function saveProcurementCheck(
   components: { id: string; stock_remainder: number; availability: AvailabilityInput }[]
 ) {
   try {
-    const { db } = await requireStockAccess('manage', ['procurement_head'])
+    const { db } = await requireStockAccess('manage')
     const request = await getRequestHeader(db, requestId)
 
     const knifeResult = await bulkUpdateKnifeStock(knives)
@@ -164,7 +160,7 @@ export async function saveProcurementCheck(
 
 export async function getPaintingCheckList() {
   try {
-    const { db } = await requireStockAccess('view', ['painting_head'])
+    const { db } = await requireStockAccess('view')
     const requests = await getRequests(db)
     const result: PaintingCheckListItem[] = []
 
@@ -189,7 +185,7 @@ export async function getPaintingCheckList() {
 
 export async function getPaintingCheckDetail(requestId: string) {
   try {
-    const { db } = await requireStockAccess('view', ['painting_head'])
+    const { db } = await requireStockAccess('view')
     const request = await getRequestHeader(db, requestId)
     const paint = await getSectionRows<RequestPaint>(db, 'request_paint', requestId)
 
@@ -208,7 +204,7 @@ export async function getPaintingCheckDetail(requestId: string) {
 
 export async function savePaintingCheck(requestId: string, paint: { id: string; stock_remainder_kg: number }[]) {
   try {
-    const { db } = await requireStockAccess('manage', ['painting_head'])
+    const { db } = await requireStockAccess('manage')
     const request = await getRequestHeader(db, requestId)
 
     const paintResult = await bulkUpdatePaintStock(paint)

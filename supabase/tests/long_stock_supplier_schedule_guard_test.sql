@@ -39,6 +39,13 @@ begin
     v_factory,
     true
   );
+  insert into public.department_members(user_id, department_id, is_department_head)
+  values (v_actor, '97000000-0000-4000-8000-000000000064', false);
+  update public.department_access_permissions
+  set can_view = true, can_manage = true
+  where department_id = '97000000-0000-4000-8000-000000000064'
+    and subject_scope = 'member'
+    and resource_key = 'supply_orders';
   insert into public.machines(id, factory_id, name, created_by)
   values (v_machine, v_factory, format('SUPPLIER-SCHEDULE-GUARD-%s', p_category), v_actor);
   insert into public.technologist_requests(id, machine_id, created_by, status, submitted_at)

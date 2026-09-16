@@ -5,7 +5,6 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { trustedDb } from '@/lib/supabase/trusted-db'
 import { ROUTES } from '@/lib/constants/routes'
-import { DIRECTOR_ACCESS_ROLES } from '@/lib/permissions/resources'
 import { requirePermission } from '@/lib/permissions/server'
 import { requireCompanyRecordAccess } from '@/lib/permissions/company-scope'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
@@ -20,7 +19,6 @@ import {
   todayDateOnly,
 } from '@/lib/invoices/payment-schedule'
 import type { Database } from '@/lib/types/database'
-import type { UserRole } from '@/lib/types'
 import { requireClientCommercialDocumentVisibility } from '@/lib/permissions/commercial-visibility'
 
 const dateOnlySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Некорректная дата')
@@ -283,9 +281,6 @@ export async function cancelMachineInvoice(input: z.input<typeof cancellationSch
     const parsed = cancellationSchema.parse(input)
     const invoice = await loadInvoiceWithClient(parsed.invoiceId)
     const context = await requireCompanyRecordAccess('invoices', 'manage', invoice.clientId)
-    const canCancel = context.permissionDetails.isAdminPosition
-      || (DIRECTOR_ACCESS_ROLES as readonly UserRole[]).includes(context.role)
-    if (!canCancel) throw new Error('Аннулировать инвойс может только директор или Администратор CRM')
 
     const { error } = await trustedDb(createAdminClient()).rpc('fn_cancel_invoice', {
       p_invoice_id: parsed.invoiceId,

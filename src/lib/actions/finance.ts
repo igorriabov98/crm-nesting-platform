@@ -875,10 +875,6 @@ export async function updateFinanceExpense(
     const currentResult = await db.from('finance_expenses').select('*').eq('id', expenseId).single()
     if (currentResult.error || !currentResult.data) throw new Error('Расход не найден')
     const current = currentResult.data as FinanceExpenseMutationRow
-    if (user.role === 'supply_manager' && current.is_supply_plan !== true) {
-      throw new Error('Снабжение может менять только свои плановые расходы')
-    }
-
     const update: Record<string, unknown> = { updated_by: user.id }
     if (input.action === 'paid') {
       update.status = 'paid'

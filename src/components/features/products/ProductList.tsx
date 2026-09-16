@@ -6,7 +6,6 @@ import { ROUTES } from '@/lib/constants/routes'
 import { Badge } from '@/components/ui/badge'
 import { buttonVariants } from '@/components/ui/button'
 import type { ProductWithFiles } from '@/lib/actions/products'
-import { usePermissions } from '@/components/providers/PermissionProvider'
 
 const statusLabels: Record<ProductWithFiles['status'], string> = {
   draft: 'Черновик',
@@ -15,9 +14,6 @@ const statusLabels: Record<ProductWithFiles['status'], string> = {
 }
 
 export function ProductList({ products }: { products: ProductWithFiles[] }) {
-  const { can } = usePermissions()
-  const canViewPrices = can('client_prices', 'view')
-
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -42,7 +38,6 @@ export function ProductList({ products }: { products: ProductWithFiles[] }) {
                 <th className="px-4 py-3">УКТЗЕД</th>
                 <th className="px-4 py-3">Чертеж</th>
                 <th className="px-4 py-3">Вес</th>
-                {canViewPrices && <th className="px-4 py-3">Цена</th>}
                 <th className="px-4 py-3">Файлы</th>
                 <th className="px-4 py-3">Статус</th>
               </tr>
@@ -50,7 +45,7 @@ export function ProductList({ products }: { products: ProductWithFiles[] }) {
             <tbody className="divide-y divide-[#E8ECF0]">
               {products.length === 0 ? (
                 <tr>
-                  <td colSpan={canViewPrices ? 7 : 6} className="px-4 py-12 text-center text-[#9CA3AF]">
+                  <td colSpan={6} className="px-4 py-12 text-center text-[#9CA3AF]">
                     Продуктов пока нет.
                   </td>
                 </tr>
@@ -65,9 +60,6 @@ export function ProductList({ products }: { products: ProductWithFiles[] }) {
                   <td className="px-4 py-3 text-[#374151]">{product.uktzed}</td>
                   <td className="px-4 py-3 text-[#374151]">{product.drawing_number}</td>
                   <td className="px-4 py-3 text-[#374151]">{Number(product.unit_weight_kg).toLocaleString('ru-RU')} кг</td>
-                  {canViewPrices && (
-                    <td className="px-4 py-3 text-[#374151]">€{Number(product.base_price_eur).toLocaleString('ru-RU')}</td>
-                  )}
                   <td className="px-4 py-3 text-[#6B7280]">
                     <span className="inline-flex items-center gap-1">
                       <FileText className="h-4 w-4" />

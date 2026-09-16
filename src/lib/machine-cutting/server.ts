@@ -3,7 +3,6 @@ import 'server-only'
 /* eslint-disable @typescript-eslint/no-explicit-any -- New table types become available after the migration is applied. */
 
 import { createAdminClient } from '@/lib/supabase/admin'
-import type { UserRole } from '@/lib/types'
 import { canUploadMachineCutting } from '@/lib/machine-cutting/access-policy'
 
 export class MachineCuttingUploadDeniedError extends Error {
@@ -67,7 +66,7 @@ export async function loadMachineCuttingUploadContext(
 
 export function assertMachineCuttingUploadAccess(
   context: MachineCuttingUploadContext,
-  actor: { userId: string; role: UserRole },
+  actor: { userId: string; permissionDetails: { isAdminPosition: boolean } },
   options: { allowArchivedCleanup?: boolean; allowPendingRequest?: boolean } = {},
 ) {
   if (context.machine.is_archived && !options.allowArchivedCleanup) {
@@ -84,12 +83,12 @@ export function assertMachineCuttingUploadAccess(
   }
   if (!canUploadMachineCutting({
     userId: actor.userId,
-    role: actor.role,
     canManage: true,
+    canBypassOwnership: actor.permissionDetails.isAdminPosition,
     isArchived: options.allowArchivedCleanup ? false : context.machine.is_archived,
     completionCreatedBy: context.completion?.created_by || context.request.created_by,
   })) {
-    throw new MachineCuttingUploadDeniedError('Загрузить архив может автор завершённой заявки или директор')
+    throw new MachineCuttingUploadDeniedError('Загрузить архив может автор завершённой заявки или Администратор CRM')
   }
   return { request: context.request, completion: context.completion }
 }

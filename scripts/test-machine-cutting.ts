@@ -46,13 +46,13 @@ assert.throws(() => validateMachineCuttingRegistration({
 
 const basePolicy = {
   userId: 'author',
-  role: 'technologist' as const,
   canManage: true,
+  canBypassOwnership: false,
   isArchived: false,
   completionCreatedBy: 'author',
 }
 assert(canUploadMachineCutting(basePolicy), 'Автор завершения с manage должен загружать')
-assert(canUploadMachineCutting({ ...basePolicy, userId: 'director', role: 'planning_director' }), 'Директор с manage должен загружать')
+assert(canUploadMachineCutting({ ...basePolicy, userId: 'admin', canBypassOwnership: true }), 'Администратор CRM с manage должен загружать')
 assert(!canUploadMachineCutting({ ...basePolicy, userId: 'other' }), 'Другой технолог не должен загружать')
 assert(!canUploadMachineCutting({ ...basePolicy, canManage: false }), 'manage должен проверяться независимо')
 assert(!canUploadMachineCutting({ ...basePolicy, isArchived: true }), 'Архивная машина должна быть read-only')

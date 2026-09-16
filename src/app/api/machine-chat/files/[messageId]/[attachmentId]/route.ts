@@ -24,7 +24,7 @@ export async function GET(
 ) {
   try {
     const { messageId, attachmentId } = await params
-    const { role, factoryId } = await requirePermission('sales_plan', 'view')
+    await requirePermission('sales_plan', 'view')
     const admin = createAdminClient()
 
     const { data, error } = await admin
@@ -37,13 +37,6 @@ export async function GET(
 
     const message = data as MessageFileRow
     const machine = relationOne(message.machine)
-    if (
-      role === 'production_manager' &&
-      machine?.factory_id &&
-      machine.factory_id !== factoryId
-    ) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
     if (machine?.client_id) await requireClientCommercialDocumentVisibility(machine.client_id, false)
 
     const attachment = decodeMachineChatBody(message.body).attachments.find((item) => item.id === attachmentId)

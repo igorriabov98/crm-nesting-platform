@@ -14,6 +14,7 @@ declare
   v_admin uuid := gen_random_uuid();
   v_supply uuid := gen_random_uuid();
   v_department uuid := gen_random_uuid();
+  v_finance_department uuid := gen_random_uuid();
   v_admin_position uuid;
   v_machine uuid := gen_random_uuid();
   v_request uuid := gen_random_uuid();
@@ -39,8 +40,20 @@ begin
   if v_admin_position is null then
     insert into public.positions(name, is_active) values ('Администратор CRM', true) returning id into v_admin_position;
   end if;
-  insert into public.departments(id, name, factory_id) values (v_department, 'APPROVAL TEST', v_factory);
+  insert into public.departments(id, name, factory_id) values
+    (v_department, 'APPROVAL TEST TECHNOLOGY', v_factory),
+    (v_finance_department, 'APPROVAL TEST FINANCE', v_factory);
   insert into public.department_members(user_id, department_id, position_id) values (v_admin, v_department, v_admin_position);
+  insert into public.department_members(user_id, department_id, is_department_head) values
+    (v_technologist, v_department, false),
+    (v_finance_one, v_finance_department, false),
+    (v_finance_two, v_finance_department, false);
+  insert into public.department_access_permissions(
+    department_id, subject_scope, resource_key, can_view, can_manage
+  ) values
+    (v_department, 'member', 'technologist_requests', true, true),
+    (v_department, 'member', 'inventory_detailing', true, true),
+    (v_finance_department, 'member', 'technologist_request_results', true, true);
   insert into public.machines(id, factory_id, name, created_by, status, material_type) values
     (v_machine, v_factory, 'APPROVAL ORDER 1', v_technologist, 'planned', 'standard'),
     (v_second_machine, v_factory, 'APPROVAL ORDER 2', v_technologist, 'planned', 'non_standard');
@@ -67,6 +80,7 @@ begin
     if v_error not like '%операцию финансового согласования%' then raise; end if;
   end;
 
+  perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   select public.fn_submit_technologist_request_for_approval(
     v_request, v_technologist,
     jsonb_build_object('decision', 'none', 'enteredPlasmaMinutes', 0, 'wasteItems', '[]'::jsonb, 'futureItems', '[]'::jsonb, 'archives', '[]'::jsonb),
@@ -108,13 +122,15 @@ begin
     get stacked diagnostics v_error = message_text;
     if v_error not like '%решением по версии%' then raise; end if;
   end;
+  perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   begin
     perform public.fn_approve_technologist_request(v_version, v_technologist);
-    raise exception 'author approved own request without reviewer authority';
+    raise exception 'author approved own request without approval permission';
   exception when others then
     get stacked diagnostics v_error = message_text;
-    if v_error not like '%финансовый директор или администратор CRM%' then raise; end if;
+    if v_error not like '%Недостаточно прав%' then raise; end if;
   end;
+  perform set_config('request.jwt.claim.sub', v_finance_one::text, true);
   begin
     perform public.fn_approve_technologist_request(v_version, v_finance_one);
     raise exception 'invalid empty request approval unexpectedly succeeded';
@@ -135,7 +151,7 @@ begin
     raise exception 'supply can read unapproved requests via RLS';
   end if;
   execute 'reset role';
-  perform set_config('request.jwt.claim.sub', '', true);
+  perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   begin
     insert into public.supply_order_delivery_schedules(request_item_table, request_item_id, delivery_date, quantity, unit)
     values ('request_sheet_metal', v_second_sheet, current_date, 1, 'шт');
@@ -145,6 +161,7 @@ begin
     if v_error not like '%не передана в снабжение%' then raise; end if;
   end;
 
+  perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   begin
     perform public.fn_submit_technologist_request_for_approval(v_request, v_technologist, '{}'::jsonb, '{}'::jsonb, '[]'::jsonb);
     raise exception 'duplicate submission unexpectedly succeeded';
@@ -153,6 +170,7 @@ begin
     if v_error not like '%не готова к согласованию%' then raise; end if;
   end;
 
+  perform set_config('request.jwt.claim.sub', v_finance_one::text, true);
   begin
     perform public.fn_return_technologist_request_for_revision(v_version, v_finance_one, '  ');
     raise exception 'return without reason unexpectedly succeeded';
@@ -170,6 +188,7 @@ begin
   end if;
 
   update public.technologist_requests set status = 'stock_checked' where id = v_request;
+  perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   select public.fn_submit_technologist_request_for_approval(
     v_request, v_technologist,
     jsonb_build_object('decision', 'none', 'enteredPlasmaMinutes', 0, 'wasteItems', '[]'::jsonb, 'futureItems', '[]'::jsonb, 'archives', '[]'::jsonb),
@@ -185,6 +204,7 @@ begin
   end if;
 
   update public.users set is_active = false where id in (v_finance_one, v_finance_two);
+  perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   select public.fn_submit_technologist_request_for_approval(
     v_second_request, v_technologist,
     jsonb_build_object(
@@ -211,6 +231,7 @@ begin
     if v_error not like '%верните заявку на редактирование%' then raise; end if;
   end;
 
+  perform set_config('request.jwt.claim.sub', v_admin::text, true);
   select public.fn_approve_technologist_request(v_second_version, v_admin) into v_completion;
   if v_completion is null
      or (select status from public.technologist_requests where id = v_second_request) <> 'submitted_to_supply'
@@ -250,6 +271,7 @@ begin
   update public.users set is_active = false where id in (
     select dm.user_id from public.department_members dm join public.positions p on p.id = dm.position_id where p.name = 'Администратор CRM'
   );
+  perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   update public.technologist_requests set status = 'stock_checked' where id = v_request;
   begin
     perform public.fn_submit_technologist_request_for_approval(v_request,v_technologist,
@@ -261,12 +283,14 @@ begin
     if v_error not like '%Нет активного финансового директора%' then raise; end if;
   end;
   update public.users set is_active = true where id = v_finance_one;
+  perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   select public.fn_submit_technologist_request_for_approval(v_request,v_technologist,
     jsonb_build_object('decision','none','enteredPlasmaMinutes',0,'wasteItems','[]'::jsonb,'futureItems','[]'::jsonb,'archives','[]'::jsonb),
     jsonb_build_object('sourceData',public.fn_technologist_approval_source(v_request))) into v_version;
   if (select revision_number from public.technologist_request_approval_versions where id = v_version) <> 2 then
     raise exception 'third submission is not version 1.2';
   end if;
+  perform set_config('request.jwt.claim.sub', v_finance_one::text, true);
   v_completion := public.fn_approve_technologist_request(v_version,v_finance_one);
   if v_completion is null or exists (select 1 from public.technologist_request_waste_items where completion_id = v_completion) then
     raise exception 'non-metal request failed approval or invented waste';

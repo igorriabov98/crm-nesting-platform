@@ -8,7 +8,6 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
 import { ROUTES } from '@/lib/constants/routes'
 import { STAGES } from '@/lib/constants/stages'
-import { isDirector } from '@/lib/utils/permissions'
 import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import { promoteDueFutureBusinessScrap } from '@/lib/inventory/secure-rpc'
@@ -17,7 +16,7 @@ import { createSystemMachineChatMessage } from '@/lib/actions/machine-activity'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
 import { getIncomingOutsourcingPlanBlockers, syncOutsourcingTransportForProductionPlan, syncZincOutsourcingFromStage } from '@/lib/actions/outsourcing'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
-import type { ProductionDateChangeRequestStatus, ProductionMonthPlanStatus, StageType, TaskStatus, TaskType, UserRole } from '@/lib/types'
+import type { ProductionDateChangeRequestStatus, ProductionMonthPlanStatus, StageType, TaskStatus, TaskType } from '@/lib/types'
 
 type DbResult = { data: unknown; error: { message?: string; code?: string } | null }
 type LooseQuery = PromiseLike<DbResult> & {
@@ -283,13 +282,8 @@ function relationOne<T>(value: T | T[] | null | undefined): T | null {
   return value || null
 }
 
-function isProductionManagerScoped(role: UserRole, userFactoryId: string | null, factoryId: string) {
-  return role !== 'production_manager' || userFactoryId === factoryId
-}
-
-async function requireProductionManage(factoryId: string) {
+async function requireProductionManage() {
   const context = await requirePermission('production', 'manage')
-  if (!isProductionManagerScoped(context.role, context.factoryId, factoryId)) throw new Error('Доступ запрещён')
   return context
 }
 
@@ -454,10 +448,7 @@ async function findPlanningDepartmentHead(db: LooseDb) {
 
 export async function getProductionMonthPlans(factoryId: string): Promise<{ data: ProductionMonthPlanSummary[]; error: string | null }> {
   try {
-    const context = await requirePermission('production', 'view')
-    if (!isProductionManagerScoped(context.role, context.factoryId, factoryId)) {
-      throw new Error('Доступ запрещён')
-    }
+    await requirePermission('production', 'view')
 
     const db = dbFrom(createAdminClient())
     const { data, error } = await db
@@ -477,7 +468,7 @@ export async function markProductionMonthPlanStatus(factoryId: string, productio
   try {
     const nextStatus = planStatusSchema.parse(nextStatusValue)
     const productionMonth = normalizeMonthOrThrow(productionMonthValue)
-    const context = await requireProductionManage(factoryId)
+    const context = await requireProductionManage()
     const db = dbFrom(createAdminClient())
     const plan = await ensurePlan(db, factoryId, productionMonth, context.userId)
 
@@ -612,8 +603,6 @@ export async function createProductionPlanDateChangeRequest(input: {
     const machine = machineData as MachineForPlan
     if (machine.is_archived) throw new Error('Машина архивирована')
     if (!machine.factory_id || !machine.production_month) throw new Error('Машина не привязана к месяцу производства')
-    if (!isProductionManagerScoped(context.role, context.factoryId, machine.factory_id)) throw new Error('Доступ запрещён')
-
     const productionMonth = normalizeMonthOrThrow(machine.production_month)
     const plan = await getPlanByFactoryMonth(db, machine.factory_id, productionMonth)
     if (!plan || plan.status !== 'confirmed') {
@@ -817,7 +806,7 @@ export async function getProductionPlanDateChangeApproval(taskId: string): Promi
     if (taskError || !taskData) throw new Error(taskError?.message || 'Задача не найдена')
     const task = taskData as TaskRow
     if (task.task_type !== 'production_plan_date_change_approval') throw new Error('Это не задача согласования дат')
-    if (task.assigned_to !== context.userId && !isDirector(context.role)) throw new Error('Недостаточно прав')
+    if (task.assigned_to !== context.userId && !context.permissionDetails.isAdminPosition) throw new Error('Недостаточно прав')
 
     const { data: requestData, error: requestError } = await db
       .from('production_plan_date_change_requests')
@@ -1007,7 +996,7 @@ export async function decideProductionPlanDateChangeRequest(input: {
     const request = await loadRequestWithTask(db, parsed.requestId)
     const task = relationOne(request.task)
     if (!task) throw new Error('Задача согласования не найдена')
-    if (task.assigned_to !== context.userId && !isDirector(context.role)) throw new Error('Недостаточно прав')
+    if (task.assigned_to !== context.userId && !context.permissionDetails.isAdminPosition) throw new Error('Недостаточно прав')
     if (request.status !== 'pending') throw new Error('Запрос уже обработан')
     if (!request.machine || !request.plan) throw new Error('Запрос повреждён')
 

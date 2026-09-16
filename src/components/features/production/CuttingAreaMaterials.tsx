@@ -1,14 +1,13 @@
 'use client'
 
-import { CalendarDays, ChevronDown, PackageCheck, Truck, Warehouse } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
+import { CalendarDays, ChevronDown, CircleAlert, PackageCheck, Truck, Warehouse } from 'lucide-react'
 import { Popover, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigger } from '@/components/ui/popover'
 import type { CuttingAreaMaterialState, CuttingAreaMaterialSummary } from '@/lib/production-cutting-area/materials'
 
 const materialStates: Array<{ state: CuttingAreaMaterialState; label: string; style: string }> = [
-  { state: 'not_ordered', label: 'Не заказан', style: 'border-amber-200 bg-amber-50 text-amber-800' },
+  { state: 'not_ordered', label: 'Не заказано', style: 'border-amber-200 bg-amber-50 text-amber-800' },
   { state: 'delivery', label: 'Доставка', style: 'border-blue-200 bg-blue-50 text-blue-800' },
-  { state: 'received', label: 'Получен', style: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
+  { state: 'received', label: 'Получено', style: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
   { state: 'stock', label: 'Со склада', style: 'border-slate-200 bg-slate-50 text-slate-700' },
 ]
 
@@ -22,12 +21,40 @@ export function CuttingAreaMaterialStatus({ summary }: { summary: CuttingAreaMat
   return <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs" aria-label="Статус материалов">
     <span className="mr-0.5 text-slate-500">Материалы:</span>
     {states.length === 0 ? <span className="text-slate-500">Нет потребности</span> : states.map(({ state, label, style }) => (
-      <Badge key={state} variant="outline" className={style} title={`${label}: ${summary.counts[state]} поз.`}>
-        {state === 'delivery' && <Truck aria-hidden="true" className="size-3" />}
-        {state === 'received' && <PackageCheck aria-hidden="true" className="size-3" />}
-        {state === 'stock' && <Warehouse aria-hidden="true" className="size-3" />}
-        {label}{(states.length > 1 || summary.counts[state] > 1) && <span className="tabular-nums"> · {summary.counts[state]}</span>}
-      </Badge>
+      <Popover key={state}>
+        <PopoverTrigger
+          openOnHover
+          delay={150}
+          closeDelay={150}
+          className={`inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 font-medium outline-none transition-colors hover:brightness-95 focus-visible:ring-2 focus-visible:ring-blue-500 ${style}`}
+          aria-label={`${label}: ${summary.counts[state]} позиций. Показать состав`}
+        >
+          {state === 'not_ordered' && <CircleAlert aria-hidden="true" className="size-3.5" />}
+          {state === 'delivery' && <Truck aria-hidden="true" className="size-3.5" />}
+          {state === 'received' && <PackageCheck aria-hidden="true" className="size-3.5" />}
+          {state === 'stock' && <Warehouse aria-hidden="true" className="size-3.5" />}
+          {label}<span className="tabular-nums"> · {summary.counts[state]}</span>
+          <ChevronDown aria-hidden="true" className="size-3.5" />
+        </PopoverTrigger>
+        <PopoverContent align="start" sideOffset={6} className="w-96 max-w-[calc(100vw-2rem)] p-4 motion-reduce:animate-none">
+          <PopoverTitle>{label} · {summary.counts[state]}</PopoverTitle>
+          <PopoverDescription>Конкретные позиции и количество потребности по каждой из них.</PopoverDescription>
+          <ul className="mt-3 max-h-72 space-y-2 overflow-y-auto" aria-label={`Позиции: ${label.toLocaleLowerCase('ru')}`}>
+            {summary.details[state].map((detail) => (
+              <li key={`${detail.requestId}:${detail.id}`} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs text-slate-500">{detail.category}</p>
+                    <p className="break-words text-sm font-medium text-slate-950">{detail.label}</p>
+                    {detail.description && <p className="mt-0.5 break-words text-xs text-slate-600">{detail.description}</p>}
+                  </div>
+                  <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-900">{detail.quantity}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </PopoverContent>
+      </Popover>
     ))}
   </div>
 }

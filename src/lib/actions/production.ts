@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
+import { hasPermission } from '@/lib/permissions/resources'
 import { ROUTES } from '@/lib/constants/routes'
 import { isZincCoating } from '@/lib/constants/coatings'
 import { STAGE_ORDER, stageHasSingleDate, stageHasWorkshop, stageSupportsIntervals } from '@/lib/constants/stages'
@@ -188,13 +189,13 @@ async function reconcileMachineStatus(supabase: Awaited<ReturnType<typeof create
 }
 
 async function requireAuth() {
-  const { supabase, user } = await requirePermission('production', 'manage')
-  return { supabase, user: user as CurrentUser }
+  const context = await requirePermission('production', 'manage')
+  return { ...context, user: context.user as CurrentUser }
 }
 
 export async function updateProductionStage(stageId: string, data: ProductionStageUpdate, options: ProductionMutationOptions = {}) {
   try {
-    const { supabase, user } = await requireAuth()
+    const { supabase, user, permissions } = await requireAuth()
     data = { ...data }
 
     if ('manual_overdue' in data) {
@@ -227,12 +228,10 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
     const machine = stageObj.machines
     if (!machine) throw new Error('Машина не найдена')
     if (machine.is_archived) throw new Error('Машина архивирована. Действия с ней остановлены.')
-    if (machine.factory_id !== user.factory_id) throw new Error('Доступ запрещён')
-
     const dateFields = ['date_start', 'date_end', 'night_shift_date', 'night_shift_dates'] as const
     const changesPlanDate = dateFields.some((field) => field in data)
     if (
-      user.role === 'production_manager' &&
+      !hasPermission(permissions, 'sales_plan', 'manage') &&
       changesPlanDate &&
       await isMachineInConfirmedProductionPlan(stageObj.machine_id)
     ) {
@@ -383,7 +382,7 @@ export async function mutateProductionStageInterval(
   options: ProductionMutationOptions = {},
 ) {
   try {
-    const { supabase, user } = await requireAuth()
+    const { supabase, user, permissions } = await requireAuth()
     const { data: stage, error: stageError } = await supabase
       .from('production_stages')
       .select('id, machine_id, stage_type, date_start, date_end, machines(factory_id, is_archived)')
@@ -400,8 +399,7 @@ export async function mutateProductionStageInterval(
     if (!stageSupportsIntervals(selectedStage.stage_type)) throw new Error('Этот этап нельзя делить на подходы')
     if (!selectedStage.machines) throw new Error('Машина не найдена')
     if (selectedStage.machines.is_archived) throw new Error('Машина архивирована. Действия с ней остановлены.')
-    if (selectedStage.machines.factory_id !== user.factory_id) throw new Error('Доступ запрещён')
-    if (user.role === 'production_manager' && await isMachineInConfirmedProductionPlan(selectedStage.machine_id)) {
+    if (!hasPermission(permissions, 'sales_plan', 'manage') && await isMachineInConfirmedProductionPlan(selectedStage.machine_id)) {
       throw new Error('План месяца подтверждён. Отправьте запрос на изменение подходов руководителю отдела планирования.')
     }
 
@@ -468,7 +466,7 @@ export async function updateMachineDate(
   options: ProductionMutationOptions = {}
 ) {
   try {
-    const { supabase, user } = await requireAuth()
+    const { supabase, permissions } = await requireAuth()
 
     if (field === 'actual_material_date') {
       throw new Error('Факт поставки материала заполняется автоматически после приемки всех материалов по заявке')
@@ -483,16 +481,12 @@ export async function updateMachineDate(
     if (machineError || !machine) throw new Error('Машина не найдена')
     const selectedMachine = machine as unknown as { factory_id: string | null; is_archived: boolean }
     if (selectedMachine.is_archived) throw new Error('Машина архивирована. Действия с ней остановлены.')
-    if (user.role === 'production_manager' && selectedMachine.factory_id !== user.factory_id) {
-      throw new Error('Доступ запрещён')
-    }
-
     const dateValue = value ? value.slice(0, 10) : null
     if (field === 'actual_shipping_date' && dateValue && dateValue < todayDateOnly()) {
       throw new Error('Факт отгрузки нельзя поставить раньше сегодняшнего дня')
     }
     if (
-      user.role === 'production_manager' &&
+      !hasPermission(permissions, 'sales_plan', 'manage') &&
       field === 'planned_material_date' &&
       await isMachineInConfirmedProductionPlan(machineId)
     ) {

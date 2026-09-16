@@ -5,6 +5,7 @@ begin;
 do $$
 declare
   v_actor uuid := gen_random_uuid();
+  v_department uuid := gen_random_uuid();
   v_factory uuid;
   v_machine uuid := gen_random_uuid();
   v_request uuid := gen_random_uuid();
@@ -34,8 +35,8 @@ begin
     raise exception 'Пакетная RPC ручной приёмки не создана';
   end if;
   if has_function_privilege('anon', 'public.fn_receive_supply_order_schedule_batch_v1(jsonb,uuid)', 'EXECUTE')
-    or has_function_privilege('authenticated', 'public.fn_receive_supply_order_schedule_batch_v1(jsonb,uuid)', 'EXECUTE') then
-    raise exception 'Пакетная RPC доступна браузерным ролям';
+    or not has_function_privilege('authenticated', 'public.fn_receive_supply_order_schedule_batch_v1(jsonb,uuid)', 'EXECUTE') then
+    raise exception 'Права пакетной RPC не соответствуют matrix cutover';
   end if;
 
   select id into v_factory from public.factories order by created_at nulls last limit 1;
@@ -43,6 +44,13 @@ begin
 
   insert into public.users(id, email, full_name, role, factory_id, is_active)
   values (v_actor, 'material-batch-receiving@example.test', 'Тест пакетной приёмки', 'supply_manager', v_factory, true);
+  insert into public.departments(id, name, factory_id, is_active, created_by)
+  values (v_department, 'Batch receipt ' || v_actor, v_factory, true, v_actor);
+  insert into public.department_members(user_id, department_id, is_department_head, created_by)
+  values (v_actor, v_department, false, v_actor);
+  insert into public.department_access_permissions(department_id, subject_scope, resource_key, can_view, can_manage, updated_by)
+  values (v_department, 'member', 'inventory_receiving', true, true, v_actor);
+  perform set_config('request.jwt.claim.sub', v_actor::text, true);
   insert into public.suppliers(id, name) values (v_supplier, 'Varian test');
   insert into public.machines(id, factory_id, name, created_by)
   values (v_machine, v_factory, 'Тестовый заказ пакетной приёмки', v_actor);

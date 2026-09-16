@@ -25,7 +25,6 @@ export type CommercialVisibility = {
   displayName: string
   isNameMasked: boolean
   isOwner: boolean
-  isSalesManager: boolean
   isAdmin: boolean
   canViewFullClientName: boolean
   canViewOrderPrices: boolean
@@ -57,7 +56,6 @@ export async function getCommercialPermissionContext(): Promise<PermissionContex
 function resolveRow(context: PermissionContext, row: ClientIdentityRow): CommercialVisibility {
   const decision = resolveCommercialPolicy({
     userId: context.userId,
-    role: context.role,
     isAdmin: context.permissionDetails.isAdminPosition,
     responsibleUserId: row.responsible_user_id,
     identityView: hasPermission(context.permissions, 'client_identity', 'view'),
@@ -68,7 +66,7 @@ function resolveRow(context: PermissionContext, row: ClientIdentityRow): Commerc
     priceManageScope: context.permissionDetails.companyScopes.client_prices?.manage || 'own',
     salesPlanManage: hasPermission(context.permissions, 'sales_plan', 'manage'),
   })
-  const { isOwner, isAdmin, isSalesManager, canViewFullClientName, canViewOrderPrices, canManageOrderPrices, canAccessClientCard } = decision
+  const { isOwner, isAdmin, canViewFullClientName, canViewOrderPrices, canManageOrderPrices, canAccessClientCard } = decision
 
   return {
     clientId: row.id,
@@ -76,7 +74,6 @@ function resolveRow(context: PermissionContext, row: ClientIdentityRow): Commerc
     displayName: canViewFullClientName ? row.name : row.public_alias || buildClientPublicAlias(row.name),
     isNameMasked: !canViewFullClientName,
     isOwner,
-    isSalesManager,
     isAdmin,
     canViewFullClientName,
     canViewOrderPrices,
@@ -163,8 +160,7 @@ export async function requireClientCommercialDocumentVisibility(
   const resolvedContext = context || await getCommercialPermissionContext()
   const visibility = await getCommercialVisibilityForClient(clientId, resolvedContext)
   const allowed = visibility.isAdmin || (
-    !(visibility.isSalesManager && !visibility.isOwner)
-    && visibility.canViewFullClientName
+    visibility.canViewFullClientName
     && (!includesPrices || visibility.canViewOrderPrices)
   )
   if (!allowed) throw new PermissionDeniedError(includesPrices ? 'client_prices' : 'client_identity', 'view')

@@ -10,7 +10,11 @@ assert.equal(databaseUrl.protocol, 'postgresql:', 'FULL_SCHEMA_TEST_DATABASE_URL
 assert.ok(['localhost', '127.0.0.1'].includes(databaseUrl.hostname), 'Discount DB tests only use localhost')
 assert.ok(decodeURIComponent(databaseUrl.pathname.slice(1)).toLowerCase().includes('test'), 'Test database name must contain test')
 
-run(process.execPath, [path.join(root, 'scripts', 'test-inventory-transfers-full-schema.mjs')])
+run(
+  process.execPath,
+  [path.join(root, 'scripts', 'test-inventory-transfers-full-schema.mjs')],
+  { ...process.env, FULL_SCHEMA_TEST_DATABASE_URL: databaseUrl.toString() },
+)
 run('psql', [
   '-X', '-v', 'ON_ERROR_STOP=1', databaseUrl.toString(), '-f',
   path.join(root, 'supabase', 'tests', 'client_price_order_discounts_test.sql'),

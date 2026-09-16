@@ -1,6 +1,6 @@
 'use server'
 
-import { canManageDepartmentRequestTarget, type DepartmentRequestTarget } from '@/lib/department-requests'
+import type { DepartmentRequestTarget } from '@/lib/department-requests'
 import { getMaterialRequestQueue } from '@/lib/actions/material-request-queue'
 import { getTransportWorkspace } from '@/lib/actions/transport-trips'
 import { buildNonArchivedOrUnscopedMachineFilter } from '@/lib/machine-work-visibility'
@@ -28,18 +28,10 @@ const EMPTY_COUNTS: SidebarWorkQueueCounts = {
 }
 
 const TARGETS: DepartmentRequestTarget[] = ['technologist', 'supply', 'production', 'planning']
-const DIRECTORS = ['financial_director', 'commercial_director', 'planning_director']
-
 async function loadDepartmentRequestCounts(context: Awaited<ReturnType<typeof requirePermission>>) {
-  const memberships = context.permissionDetails.memberships.map((membership) => ({
-    departmentName: membership.departmentName,
-    positionName: membership.positionName,
-  }))
-  const manageableTargets = TARGETS.filter((target) => canManageDepartmentRequestTarget({
-    target,
-    role: context.role,
-    memberships,
-  }))
+  const manageableTargets = context.permissionDetails.permissions.department_requests?.canManage
+    ? TARGETS
+    : []
 
   const counts = { ...EMPTY_COUNTS.departmentRequests }
   const admin = createAdminClient()
@@ -74,7 +66,7 @@ async function loadDepartmentRequestCounts(context: Awaited<ReturnType<typeof re
           .in('status', ['new', 'in_progress'])
       }
 
-      if (target === 'production' && !DIRECTORS.includes(context.role) && context.factoryId) {
+      if (target === 'production' && !context.permissionDetails.isAdminPosition && context.factoryId) {
         query = query.eq('factory_id', context.factoryId)
       }
       if (activeMachineFilter) query = query.or(activeMachineFilter)

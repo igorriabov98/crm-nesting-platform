@@ -5,6 +5,8 @@ begin;
 do $$
 declare
   v_actor uuid := gen_random_uuid();
+  v_assignee uuid := gen_random_uuid();
+  v_department uuid := gen_random_uuid();
   v_factory uuid;
   v_supplier uuid := gen_random_uuid();
   v_material uuid := gen_random_uuid();
@@ -43,17 +45,26 @@ begin
     raise exception 'Новые RPC ручной приёмки не созданы';
   end if;
   if has_function_privilege('anon', 'public.fn_receive_supply_order_schedule_v3(uuid,uuid,numeric,jsonb,numeric,numeric,text)', 'EXECUTE')
-    or has_function_privilege('authenticated', 'public.fn_receive_supply_order_schedule_v3(uuid,uuid,numeric,jsonb,numeric,numeric,text)', 'EXECUTE')
+    or not has_function_privilege('authenticated', 'public.fn_receive_supply_order_schedule_v3(uuid,uuid,numeric,jsonb,numeric,numeric,text)', 'EXECUTE')
     or has_function_privilege('anon', 'public.fn_receive_supply_order_schedule_batch_v2(jsonb,uuid,text)', 'EXECUTE')
-    or has_function_privilege('authenticated', 'public.fn_receive_supply_order_schedule_batch_v2(jsonb,uuid,text)', 'EXECUTE') then
-    raise exception 'RPC ручной приёмки доступны браузерным ролям';
+    or not has_function_privilege('authenticated', 'public.fn_receive_supply_order_schedule_batch_v2(jsonb,uuid,text)', 'EXECUTE') then
+    raise exception 'Права RPC ручной приёмки не соответствуют matrix cutover';
   end if;
 
   select id into v_factory from public.factories order by created_at nulls last limit 1;
   if v_factory is null then raise exception 'Для теста не найден завод'; end if;
 
   insert into public.users(id, email, full_name, role, factory_id, is_active)
-  values (v_actor, 'manual-quantity-receipt-' || v_actor || '@example.test', 'Оператор ручной приёмки', 'supply_manager', v_factory, true);
+  values
+    (v_actor, 'manual-quantity-receipt-' || v_actor || '@example.test', 'Оператор ручной приёмки', 'sales_manager', v_factory, true),
+    (v_assignee, 'manual-quantity-assignee-' || v_assignee || '@example.test', 'Ответственный снабжения', 'supply_manager', v_factory, true);
+  insert into public.departments(id, name, factory_id, is_active, created_by)
+  values (v_department, 'Manual receipt ' || v_actor, v_factory, true, v_actor);
+  insert into public.department_members(user_id, department_id, is_department_head, created_by)
+  values (v_actor, v_department, false, v_actor);
+  insert into public.department_access_permissions(department_id, subject_scope, resource_key, can_view, can_manage, updated_by)
+  values (v_department, 'member', 'inventory_receiving', true, true, v_actor);
+  perform set_config('request.jwt.claim.sub', v_actor::text, true);
   insert into public.suppliers(id, name) values (v_supplier, 'Поставщик ручной приёмки');
   insert into public.materials(id, name, category, default_supplier_id, created_by) values
     (v_material, 'Краска ручного распределения', 'paint', v_supplier, v_actor),
@@ -297,6 +308,7 @@ $$;
 do $$
 declare
   v_actor uuid := gen_random_uuid();
+  v_department uuid := gen_random_uuid();
   v_factory uuid;
   v_supplier uuid := gen_random_uuid();
   v_machine uuid;
@@ -313,6 +325,13 @@ begin
   if v_factory is null then raise exception 'Для теста не найден завод'; end if;
   insert into public.users(id, email, full_name, role, factory_id, is_active)
   values (v_actor, 'manual-quantity-categories-' || v_actor || '@example.test', 'Проверка количественных категорий', 'supply_manager', v_factory, true);
+  insert into public.departments(id, name, factory_id, is_active, created_by)
+  values (v_department, 'Manual categories ' || v_actor, v_factory, true, v_actor);
+  insert into public.department_members(user_id, department_id, is_department_head, created_by)
+  values (v_actor, v_department, false, v_actor);
+  insert into public.department_access_permissions(department_id, subject_scope, resource_key, can_view, can_manage, updated_by)
+  values (v_department, 'member', 'inventory_receiving', true, true, v_actor);
+  perform set_config('request.jwt.claim.sub', v_actor::text, true);
   insert into public.suppliers(id, name) values (v_supplier, 'Поставщик всех количественных категорий');
 
   foreach v_table in array array[

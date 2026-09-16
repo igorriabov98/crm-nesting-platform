@@ -11,19 +11,33 @@ assert.equal(databaseUrl.protocol, 'postgresql:', 'FULL_SCHEMA_TEST_DATABASE_URL
 assert.ok(['localhost', '127.0.0.1'].includes(databaseUrl.hostname), 'Approval DB tests only use localhost')
 assert.ok(decodeURIComponent(databaseUrl.pathname.slice(1)).toLowerCase().includes('test'), 'Test database name must contain test')
 
-run(process.execPath, [path.join(root, 'scripts', 'test-inventory-transfers-full-schema.mjs')], { ...process.env, FINANCIAL_APPROVAL_LEGACY_FIXTURE: 'true' })
+run(process.execPath, [path.join(root, 'scripts', 'test-inventory-transfers-full-schema.mjs')], {
+  ...process.env,
+  FINANCIAL_APPROVAL_LEGACY_FIXTURE: 'true',
+  FULL_SCHEMA_TEST_DATABASE_URL: databaseUrl.toString(),
+})
 run('psql', [
   '-X', '-v', 'ON_ERROR_STOP=1', databaseUrl.toString(), '-f',
   path.join(root, 'supabase', 'tests', 'technologist_request_financial_approval_test.sql'),
 ])
 
-const ids = Object.fromEntries(['factory','author','reviewer','machine','request','sheet','steel'].map((key) => [key, randomUUID()]))
+const ids = Object.fromEntries(['factory','authorDepartment','reviewerDepartment','author','reviewer','machine','request','sheet','steel'].map((key) => [key, randomUUID()]))
 const version = sql(`
   begin;
   insert into factories(id,name) values ('${ids.factory}','APPROVAL-CONCURRENCY-TEST');
   insert into users(id,email,full_name,role,factory_id,is_active) values
     ('${ids.author}','${ids.author}@approval.test','Автор гонки','technologist','${ids.factory}',true),
     ('${ids.reviewer}','${ids.reviewer}@approval.test','Финансовый директор гонки','financial_director','${ids.factory}',true);
+  insert into departments(id,name,factory_id) values
+    ('${ids.authorDepartment}','APPROVAL-CONCURRENCY-TECHNOLOGY','${ids.factory}'),
+    ('${ids.reviewerDepartment}','APPROVAL-CONCURRENCY-FINANCE','${ids.factory}');
+  insert into department_members(user_id,department_id,is_department_head) values
+    ('${ids.author}','${ids.authorDepartment}',false),
+    ('${ids.reviewer}','${ids.reviewerDepartment}',false);
+  insert into department_access_permissions(department_id,subject_scope,resource_key,can_view,can_manage) values
+    ('${ids.authorDepartment}','member','technologist_requests',true,true),
+    ('${ids.authorDepartment}','member','inventory_detailing',true,true),
+    ('${ids.reviewerDepartment}','member','technologist_request_results',true,true);
   insert into machines(id,factory_id,name,created_by,status,material_type)
     values ('${ids.machine}','${ids.factory}','APPROVAL CONCURRENCY','${ids.author}','planned','standard');
   insert into technologist_requests(id,machine_id,created_by,status)
@@ -31,20 +45,24 @@ const version = sql(`
   insert into steel_types(id,name,density_kg_mm3) values ('${ids.steel}','APPROVAL-RACE-STEEL',0.00000785);
   insert into request_sheet_metal(id,request_id,material_name,quantity_sheets,thickness_mm,sheet_size,steel_type_id,remainder_qty)
     values ('${ids.sheet}','${ids.request}','Лист гонки',1,10,'1000x1000','${ids.steel}',1);
+  with actor as (select set_config('request.jwt.claim.sub','${ids.author}',true))
   select fn_submit_technologist_request_for_approval('${ids.request}','${ids.author}',
     jsonb_build_object('decision','none','enteredPlasmaMinutes',0,'wasteItems',jsonb_build_array(jsonb_build_object(
       'sourceTable','request_sheet_metal','sourceId','${ids.sheet}','itemName','Лист гонки','materialName','Лист гонки','wastePercent',10
     )),'futureItems','[]'::jsonb,'archives','[]'::jsonb),
-    jsonb_build_object('schemaVersion',1,'items','[]'::jsonb,'sourceData',fn_technologist_approval_source('${ids.request}')));
+    jsonb_build_object('schemaVersion',1,'items','[]'::jsonb,'sourceData',fn_technologist_approval_source('${ids.request}')))
+  from actor;
   commit;
 `).trim()
 assert.match(version, /^[0-9a-f-]{36}$/)
 const secondRequest = randomUUID()
 const secondVersion = sql(`
   insert into technologist_requests(id,machine_id,created_by,status) values ('${secondRequest}','${ids.machine}','${ids.author}','stock_checked');
+  with actor as (select set_config('request.jwt.claim.sub','${ids.author}',true))
   select fn_submit_technologist_request_for_approval('${secondRequest}','${ids.author}',
     jsonb_build_object('decision','none','enteredPlasmaMinutes',0,'wasteItems','[]'::jsonb,'futureItems','[]'::jsonb,'archives','[]'::jsonb),
-    jsonb_build_object('sourceData',fn_technologist_approval_source('${secondRequest}')));
+    jsonb_build_object('sourceData',fn_technologist_approval_source('${secondRequest}')))
+  from actor;
 `).trim()
 assert.match(secondVersion, /^[0-9a-f-]{36}$/)
 assert.equal(sql(`select count(distinct technologist_request_approval_id) from tasks where technologist_request_approval_machine_id = '${ids.machine}' and assigned_to = '${ids.reviewer}' and status = 'pending'`).trim(), '2', 'Different requests for the same order must have separate approval tasks')
@@ -73,7 +91,8 @@ function decision() {
       begin;
       select id from technologist_requests where id = '${ids.request}' for update;
       select pg_sleep(0.2);
-      select fn_approve_technologist_request('${version}','${ids.reviewer}');
+      with actor as (select set_config('request.jwt.claim.sub','${ids.reviewer}',true))
+      select fn_approve_technologist_request('${version}','${ids.reviewer}') from actor;
       commit;
     `], { cwd: root, env: process.env, stdio: ['ignore','pipe','pipe'] })
     let stderr = ''

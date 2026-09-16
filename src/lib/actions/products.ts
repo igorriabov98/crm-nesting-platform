@@ -92,6 +92,9 @@ type UploadedInitialProductFile = {
   filePath: string
 }
 
+const PRODUCT_SAFE_COLUMNS = 'id, name_uk, name_en, uktzed, drawing_number, characteristics, unit_weight_kg, requires_vrb_mesh, status, source_project_id, source_version_id, created_by, updated_by, created_at, updated_at'
+const PRODUCT_SAFE_COLUMNS_WITH_FILES = `${PRODUCT_SAFE_COLUMNS}, product_files(*)`
+
 export type ProductOption = Pick<Product,
   | 'id'
   | 'name_uk'
@@ -163,8 +166,38 @@ function canManageProductPrices(context: Awaited<ReturnType<typeof requireProduc
   return hasPermission(context.permissions, 'client_prices', 'manage')
 }
 
-function redactProductPrice<T extends { base_price_eur: unknown }>(product: T, canViewPrices: boolean) {
-  return canViewPrices ? product : { ...product, base_price_eur: null }
+async function attachProtectedProductPrices<T extends { id: string }>(
+  context: Awaited<ReturnType<typeof requireProductAccess>>,
+  products: T[],
+): Promise<Array<T & { base_price_eur: number | null }>> {
+  if (!canViewProductPrices(context) || products.length === 0) {
+    return products.map((product) => ({ ...product, base_price_eur: null }))
+  }
+
+  const { data, error } = await (context.supabase as unknown as RpcClient).rpc('fn_get_product_base_prices', {
+    p_product_ids: products.map((product) => product.id),
+  })
+  if (error) throw error
+
+  const prices = new Map(
+    ((data || []) as Array<{ product_id: string; base_price_eur: number }>)
+      .map((row) => [row.product_id, Number(row.base_price_eur)]),
+  )
+  return products.map((product) => ({ ...product, base_price_eur: prices.get(product.id) ?? null }))
+}
+
+async function setProtectedProductPrice(
+  context: Awaited<ReturnType<typeof requireProductManageAccess>>,
+  productId: string,
+  price: number,
+) {
+  if (!canManageProductPrices(context)) return 0
+  const { data, error } = await (context.supabase as unknown as RpcClient).rpc('fn_set_product_base_price', {
+    p_product_id: productId,
+    p_base_price_eur: price,
+  })
+  if (error) throw error
+  return Number(data)
 }
 
 async function requireProjectClientAccess(projectId: string, operation: 'view' | 'manage' = 'manage') {
@@ -299,7 +332,6 @@ function validateFileExtension(file: File, allowedExtensions: string[], label: s
   }
 }
 
-const DIRECTOR_ROLES = ['financial_director', 'commercial_director', 'planning_director'] as const
 
 const productProjectApprovalSchema = z.object({
   name_uk: z.string().trim().min(1, 'Введите название на украинском'),
@@ -332,10 +364,6 @@ function drawingNumberFromFileName(name: string) {
   return name.replace(/\.[^/.]+$/, '').trim()
 }
 
-function isDirectorRole(role: string) {
-  return DIRECTOR_ROLES.includes(role as (typeof DIRECTOR_ROLES)[number])
-}
-
 async function loadLatestProjectVersion(db: LooseDb, projectId: string) {
   const { data, error } = await db
     .from('product_project_versions')
@@ -350,9 +378,9 @@ async function loadLatestProjectVersion(db: LooseDb, projectId: string) {
   return version
 }
 
-function assertProjectEngineerAccess(project: ProductProject, user: { id: string; role: string }) {
-  if (project.assigned_engineer_id === user.id || isDirectorRole(user.role)) return
-  throw new Error('Заполнить инженерные данные может назначенный инженер или директор')
+function assertProjectEngineerAccess(project: ProductProject, userId: string, isAdminPosition: boolean) {
+  if (project.assigned_engineer_id === userId || isAdminPosition) return
+  throw new Error('Заполнить инженерные данные может назначенный инженер или Администратор CRM')
 }
 
 function productPayload(parsed: ProductInput, userId: string): ProductInsert {
@@ -369,6 +397,12 @@ function productPayload(parsed: ProductInput, userId: string): ProductInsert {
     created_by: userId,
     updated_by: userId,
   }
+}
+
+function productPayloadWithoutPrice(parsed: ProductInput, userId: string) {
+  const payload = productPayload(parsed, userId)
+  delete (payload as Partial<typeof payload>).base_price_eur
+  return payload
 }
 
 async function insertInitialProductVersion(db: LooseDb, product: Pick<Product, 'id' | 'drawing_number'>, userId: string) {
@@ -411,13 +445,15 @@ export async function getProductOptions() {
     const { db } = context
     const { data, error } = await db
       .from('products')
-      .select('id, name_uk, name_en, uktzed, drawing_number, characteristics, unit_weight_kg, base_price_eur, status')
+      .select('id, name_uk, name_en, uktzed, drawing_number, characteristics, unit_weight_kg, requires_vrb_mesh, status')
       .eq('status', 'active')
       .order('name_uk', { ascending: true })
 
     if (error) throw error
-    const products = ((data || []) as ProductOption[])
-      .map((product) => redactProductPrice(product, canViewProductPrices(context)))
+    const products = await attachProtectedProductPrices(
+      context,
+      (data || []) as Array<Omit<ProductOption, 'base_price_eur'>>,
+    )
     const productIds = products.map((product) => product.id)
     if (productIds.length === 0) return { data: products, error: null }
 
@@ -527,13 +563,16 @@ export async function getProducts() {
     const { db } = context
     const { data, error } = await db
       .from('products')
-      .select('*, product_files(*)')
+      .select(PRODUCT_SAFE_COLUMNS_WITH_FILES)
       .order('updated_at', { ascending: false })
 
     if (error) throw error
+    const products = await attachProtectedProductPrices(
+      context,
+      (data || []) as Array<Omit<ProductWithFiles, 'base_price_eur'>>,
+    )
     return {
-      data: ((data || []) as ProductWithFiles[])
-        .map((product) => redactProductPrice(product, canViewProductPrices(context))),
+      data: products,
       error: null,
     }
   } catch (error) {
@@ -547,15 +586,16 @@ export async function getProduct(id: string) {
     const { db } = context
     const { data, error } = await db
       .from('products')
-      .select('*, product_files(*)')
+      .select(PRODUCT_SAFE_COLUMNS_WITH_FILES)
       .eq('id', id)
       .single()
 
     if (error) throw error
-    return {
-      data: redactProductPrice(data as ProductWithFiles, canViewProductPrices(context)),
-      error: null,
-    }
+    const [product] = await attachProtectedProductPrices(
+      context,
+      [data as Omit<ProductWithFiles, 'base_price_eur'>],
+    )
+    return { data: product, error: null }
   } catch (error) {
     return { data: null, error: getErrorMessage(error) }
   }
@@ -574,15 +614,13 @@ export async function createProduct(input: ProductInput) {
     const parsed = productSchema.parse(input)
     const { data, error } = await db
       .from('products')
-      .insert(productPayload({
-        ...parsed,
-        base_price_eur: canManageProductPrices(context) ? parsed.base_price_eur : 0,
-      }, user.id))
-      .select('*')
+      .insert(productPayloadWithoutPrice(parsed, user.id))
+      .select(PRODUCT_SAFE_COLUMNS)
       .single()
 
     if (error) throw error
-    const product = data as Product
+    const protectedPrice = await setProtectedProductPrice(context, (data as { id: string }).id, parsed.base_price_eur)
+    const product = { ...(data as Omit<Product, 'base_price_eur'>), base_price_eur: protectedPrice } as Product
     createdProductId = product.id
     // Product manage access includes sales_manager, while product_versions RLS intentionally does not.
     // Creating v1 is an internal consistency write coupled to product creation after the app-level product check.
@@ -657,16 +695,14 @@ export async function createProductWithFiles(formData: FormData) {
       .from('products')
       .insert({
         id: productId,
-        ...productPayload({
-          ...parsed,
-          base_price_eur: canManageProductPrices(context) ? parsed.base_price_eur : 0,
-        }, user.id),
+        ...productPayloadWithoutPrice(parsed, user.id),
       })
-      .select('*')
+      .select(PRODUCT_SAFE_COLUMNS)
       .single()
 
     if (error) throw error
-    const product = data as Product
+    const protectedPrice = await setProtectedProductPrice(context, (data as { id: string }).id, parsed.base_price_eur)
+    const product = { ...(data as Omit<Product, 'base_price_eur'>), base_price_eur: protectedPrice } as Product
     createdProductId = product.id
     // Product manage access includes sales_manager, while product_versions RLS intentionally does not.
     // Creating v1 is an internal consistency write coupled to product creation after the app-level product check.
@@ -711,7 +747,6 @@ export async function updateProduct(id: string, input: ProductInput) {
       drawing_number: parsed.drawing_number.trim(),
       characteristics: parsed.characteristics?.trim() || '',
       unit_weight_kg: parsed.unit_weight_kg,
-      ...(canManageProductPrices(context) ? { base_price_eur: parsed.base_price_eur } : {}),
       requires_vrb_mesh: parsed.requires_vrb_mesh,
       status: parsed.status,
       updated_by: user.id,
@@ -719,6 +754,7 @@ export async function updateProduct(id: string, input: ProductInput) {
     }
     const { error } = await db.from('products').update(payload).eq('id', id)
     if (error) throw error
+    await setProtectedProductPrice(context, id, parsed.base_price_eur)
 
     revalidatePath(ROUTES.PRODUCTS)
     revalidatePath(`${ROUTES.PRODUCTS}/${id}`)
@@ -1166,7 +1202,8 @@ export async function saveProductProjectEngineeringDeliverables(formData: FormDa
   const uploadedPaths: string[] = []
 
   try {
-    const { supabase, db, user } = await requireProductManageAccess('product_projects')
+    const context = await requireProductManageAccess('product_projects')
+    const { supabase, db, user } = context
     const projectId = String(formData.get('project_id') || '')
     await requireProjectClientAccess(projectId)
     const drawing = formData.get('drawing')
@@ -1191,7 +1228,7 @@ export async function saveProductProjectEngineeringDeliverables(formData: FormDa
       .single()
     if (projectError || !projectData) throw projectError || new Error('Проект не найден')
     const project = projectData as ProductProject
-    assertProjectEngineerAccess(project, user)
+    assertProjectEngineerAccess(project, user.id, context.permissionDetails.isAdminPosition)
 
     const version = await loadLatestProjectVersion(db, projectId)
     const drawingPath = await uploadStorageFile(supabase, `product-projects/${projectId}/${version.id}`, drawing)
@@ -1327,6 +1364,7 @@ export async function promoteProjectVersionToProduct(projectId: string, versionI
   try {
     await requireProjectClientAccess(projectId)
     const { db, user } = await requireProductManageAccess('product_projects')
+    const productContext = await requireProductManageAccess()
     const parsed = promoteProductVersionSchema.parse(input)
     const { data: versionData, error: versionError } = await db
       .from('product_project_versions')
@@ -1344,16 +1382,16 @@ export async function promoteProjectVersionToProduct(projectId: string, versionI
       drawing_number: parsed.drawing_number.trim(),
       characteristics: version.characteristics || version.description || '',
       unit_weight_kg: parsed.unit_weight_kg,
-      base_price_eur: parsed.base_price_eur,
       status: parsed.status,
       source_project_id: projectId,
       source_version_id: versionId,
       created_by: user.id,
       updated_by: user.id,
     }
-    const { data: productData, error: productError } = await db.from('products').insert(payload).select('*').single()
+    const { data: productData, error: productError } = await db.from('products').insert(payload).select(PRODUCT_SAFE_COLUMNS).single()
     if (productError) throw productError
-    const product = productData as Product
+    const protectedPrice = await setProtectedProductPrice(productContext, (productData as { id: string }).id, parsed.base_price_eur)
+    const product = { ...(productData as Omit<Product, 'base_price_eur'>), base_price_eur: protectedPrice } as Product
 
     const { data: filesData, error: filesError } = await db
       .from('product_project_files')

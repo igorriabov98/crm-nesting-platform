@@ -12,7 +12,7 @@ import { useRole } from '@/lib/hooks/useRole'
 import { Plus, Loader2 } from 'lucide-react'
 
 export function SupplyItemCreateDialog({ machineId }: { machineId: string }) {
-  const { isSupplyManager, isDirector, can } = useRole()
+  const { can } = useRole()
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
 
@@ -89,7 +89,7 @@ export function SupplyItemCreateDialog({ machineId }: { machineId: string }) {
             </div>
           </div>
 
-          {canCreate && (isSupplyManager || isDirector) && (
+          {canCreate && (
             <>
               <div className="grid grid-cols-2 gap-4 border-t border-[#E8ECF0] pt-4">
                 <div className="space-y-1.5">

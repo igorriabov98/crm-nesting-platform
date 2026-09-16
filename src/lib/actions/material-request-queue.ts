@@ -1,8 +1,8 @@
 'use server'
 
-import { DIRECTOR_ACCESS_ROLES } from '@/lib/permissions/resources'
+import { hasPermission } from '@/lib/permissions/resources'
 import { requirePermission } from '@/lib/permissions/server'
-import type { MachineWithTotals, Task, TechnologistRequest, UserRole } from '@/lib/types'
+import type { MachineWithTotals, Task, TechnologistRequest } from '@/lib/types'
 import { sortMaterialRequestQueueItems } from '@/lib/material-request-queue'
 import type {
   MaterialRequestQueueItem,
@@ -30,10 +30,6 @@ type QueueResult = {
   error: string | null
 }
 
-function isDirector(role: UserRole) {
-  return (DIRECTOR_ACCESS_ROLES as readonly UserRole[]).includes(role)
-}
-
 function taskPriority(task: QueueTask) {
   return task.status === 'pending' || task.status === 'in_progress' ? 0 : 1
 }
@@ -54,8 +50,8 @@ function requestState(total: number, submitted: number): MaterialRequestQueueSta
 
 export async function getMaterialRequestQueue(): Promise<QueueResult> {
   try {
-    const { supabase, role } = await requirePermission('material_request_queue', 'view')
-    const canViewAll = isDirector(role)
+    const { supabase, permissions } = await requirePermission('material_request_queue', 'view')
+    const canViewAll = hasPermission(permissions, 'material_request_queue', 'manage')
 
     const { data: machineData, error: machineError } = await supabase
       .from('machines_with_totals')

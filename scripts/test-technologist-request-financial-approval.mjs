@@ -24,6 +24,7 @@ for (const expected of [
 assert.ok(requestCompletion.includes("rpc('fn_submit_technologist_request_for_approval'"), 'wizard must submit approval version')
 assert.ok(!requestCompletion.includes("rpc('fn_finalize_technologist_request_with_archives'"), 'wizard must not directly finalize request')
 assert.ok(supplyRequest.includes("const visibleStatuses = ['pending_stock_check', 'stock_checked', 'submitted_to_supply', 'completed']"), 'supply direct-page allow-list changed unexpectedly')
-assert.ok(supplyRequest.includes("(role === 'supply_manager' || role === 'procurement_head') && request.status !== 'submitted_to_supply' && request.status !== 'completed'"), 'supply and procurement roles must only see approved statuses')
+assert.ok(supplyRequest.includes("const isSupplyOnly = hasPermission(permissions, 'supply_material_requests', 'view')"), 'supply-only visibility must come from the access matrix')
+assert.ok(supplyRequest.includes("isSupplyOnly && request.status !== 'submitted_to_supply' && request.status !== 'completed'"), 'supply-only users must only see approved statuses')
 
 console.log('technologist financial approval contract: OK')

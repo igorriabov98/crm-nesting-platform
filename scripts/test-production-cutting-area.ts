@@ -8,6 +8,7 @@ import {
   type CuttingAreaItemFileBinding,
 } from '../src/lib/production-cutting-area/files'
 import {
+  getCuttingAreaOrderStatusLabel,
   getCuttingAreaRequestStatusLabel,
   isActiveCuttingAreaRequest,
 } from '../src/lib/production-cutting-area/request-status'
@@ -17,6 +18,7 @@ const read = (path: string) => readFileSync(join(root, path), 'utf8')
 const migration = read('supabase/migrations/20260809120000_production_cutting_area.sql')
 const factoryScopeMigration = read('supabase/migrations/20260811120000_production_cutting_area_factory_scope.sql')
 const cancelledRequestMigration = read('supabase/migrations/20260909173000_ignore_cancelled_cutting_area_requests.sql')
+const draftRequestMigration = read('supabase/migrations/20260916084500_draft_request_deletion_and_cutting_exclusion.sql')
 
 for (const table of ['production_cutting_cycles', 'production_cutting_cycle_requests', 'production_cutting_cycle_events']) {
   assert(migration.includes(`create table public.${table}`), `Нет таблицы ${table}`)
@@ -44,12 +46,22 @@ assert(factoryScopeMigration.includes('new_factory_scope'))
 assert(!factoryScopeMigration.includes("set factory_scope = 'all'"), 'Миграция не должна автоматически открывать оба завода')
 assert(isActiveCuttingAreaRequest('completed'))
 assert(isActiveCuttingAreaRequest('stock_checked'))
+assert(!isActiveCuttingAreaRequest('draft'))
 assert(!isActiveCuttingAreaRequest('cancelled'))
+assert.equal(getCuttingAreaOrderStatusLabel('waiting', 'Не завершены заявки технолога: №2', false), 'Ожидает завершения заявки №2')
+assert.equal(getCuttingAreaOrderStatusLabel('waiting', 'Не завершены заявки технолога: №1, №3', false), 'Ожидает завершения заявок №1, №3')
+assert.equal(getCuttingAreaOrderStatusLabel('waiting', 'Не указана дата начала Заготовки', false), 'Ожидает дату начала')
 assert.equal(getCuttingAreaRequestStatusLabel('cancelled', false), 'Отменена')
 assert.equal(getCuttingAreaRequestStatusLabel('completed', true), 'Завершена')
 assert.equal(getCuttingAreaRequestStatusLabel('stock_checked', false), 'Не завершена')
 assert.match(cancelledRequestMigration, /request\.status <> 'cancelled'::public\.request_status/)
 assert.match(cancelledRequestMigration, /fn_start_production_cutting_cycle_before_race_serialization/)
+assert.match(draftRequestMigration, /request\.status not in \('draft'::public\.request_status, 'cancelled'::public\.request_status\)/)
+assert.match(draftRequestMigration, /fn_delete_technologist_request_draft_v1/)
+assert.match(draftRequestMigration, /v_request\.status <> 'draft'::public\.request_status/)
+assert.match(draftRequestMigration, /grant execute on function public\.fn_delete_technologist_request_draft_v1\(uuid, uuid\)[\s\S]*to service_role/)
+assert.doesNotMatch(draftRequestMigration, /grant execute on function public\.fn_delete_technologist_request_draft_v1\(uuid, uuid\)[\s\S]*to authenticated/)
+assert.doesNotMatch(draftRequestMigration, /role_permissions/, 'Новый RPC не должен сохранять legacy-fallback после cutover')
 
 const resource = PERMISSION_RESOURCES.find((candidate) => candidate.key === 'production_cutting_area')
 assert(resource)
@@ -79,7 +91,9 @@ assert(action.includes('canViewAllFactories: canSeeAllFactories'), 'Payload до
 assert(!action.includes('DIRECTOR_ROLES'), 'Серверные действия должны использовать единый резолвер охвата')
 assert(action.includes('production_month'))
 assert(action.includes('isActiveCuttingAreaRequest(request.status)'))
-assert(action.includes(".neq('status', 'cancelled')"), 'Старт цикла не должен передавать отменённые заявки')
+assert(action.includes('isActiveCuttingAreaRequest(request.status)'), 'Старт цикла должен исключать черновики и отменённые заявки')
+assert(action.includes('Заявка не участвует в очереди участка заготовки'), 'Черновик нельзя открыть прямой ссылкой участка')
+assert(action.includes('Не завершены заявки технолога:'), 'Причина ожидания должна содержать номера заявок')
 assert(action.includes(".in('product_id', productIds)"), 'Файлы старых позиций должны находиться по product_id')
 assert(action.includes("['drawing','step','pdf']"), 'PDF изделия должен отображаться вместе с чертежами')
 assert(action.includes("db.from('long_stock_cutting_plan_items')"), 'Под заявкой должны загружаться карты раскроя')

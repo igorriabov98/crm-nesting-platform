@@ -25,11 +25,7 @@ import {
   type ConsumableStockOperationInput,
   type ConsumableStockRow,
 } from '@/lib/types/consumables'
-import type { CurrentUser, FactorySummary, UserRole } from '@/lib/types'
-
-const DIRECTORS: UserRole[] = ['financial_director', 'commercial_director', 'planning_director']
-const CRM_ADMIN_POSITION_NAME = 'Администратор CRM'
-const PLANNING_DEPARTMENT_KEYWORD = 'планирован'
+import type { FactorySummary } from '@/lib/types'
 type AdminClient = SupabaseClient
 
 type ActionResult<T = undefined> = {
@@ -51,52 +47,6 @@ function getErrorMessage(error: unknown) {
   return String(error || 'Неизвестная ошибка')
 }
 
-function isDirector(role: UserRole) {
-  return DIRECTORS.includes(role)
-}
-
-function isCrmAdminUser(user: Pick<CurrentUser, 'department_memberships'>) {
-  return Boolean(
-    user.department_memberships?.some((membership) => membership.position?.name === CRM_ADMIN_POSITION_NAME),
-  )
-}
-
-function normalizeText(value: string | null | undefined) {
-  return (value || '')
-    .toLowerCase()
-    .replace(/ё/g, 'е')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function isIgorRiabov(user: Pick<CurrentUser, 'full_name' | 'email'>) {
-  const fullName = normalizeText(user.full_name)
-  const email = normalizeText(user.email)
-  return (
-    fullName === 'игорь рябов'
-    || fullName === 'игор рябов'
-    || fullName === 'igor riabov'
-    || fullName === 'ihor riabov'
-    || email.includes('igorriabov')
-  )
-}
-
-function isPlanningDepartmentHead(user: Pick<CurrentUser, 'department_memberships'>) {
-  return Boolean(
-    user.department_memberships?.some((membership) => (
-      membership.is_department_head
-      && (
-        normalizeText(membership.department?.name).includes(PLANNING_DEPARTMENT_KEYWORD)
-        || normalizeText(membership.position?.name).includes(PLANNING_DEPARTMENT_KEYWORD)
-      )
-    )),
-  )
-}
-
-function canAdjustConsumableStock(user: CurrentUser, role: UserRole, isCrmAdmin: boolean) {
-  return role === 'planning_director' || isPlanningDepartmentHead(user) || (isCrmAdmin && isIgorRiabov(user))
-}
-
 async function getContext(
   resourceKey: Extract<ResourceKey, 'consumables' | 'consumable_requests' | 'supply_consumable_requests'>,
   operation: PermissionOperation,
@@ -104,7 +54,6 @@ async function getContext(
   const context = await requirePermission(resourceKey, operation)
   return {
     ...context,
-    isCrmAdmin: isCrmAdminUser(context.user),
     admin: createAdminClient() as AdminClient,
     client: context.supabase as SupabaseClient,
   }
@@ -117,24 +66,9 @@ async function getRequestContext(operation: PermissionOperation) {
   ])
   return {
     ...context,
-    isCrmAdmin: isCrmAdminUser(context.user),
     admin: createAdminClient() as AdminClient,
     client: context.supabase as SupabaseClient,
   }
-}
-
-function assertFactoryAccess(
-  role: UserRole,
-  userFactoryId: string | null,
-  factoryId: string,
-  mode: 'catalog' | 'requests',
-  isCrmAdmin = false,
-) {
-  if (isCrmAdmin) return
-  if (isDirector(role)) return
-  if (userFactoryId === factoryId) return
-  if (mode === 'requests' && (role === 'supply_manager' || role === 'procurement_head')) return
-  throw new Error('Недостаточно прав для выбранного завода')
 }
 
 async function getFactoryIdForConsumable(admin: AdminClient, consumableId: string) {
@@ -148,17 +82,6 @@ async function getFactoryIdForConsumable(admin: AdminClient, consumableId: strin
   return row.factory_id
 }
 
-async function getFactoryIdForRequest(admin: AdminClient, requestId: string) {
-  const { data, error } = await admin
-    .from('consumable_requests')
-    .select('factory_id')
-    .eq('id', requestId)
-    .maybeSingle()
-  const row = data as FactoryIdRow | null
-  if (error || !row) throw new Error(error?.message || 'Заявка не найдена')
-  return row.factory_id
-}
-
 function revalidateConsumables() {
   revalidatePath(ROUTES.PRODUCTION_CONSUMABLES)
   revalidatePath(ROUTES.PRODUCTION_CONSUMABLE_REQUESTS)
@@ -167,26 +90,17 @@ function revalidateConsumables() {
   revalidatePath(ROUTES.NOTIFICATIONS)
 }
 
-async function getVisibleFactoriesForRole(
-  role: UserRole,
-  factoryId: string | null,
-  catalogOnly = false,
-  isCrmAdmin = false,
-) {
+async function getVisibleFactories() {
   const admin = createAdminClient() as AdminClient
-  let query = admin.from('factories').select('id, name').order('name')
-  const canSeeAllFactories = isCrmAdmin
-    || isDirector(role)
-    || (!catalogOnly && (role === 'supply_manager' || role === 'procurement_head'))
-  if (!canSeeAllFactories) query = query.eq('id', factoryId || '00000000-0000-0000-0000-000000000000')
+  const query = admin.from('factories').select('id, name').order('name')
   const { data, error } = await query
   if (error) throw error
   return (data || []) as FactorySummary[]
 }
 
 export async function getConsumablesWorkspaceData(factoryId?: string | null) {
-  const { role, factoryId: userFactoryId, isCrmAdmin, permissions, user, admin } = await getContext('consumables', 'view')
-  const factories = await getVisibleFactoriesForRole(role, userFactoryId, true, isCrmAdmin)
+  const { permissions, admin } = await getContext('consumables', 'view')
+  const factories = await getVisibleFactories()
   const selectedFactoryId = factories.some((factory) => factory.id === factoryId)
     ? factoryId!
     : factories[0]?.id
@@ -194,8 +108,6 @@ export async function getConsumablesWorkspaceData(factoryId?: string | null) {
   if (!selectedFactoryId) {
     return { factories, selectedFactoryId: null, categories: [], stock: [], movements: [], canAdjustStock: false }
   }
-  assertFactoryAccess(role, userFactoryId, selectedFactoryId, 'catalog', isCrmAdmin)
-
   const [categoriesResult, stockResult, movementsResult] = await Promise.all([
     admin
       .from('consumable_categories')
@@ -231,8 +143,7 @@ export async function getConsumablesWorkspaceData(factoryId?: string | null) {
     categories: (categoriesResult.data || []) as ConsumableCategory[],
     stock: (stockResult.data || []) as ConsumableStockRow[],
     movements: (movementsResult.data || []) as ConsumableMovement[],
-    canAdjustStock: hasPermission(permissions, 'consumables', 'manage')
-      && canAdjustConsumableStock(user, role, isCrmAdmin),
+    canAdjustStock: hasPermission(permissions, 'consumables', 'manage'),
   }
 }
 
@@ -241,20 +152,14 @@ export async function getConsumableRequestsPageData(
   factoryId?: string | null,
 ) {
   const resourceKey = mode === 'production' ? 'consumable_requests' : 'supply_consumable_requests'
-  const { role, factoryId: userFactoryId, isCrmAdmin, admin } = await getContext(resourceKey, 'view')
+  const { admin } = await getContext(resourceKey, 'view')
 
-  const factories = await getVisibleFactoriesForRole(role, userFactoryId, false, isCrmAdmin)
-  const canSeeAllFactories = isCrmAdmin
-    || isDirector(role)
-    || role === 'supply_manager'
-    || role === 'procurement_head'
-  const selectedFactoryId = factoryId === 'all' && canSeeAllFactories
+  const factories = await getVisibleFactories()
+  const selectedFactoryId = factoryId === 'all'
     ? 'all'
     : factories.some((factory) => factory.id === factoryId)
       ? factoryId!
-      : canSeeAllFactories
-        ? 'all'
-        : factories[0]?.id
+      : 'all'
 
   let requestQuery = admin
     .from('consumable_requests')
@@ -296,8 +201,6 @@ export async function getConsumableRequestsPageData(
 
   return {
     mode,
-    role,
-    isCrmAdmin,
     factories,
     selectedFactoryId,
     requests: (requestsResult.data || []) as ConsumableRequest[],
@@ -306,9 +209,7 @@ export async function getConsumableRequestsPageData(
 }
 
 export async function getConsumableRequestDetails(requestId: string) {
-  const { role, factoryId, isCrmAdmin, permissions, admin } = await getRequestContext('view')
-  const requestFactoryId = await getFactoryIdForRequest(admin, requestId)
-  assertFactoryAccess(role, factoryId, requestFactoryId, 'requests', isCrmAdmin)
+  const { permissions, admin } = await getRequestContext('view')
 
   const { data, error } = await admin
     .from('consumable_requests')
@@ -358,8 +259,7 @@ export async function createConsumableCategory(input: {
 }): Promise<ActionResult<{ id: string }>> {
   try {
     const parsed = consumableCategoryInputSchema.parse(input)
-    const { role, factoryId, isCrmAdmin, userId, admin } = await getContext('consumables', 'manage')
-    assertFactoryAccess(role, factoryId, parsed.factoryId, 'catalog', isCrmAdmin)
+    const { userId, admin } = await getContext('consumables', 'manage')
 
     const { data, error } = await admin
       .from('consumable_categories')
@@ -381,15 +281,13 @@ export async function createConsumableCategory(input: {
 
 export async function archiveConsumableCategory(categoryId: string): Promise<ActionResult> {
   try {
-    const { role, factoryId, isCrmAdmin, admin } = await getContext('consumables', 'manage')
+    const { admin } = await getContext('consumables', 'manage')
     const { data: category, error: categoryError } = await admin
       .from('consumable_categories')
       .select('factory_id')
       .eq('id', categoryId)
       .maybeSingle()
     if (categoryError || !category) throw new Error(categoryError?.message || 'Категория не найдена')
-    assertFactoryAccess(role, factoryId, category.factory_id, 'catalog', isCrmAdmin)
-
     const updatedAt = new Date().toISOString()
     const { error: itemsError } = await admin
       .from('consumables')
@@ -414,8 +312,7 @@ export async function archiveConsumableCategory(categoryId: string): Promise<Act
 export async function createConsumable(input: ConsumableItemInput): Promise<ActionResult<{ id: string }>> {
   try {
     const parsed = consumableItemInputSchema.parse(input)
-    const { role, factoryId, isCrmAdmin, client } = await getContext('consumables', 'manage')
-    assertFactoryAccess(role, factoryId, parsed.factoryId, 'catalog', isCrmAdmin)
+    const { client } = await getContext('consumables', 'manage')
 
     const { data, error } = await client.rpc('create_consumable_item', {
       p_factory_id: parsed.factoryId,
@@ -441,9 +338,8 @@ export async function updateConsumable(
 ): Promise<ActionResult> {
   try {
     const parsed = consumableItemInputSchema.omit({ factoryId: true, initialQuantity: true }).parse(input)
-    const { role, factoryId, isCrmAdmin, admin, client } = await getContext('consumables', 'manage')
+    const { admin, client } = await getContext('consumables', 'manage')
     const itemFactoryId = await getFactoryIdForConsumable(admin, consumableId)
-    assertFactoryAccess(role, factoryId, itemFactoryId, 'catalog', isCrmAdmin)
 
     const { data: category } = await admin
       .from('consumable_categories')
@@ -481,9 +377,7 @@ export async function updateConsumable(
 
 export async function archiveConsumable(consumableId: string): Promise<ActionResult> {
   try {
-    const { role, factoryId, isCrmAdmin, admin, client } = await getContext('consumables', 'manage')
-    const itemFactoryId = await getFactoryIdForConsumable(admin, consumableId)
-    assertFactoryAccess(role, factoryId, itemFactoryId, 'catalog', isCrmAdmin)
+    const { admin, client } = await getContext('consumables', 'manage')
 
     const { count } = await admin
       .from('consumable_requests')
@@ -510,14 +404,9 @@ export async function recordConsumableStockOperation(
 ): Promise<ActionResult<{ balance: number }>> {
   try {
     const parsed = consumableStockOperationSchema.parse(input)
-    const { role, factoryId, isCrmAdmin, user, admin, client } = await getContext('consumables', 'manage')
-    const itemFactoryId = await getFactoryIdForConsumable(admin, parsed.consumableId)
-    assertFactoryAccess(role, factoryId, itemFactoryId, 'catalog', isCrmAdmin)
+    const { client } = await getContext('consumables', 'manage')
     if (parsed.operation === 'manual_receipt') {
       throw new Error('Ручной приход отключен. Приход расходников фиксируется только через получение заявки.')
-    }
-    if (parsed.operation === 'adjustment' && !canAdjustConsumableStock(user, role, isCrmAdmin)) {
-      throw new Error('Сверка остатков доступна только Игорю Рябову (Администратор CRM) и начальнику отдела планирования.')
     }
     const { data, error } = await client.rpc('record_consumable_stock_operation', {
       p_consumable_id: parsed.consumableId,
@@ -539,9 +428,8 @@ export async function createConsumableRequestDraft(
 ): Promise<ActionResult<{ id: string }>> {
   try {
     const parsed = consumableDraftInputSchema.parse(input)
-    const { role, factoryId, isCrmAdmin, userId, admin } = await getContext('consumable_requests', 'manage')
+    const { userId, admin } = await getContext('consumable_requests', 'manage')
     const itemFactoryId = await getFactoryIdForConsumable(admin, parsed.consumableId)
-    assertFactoryAccess(role, factoryId, itemFactoryId, 'requests', isCrmAdmin)
 
     const { data, error } = await admin
       .from('consumable_requests')
@@ -571,9 +459,7 @@ export async function updateConsumableRequestDraft(
 ): Promise<ActionResult> {
   try {
     const parsed = consumableDraftInputSchema.omit({ consumableId: true }).parse(input)
-    const { role, factoryId, isCrmAdmin, admin } = await getContext('consumable_requests', 'manage')
-    const requestFactoryId = await getFactoryIdForRequest(admin, requestId)
-    assertFactoryAccess(role, factoryId, requestFactoryId, 'requests', isCrmAdmin)
+    const { admin } = await getContext('consumable_requests', 'manage')
 
     const { error } = await admin
       .from('consumable_requests')
@@ -600,9 +486,7 @@ export async function submitConsumableRequest(
 ): Promise<ActionResult> {
   try {
     const parsedPriority = consumablePrioritySchema.parse(priority)
-    const { role, factoryId, isCrmAdmin, admin, client } = await getContext('consumable_requests', 'manage')
-    const requestFactoryId = await getFactoryIdForRequest(admin, requestId)
-    assertFactoryAccess(role, factoryId, requestFactoryId, 'requests', isCrmAdmin)
+    const { client } = await getContext('consumable_requests', 'manage')
 
     const { error } = await client.rpc('submit_consumable_request', {
       p_request_id: requestId,
@@ -619,9 +503,7 @@ export async function submitConsumableRequest(
 
 export async function cancelConsumableRequest(requestId: string, reason = ''): Promise<ActionResult> {
   try {
-    const { role, factoryId, isCrmAdmin, admin, client } = await getContext('consumable_requests', 'manage')
-    const requestFactoryId = await getFactoryIdForRequest(admin, requestId)
-    assertFactoryAccess(role, factoryId, requestFactoryId, 'requests', isCrmAdmin)
+    const { client } = await getContext('consumable_requests', 'manage')
     const { error } = await client.rpc('cancel_consumable_request', {
       p_request_id: requestId,
       p_reason: reason,
@@ -653,9 +535,7 @@ async function transitionSupplyRequest(
   delivery?: ConsumableDeliveryInput,
 ): Promise<ActionResult> {
   try {
-    const { role, factoryId, isCrmAdmin, admin, client } = await getContext('supply_consumable_requests', 'manage')
-    const requestFactoryId = await getFactoryIdForRequest(admin, requestId)
-    assertFactoryAccess(role, factoryId, requestFactoryId, 'requests', isCrmAdmin)
+    const { client } = await getContext('supply_consumable_requests', 'manage')
 
     const { error } = await client.rpc('transition_consumable_request_supply', {
       p_request_id: requestId,
@@ -676,9 +556,7 @@ async function transitionSupplyRequest(
 
 export async function updateOtherDeliveryEta(requestId: string, carrierEta: string): Promise<ActionResult> {
   try {
-    const { role, factoryId, isCrmAdmin, admin, client } = await getContext('supply_consumable_requests', 'manage')
-    const requestFactoryId = await getFactoryIdForRequest(admin, requestId)
-    assertFactoryAccess(role, factoryId, requestFactoryId, 'requests', isCrmAdmin)
+    const { client } = await getContext('supply_consumable_requests', 'manage')
     const { error } = await client.rpc('update_consumable_other_delivery_eta', {
       p_request_id: requestId,
       p_carrier_eta: carrierEta,
@@ -696,9 +574,7 @@ export async function receiveConsumableRequest(
   quantity: number,
 ): Promise<ActionResult> {
   try {
-    const { role, factoryId, isCrmAdmin, admin, client } = await getContext('supply_consumable_requests', 'manage')
-    const requestFactoryId = await getFactoryIdForRequest(admin, requestId)
-    assertFactoryAccess(role, factoryId, requestFactoryId, 'requests', isCrmAdmin)
+    const { client } = await getContext('supply_consumable_requests', 'manage')
     const { error } = await client.rpc('receive_consumable_request', {
       p_request_id: requestId,
       p_quantity: quantity,
@@ -717,9 +593,7 @@ export async function closeConsumableRequestRemainder(
   reason: string,
 ): Promise<ActionResult> {
   try {
-    const { role, factoryId, isCrmAdmin, admin, client } = await getContext('supply_consumable_requests', 'manage')
-    const requestFactoryId = await getFactoryIdForRequest(admin, requestId)
-    assertFactoryAccess(role, factoryId, requestFactoryId, 'requests', isCrmAdmin)
+    const { client } = await getContext('supply_consumable_requests', 'manage')
     const { error } = await client.rpc('close_consumable_request_remainder', {
       p_request_id: requestId,
       p_reason: reason,

@@ -5,12 +5,12 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
+import { hasPermission } from '@/lib/permissions/resources'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import { snapshotFromSource } from '@/lib/server/technologist-approval-snapshot'
 import {
   compareApprovalSnapshots,
-  isFinancialApprovalReviewer,
 } from '@/lib/technologist-request-approval'
 
 const requestIdSchema = z.string().uuid()
@@ -21,8 +21,8 @@ function db() { return createAdminClient() as any }
 
 export async function getTechnologistApprovalList() {
   try {
-    const { userId, role, permissionDetails } = await requirePermission('technologist_request_results', 'view')
-    const reviewer = isFinancialApprovalReviewer(role, permissionDetails.isAdminPosition)
+    const { userId, permissions } = await requirePermission('technologist_request_results', 'view')
+    const reviewer = hasPermission(permissions, 'technologist_request_results', 'manage')
     let requests = db().from('technologist_requests')
       .select('id,machine_id,created_by,status,created_at,machines(id,name,material_type)')
       .order('created_at', { ascending: false })
@@ -62,12 +62,12 @@ export async function getTechnologistApprovalList() {
 export async function getTechnologistApprovalDetail(requestId: string) {
   try {
     const id = requestIdSchema.parse(requestId)
-    const { userId, role, permissionDetails } = await requirePermission('technologist_request_results', 'view')
+    const { userId, permissions } = await requirePermission('technologist_request_results', 'view')
     const requestResult = await db().from('technologist_requests')
       .select('id,machine_id,created_by,status,created_at,machines(id,name,material_type),users!technologist_requests_created_by_fkey(full_name)')
       .eq('id', id).single()
     if (requestResult.error || !requestResult.data) throw new Error('Заявка не найдена')
-    const reviewer = isFinancialApprovalReviewer(role, permissionDetails.isAdminPosition)
+    const reviewer = hasPermission(permissions, 'technologist_request_results', 'manage')
     if (!reviewer && requestResult.data.created_by !== userId) throw new Error('Заявка недоступна')
     const numberRows = await db().from('technologist_requests').select('id').eq('machine_id', requestResult.data.machine_id).order('created_at', { ascending: true }).order('id', { ascending: true })
     if (numberRows.error) throw numberRows.error
@@ -159,11 +159,10 @@ export async function beginTechnologistRequestRevision(requestId: string) {
 export async function returnTechnologistRequest(input: z.input<typeof returnSchema>) {
   try {
     const parsed = returnSchema.parse(input)
-    const { userId, role, permissionDetails } = await requirePermission('technologist_request_results', 'manage')
-    if (!isFinancialApprovalReviewer(role, permissionDetails.isAdminPosition)) throw new Error('Недостаточно прав')
+    const { userId, supabase } = await requirePermission('technologist_request_results', 'manage')
     const version = await db().from('technologist_request_approval_versions').select('request_id').eq('id', parsed.versionId).single()
     if (version.error || !version.data) throw new Error('Версия не найдена')
-    const { error } = await db().rpc('fn_return_technologist_request_for_revision', {
+    const { error } = await (supabase as any).rpc('fn_return_technologist_request_for_revision', {
       p_approval_version_id: parsed.versionId, p_actor: userId, p_reason: parsed.reason,
     })
     if (error) throw error
@@ -175,11 +174,10 @@ export async function returnTechnologistRequest(input: z.input<typeof returnSche
 export async function approveTechnologistRequest(versionId: string) {
   try {
     const id = versionIdSchema.parse(versionId)
-    const { userId, role, permissionDetails } = await requirePermission('technologist_request_results', 'manage')
-    if (!isFinancialApprovalReviewer(role, permissionDetails.isAdminPosition)) throw new Error('Недостаточно прав')
+    const { userId, supabase } = await requirePermission('technologist_request_results', 'manage')
     const version = await db().from('technologist_request_approval_versions').select('request_id').eq('id', id).single()
     if (version.error || !version.data) throw new Error('Версия не найдена')
-    const { error } = await db().rpc('fn_approve_technologist_request', { p_approval_version_id: id, p_actor: userId })
+    const { error } = await (supabase as any).rpc('fn_approve_technologist_request', { p_approval_version_id: id, p_actor: userId })
     if (error) throw error
     revalidateApproval(version.data.request_id)
     return { success: true }

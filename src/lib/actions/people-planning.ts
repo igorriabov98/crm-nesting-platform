@@ -3,6 +3,7 @@
 import { z } from 'zod'
 import { requirePermission } from '@/lib/permissions/server'
 import type { PermissionOperation } from '@/lib/permissions/resources'
+import { assertFactoryAccess, canAccessAllFactories } from '@/lib/permissions/factory-scope'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type {
   Employee,
@@ -11,7 +12,6 @@ import type {
   EmployeeVacation,
   FactorySummary,
   ProductionFactSection,
-  UserRole,
 } from '@/lib/types'
 import { planningDateRange, todayInUzhgorod } from '@/lib/people-planning/slots'
 import {
@@ -53,8 +53,6 @@ function peopleDb(client: unknown) {
   return client as PeopleDb
 }
 
-const DIRECTORS: UserRole[] = ['financial_director', 'commercial_director', 'planning_director']
-const ALLOWED_ROLES: UserRole[] = [...DIRECTORS, 'production_manager']
 const uuid = z.string().uuid()
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 const monthOnly = z.string().regex(/^\d{4}-\d{2}-01$/)
@@ -119,10 +117,6 @@ const cancelEmployeeDaySchema = z.object({
   workDate: dateOnly,
 })
 
-function isDirector(role: UserRole) {
-  return DIRECTORS.includes(role)
-}
-
 function errorMessage(error: unknown) {
   if (error instanceof z.ZodError) return error.issues[0]?.message || 'Проверьте заполнение полей'
   if (error instanceof Error) return error.message
@@ -156,17 +150,7 @@ function errorMessage(error: unknown) {
 }
 
 async function requirePeoplePlanning(operation: PermissionOperation = 'view') {
-  const context = await requirePermission('production_fact', operation)
-  if (!ALLOWED_ROLES.includes(context.role)) throw new Error('Нет доступа к планированию людей')
-  if (context.role === 'production_manager' && !context.factoryId) {
-    throw new Error('Для начальника производства не указан завод')
-  }
-  return context
-}
-
-function assertFactory(role: UserRole, userFactoryId: string | null, factoryId: string) {
-  if (isDirector(role) || userFactoryId === factoryId) return
-  throw new Error('Недостаточно прав для выбранного завода')
+  return requirePermission('production_fact', operation)
 }
 
 async function getEmployeeFactory(employeeId: string) {
@@ -205,7 +189,11 @@ export async function getWorkersWorkspace(input?: { factoryId?: string }): Promi
   const context = await requirePeoplePlanning()
   const admin = peopleDb(createAdminClient())
   let factoryQuery = admin.from('factories').select('id, name').order('name')
-  if (!isDirector(context.role)) factoryQuery = factoryQuery.eq('id', context.factoryId!)
+  const canViewAllFactories = canAccessAllFactories(context, 'production_fact', 'view')
+  if (!canViewAllFactories) {
+    if (!context.factoryId) throw new Error('Для пользователя не указан завод')
+    factoryQuery = factoryQuery.eq('id', context.factoryId)
+  }
   const { data: factoryRows, error: factoryError } = await factoryQuery
   if (factoryError) throw factoryError
   const factories = (factoryRows || []) as FactorySummary[]
@@ -216,7 +204,7 @@ export async function getWorkersWorkspace(input?: { factoryId?: string }): Promi
     : (context.factoryId && factories.some((factory) => factory.id === context.factoryId)
       ? context.factoryId
       : factories[0].id)
-  assertFactory(context.role, context.factoryId, selectedFactoryId)
+  assertFactoryAccess(context, 'production_fact', 'view', selectedFactoryId)
 
   const [sectionsResult, employeesResult] = await Promise.all([
     admin.from('production_fact_sections').select('*')
@@ -249,7 +237,7 @@ export async function getWorkersWorkspace(input?: { factoryId?: string }): Promi
     employees,
     rates: (ratesResult.data || []) as EmployeeRate[],
     vacations: (vacationsResult.data || []) as EmployeeVacation[],
-    isDirector: isDirector(context.role),
+    isDirector: canViewAllFactories,
   }
 }
 
@@ -262,7 +250,11 @@ export async function getPeoplePlanningWorkspace(input?: {
   const context = await requirePeoplePlanning()
   const admin = peopleDb(createAdminClient())
   let factoryQuery = admin.from('factories').select('id, name').order('name')
-  if (!isDirector(context.role)) factoryQuery = factoryQuery.eq('id', context.factoryId!)
+  const canViewAllFactories = canAccessAllFactories(context, 'production_fact', 'view')
+  if (!canViewAllFactories) {
+    if (!context.factoryId) throw new Error('Для пользователя не указан завод')
+    factoryQuery = factoryQuery.eq('id', context.factoryId)
+  }
   const { data: factoryRows, error: factoryError } = await factoryQuery
   if (factoryError) throw factoryError
   const factories = (factoryRows || []) as FactorySummary[]
@@ -273,7 +265,7 @@ export async function getPeoplePlanningWorkspace(input?: {
     : (context.factoryId && factories.some((factory) => factory.id === context.factoryId)
       ? context.factoryId
       : factories[0].id)
-  assertFactory(context.role, context.factoryId, selectedFactoryId)
+  assertFactoryAccess(context, 'production_fact', 'view', selectedFactoryId)
   const selectedDate = dateOnly.safeParse(input?.date).success ? input!.date! : todayInUzhgorod()
   const view: PeoplePlanningView = input?.view === 'week' ? 'week' : 'day'
   const dates = planningDateRange(selectedDate, view)
@@ -378,7 +370,7 @@ export async function getPeoplePlanningWorkspace(input?: {
     assignments,
     planningAssignments,
     machines,
-    isDirector: isDirector(context.role),
+    isDirector: canViewAllFactories,
   }
 }
 
@@ -386,7 +378,7 @@ export async function saveEmployeeAction(input: z.input<typeof employeeSchema>):
   try {
     const context = await requirePeoplePlanning('manage')
     const parsed = employeeSchema.parse(input)
-    assertFactory(context.role, context.factoryId, parsed.factoryId)
+    assertFactoryAccess(context, 'production_fact', 'manage', parsed.factoryId)
     const admin = peopleDb(createAdminClient())
     const payload = {
       full_name: parsed.fullName,
@@ -411,7 +403,7 @@ export async function saveEmployeeRateAction(input: z.input<typeof rateSchema>):
     const context = await requirePeoplePlanning('manage')
     const parsed = rateSchema.parse(input)
     const factoryId = await getEmployeeFactory(parsed.employeeId)
-    assertFactory(context.role, context.factoryId, factoryId)
+    assertFactoryAccess(context, 'production_fact', 'manage', factoryId)
     const { data, error } = await peopleDb(createAdminClient()).from('employee_rates').upsert({
       employee_id: parsed.employeeId,
       section_id: parsed.sectionId,
@@ -432,7 +424,7 @@ export async function saveEmployeeVacationAction(
     const context = await requirePeoplePlanning('manage')
     const parsed = vacationSchema.parse(input)
     const factoryId = await getEmployeeFactory(parsed.employeeId)
-    assertFactory(context.role, context.factoryId, factoryId)
+    assertFactoryAccess(context, 'production_fact', 'manage', factoryId)
     const admin = peopleDb(createAdminClient())
     const payload = {
       employee_id: parsed.employeeId,
@@ -462,7 +454,7 @@ export async function cancelEmployeeVacationAction(id: string): Promise<PeoplePl
       .select('employee_id').eq('id', vacationId).is('cancelled_at', null).maybeSingle()
     if (vacationError || !vacation) throw new Error(vacationError?.message || 'Отпуск не найден')
     const factoryId = await getEmployeeFactory((vacation as { employee_id: string }).employee_id)
-    assertFactory(context.role, context.factoryId, factoryId)
+    assertFactoryAccess(context, 'production_fact', 'manage', factoryId)
     const { data, error } = await admin.from('employee_vacations').update({
       cancelled_at: new Date().toISOString(),
       updated_by: context.userId,
@@ -479,7 +471,7 @@ export async function scheduleEmployeeAction(input: z.input<typeof scheduleSchem
     const context = await requirePeoplePlanning('manage')
     const parsed = scheduleSchema.parse(input)
     const factoryId = await getEmployeeFactory(parsed.employeeId)
-    assertFactory(context.role, context.factoryId, factoryId)
+    assertFactoryAccess(context, 'production_fact', 'manage', factoryId)
     const { data, error } = await (context.supabase as unknown as PeopleRpc).rpc('fn_people_schedule_assignment', {
       p_employee_id: parsed.employeeId,
       p_machine_id: parsed.machineId,
@@ -501,7 +493,7 @@ export async function scheduleEmployeeFullDayAction(
     const context = await requirePeoplePlanning('manage')
     const parsed = fullDayScheduleSchema.parse(input)
     const factoryId = await getEmployeeFactory(parsed.employeeId)
-    assertFactory(context.role, context.factoryId, factoryId)
+    assertFactoryAccess(context, 'production_fact', 'manage', factoryId)
     const { data, error } = await (context.supabase as unknown as PeopleRpc).rpc('fn_people_schedule_full_day', {
       p_employee_id: parsed.employeeId,
       p_machine_id: parsed.machineId,
@@ -535,8 +527,8 @@ export async function updateEmployeeAssignmentAction(input: z.input<typeof assig
       getAssignmentFactory(parsed.id),
       getEmployeeFactory(parsed.employeeId),
     ])
-    assertFactory(context.role, context.factoryId, sourceFactoryId)
-    assertFactory(context.role, context.factoryId, targetFactoryId)
+    assertFactoryAccess(context, 'production_fact', 'manage', sourceFactoryId)
+    assertFactoryAccess(context, 'production_fact', 'manage', targetFactoryId)
     const { data, error } = await peopleDb(createAdminClient()).from('employee_assignments').update({
       employee_id: parsed.employeeId,
       machine_id: parsed.machineId,
@@ -559,7 +551,7 @@ export async function copyEmployeePreviousDayAction(
     const context = await requirePeoplePlanning('manage')
     const parsed = copyPreviousDaySchema.parse(input)
     const factoryId = await getEmployeeFactory(parsed.employeeId)
-    assertFactory(context.role, context.factoryId, factoryId)
+    assertFactoryAccess(context, 'production_fact', 'manage', factoryId)
     const { data, error } = await (context.supabase as unknown as PeopleRpc).rpc('fn_people_copy_previous_day', {
       p_employee_id: parsed.employeeId,
       p_target_date: parsed.targetDate,
@@ -578,7 +570,7 @@ export async function cancelEmployeeDayAction(
     const context = await requirePeoplePlanning('manage')
     const parsed = cancelEmployeeDaySchema.parse(input)
     const factoryId = await getEmployeeFactory(parsed.employeeId)
-    assertFactory(context.role, context.factoryId, factoryId)
+    assertFactoryAccess(context, 'production_fact', 'manage', factoryId)
     const { data, error } = await (context.supabase as unknown as PeopleRpc).rpc('fn_people_cancel_employee_day', {
       p_employee_id: parsed.employeeId,
       p_work_date: parsed.workDate,

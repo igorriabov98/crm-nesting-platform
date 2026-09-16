@@ -36,6 +36,10 @@ const manualQuantityReconciliationMigration = await readFile(
   new URL('../supabase/migrations/20260910160000_manual_quantity_receipt_reconciliation.sql', import.meta.url),
   'utf8',
 )
+const matrixCutoverMigration = await readFile(
+  new URL('../supabase/migrations/20260916090000_department_rls_matrix_cutover.sql', import.meta.url),
+  'utf8',
+)
 const receivingBatches = await readFile(
   new URL('../src/lib/supply-orders/receiving-batches.ts', import.meta.url),
   'utf8',
@@ -71,13 +75,24 @@ const circleTable = await readFile(
 
 assert.match(
   supplyOrderActions,
-  /requireReceivingAccess\('manage'\)[\s\S]*const receivingRpcDb = createAdminClient\(\) as unknown as RpcDb[\s\S]*fn_receive_supply_order_schedule_v3/,
-  'receiving must authorize the user before invoking the service-role-only manual quantity RPC',
+  /requireReceivingAccess\('manage'\)[\s\S]*const receivingRpcDb = db[\s\S]*fn_receive_supply_order_schedule_v3/,
+  'receiving must authorize the user and invoke the matrix-guarded RPC as that user',
 )
 assert.doesNotMatch(
   supplyOrderActions,
   /db\.rpc\('fn_receive_supply_order_schedule_v2'/,
-  'the authenticated client must not invoke the service-role-only receiving RPC',
+  'the authenticated client must use the current guarded receiving RPC',
+)
+for (const signature of [
+  'fn_receive_supply_order_schedule_v3\\(uuid, uuid, numeric, jsonb, numeric, numeric, text\\)',
+  'fn_receive_supply_order_schedule_batch_v2\\(jsonb, uuid, text\\)',
+]) {
+  assert.match(matrixCutoverMigration, new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${signature} TO authenticated, service_role;`),
+    'manual quantity wrapper must be executable by an authenticated user after cutover')
+}
+assert.match(matrixCutoverMigration,
+  /p_performed_by IS DISTINCT FROM auth\.uid\(\) OR NOT private\.crm_has_permission\('inventory_receiving', 'manage'\)/,
+  'the delegated receiving RPC must enforce the actor and matrix permission',
 )
 assert.match(
   receivingMigration,

@@ -13,7 +13,7 @@ export default async function SalesPlanPage({
 }: {
   searchParams?: Promise<{ factory?: string; productionMonth?: string; view?: string }>
 }) {
-  const { supabase, user, permissions } = await requirePermission('sales_plan', 'view')
+  const { supabase, permissions, permissionDetails } = await requirePermission('sales_plan', 'view')
 
   const resolvedSearchParams = await searchParams
   const factoryFilter = resolvedSearchParams?.factory || 'all'
@@ -67,7 +67,7 @@ export default async function SalesPlanPage({
       <MachineTable
         machines={machines || []}
         canViewInvoice={hasPermission(permissions, 'invoices', 'view')}
-        isDirector={['financial_director', 'commercial_director', 'planning_director'].includes(user.role)}
+        isDirector={permissionDetails.isAdminPosition}
         factories={factoriesData || []}
         factoryFilter={factoryFilter}
         productionMonthFilter={productionMonthFilter}

@@ -4,7 +4,6 @@ import { randomUUID } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
-import { DIRECTOR_ROLES } from '@/lib/constants/roles'
 import { ROUTES } from '@/lib/constants/routes'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
@@ -624,7 +623,7 @@ export async function uploadMachineLayoutPdf(formData: FormData): Promise<Action
   let uploadedPath: string | null = null
 
   try {
-    const { userId, role } = await requirePermission('department_requests', 'manage')
+    const { userId, permissionDetails } = await requirePermission('department_requests', 'manage')
 
     const requestId = String(formData.get('request_id') || '')
     const file = formData.get('file')
@@ -644,7 +643,7 @@ export async function uploadMachineLayoutPdf(formData: FormData): Promise<Action
     if (requestError || !requestData) throw new Error(requestError?.message || 'Версия расстановки не найдена')
     const request = requestData as Pick<MachineLayoutRequest, 'id' | 'machine_id' | 'task_id' | 'requested_by' | 'assigned_to' | 'status' | 'version_no'>
     if (request.status === 'completed') throw new Error('Эта версия уже закрыта. Создайте новый запрос на расстановку.')
-    if (!DIRECTOR_ROLES.includes(role) && request.assigned_to !== userId) {
+    if (!permissionDetails.isAdminPosition && request.assigned_to !== userId) {
       throw new Error('Загрузить PDF может только назначенный технолог')
     }
 

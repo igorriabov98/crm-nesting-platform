@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server'
-import { DIRECTOR_ROLES } from '@/lib/constants/roles'
 import {
   AuthRequiredError,
   UserInactiveError,
@@ -8,7 +7,6 @@ import {
 import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import type { PermissionOperation, ResourceKey } from '@/lib/permissions/resources'
-import type { UserRole } from '@/lib/types'
 
 export type NestingProxyAccessRequirement = {
   resourceKey: Extract<ResourceKey, 'nesting' | 'nesting_settings'>
@@ -18,8 +16,7 @@ export type NestingProxyAccessRequirement = {
 export type NestingProxyContext = {
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>
   userId: string
-  role: UserRole
-  isDirector: boolean
+  isAdminPosition: boolean
 }
 
 export async function getNestingProxyAccess(requirement: NestingProxyAccessRequirement): Promise<{
@@ -28,13 +25,11 @@ export async function getNestingProxyAccess(requirement: NestingProxyAccessRequi
 }> {
   try {
     const permissionContext = await requirePermission(requirement.resourceKey, requirement.operation)
-    const role = permissionContext.role as UserRole
     return {
       context: {
         supabase: permissionContext.supabase,
         userId: permissionContext.userId,
-        role,
-        isDirector: DIRECTOR_ROLES.includes(role),
+        isAdminPosition: permissionContext.permissionDetails.isAdminPosition,
       },
       response: null,
     }

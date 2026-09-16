@@ -1,0 +1,2698 @@
+{
+  "capturedFromProject": "rmnciwiksbfxfsfomvig",
+  "capturedAt": "2026-09-15",
+  "purpose": "Read-only rollback snapshot of every policy on tables affected by the legacy authorization cutover.",
+  "count": 269,
+  "policies": [
+    {
+      "schemaname": "public",
+      "tablename": "app_settings",
+      "policyname": "Directors delete settings",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "is_director()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "app_settings",
+      "policyname": "Directors insert settings",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "app_settings",
+      "policyname": "Directors read settings",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "is_director()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "app_settings",
+      "policyname": "Directors update settings",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "business_scrap_correction_holds",
+      "policyname": "business_scrap_correction_holds_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM business_scrap_correction_requests request\n  WHERE ((request.id = business_scrap_correction_holds.correction_request_id) AND ((request.requested_by = ( SELECT auth.uid() AS uid)) OR (request.approver_id = ( SELECT auth.uid() AS uid)) OR is_director()))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "business_scrap_correction_items",
+      "policyname": "business_scrap_correction_items_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM business_scrap_correction_requests request\n  WHERE ((request.id = business_scrap_correction_items.correction_request_id) AND ((request.requested_by = ( SELECT auth.uid() AS uid)) OR (request.approver_id = ( SELECT auth.uid() AS uid)) OR is_director()))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "business_scrap_correction_requests",
+      "policyname": "business_scrap_correction_requests_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "((( SELECT auth.uid() AS uid) = requested_by) OR (( SELECT auth.uid() AS uid) = approver_id) OR is_director())",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "contracts",
+      "policyname": "contracts_delete_sales",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "contracts",
+      "policyname": "contracts_insert_sales",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "contracts",
+      "policyname": "contracts_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(auth.uid() IS NOT NULL)",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "contracts",
+      "policyname": "contracts_update_sales",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role]))",
+      "with_check": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "employee_assignments",
+      "policyname": "employee_assignments_insert",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(EXISTS ( SELECT 1\n   FROM employees e\n  WHERE ((e.id = employee_assignments.employee_id) AND (( SELECT is_director() AS is_director) OR ((( SELECT get_user_role() AS get_user_role) = 'production_manager'::user_role) AND (e.factory_id = ( SELECT get_user_factory_id() AS get_user_factory_id)))))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "employee_assignments",
+      "policyname": "employee_assignments_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM employees e\n  WHERE ((e.id = employee_assignments.employee_id) AND (( SELECT is_director() AS is_director) OR ((( SELECT get_user_role() AS get_user_role) = 'production_manager'::user_role) AND (e.factory_id = ( SELECT get_user_factory_id() AS get_user_factory_id)))))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "employee_assignments",
+      "policyname": "employee_assignments_update",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(EXISTS ( SELECT 1\n   FROM employees e\n  WHERE ((e.id = employee_assignments.employee_id) AND (( SELECT is_director() AS is_director) OR ((( SELECT get_user_role() AS get_user_role) = 'production_manager'::user_role) AND (e.factory_id = ( SELECT get_user_factory_id() AS get_user_factory_id)))))))",
+      "with_check": "(EXISTS ( SELECT 1\n   FROM employees e\n  WHERE ((e.id = employee_assignments.employee_id) AND (( SELECT is_director() AS is_director) OR ((( SELECT get_user_role() AS get_user_role) = 'production_manager'::user_role) AND (e.factory_id = ( SELECT get_user_factory_id() AS get_user_factory_id)))))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "employee_rates",
+      "policyname": "employee_rates_insert",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(EXISTS ( SELECT 1\n   FROM employees e\n  WHERE ((e.id = employee_rates.employee_id) AND (( SELECT is_director() AS is_director) OR ((( SELECT get_user_role() AS get_user_role) = 'production_manager'::user_role) AND (e.factory_id = ( SELECT get_user_factory_id() AS get_user_factory_id)))))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "employee_rates",
+      "policyname": "employee_rates_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM employees e\n  WHERE ((e.id = employee_rates.employee_id) AND (( SELECT is_director() AS is_director) OR ((( SELECT get_user_role() AS get_user_role) = 'production_manager'::user_role) AND (e.factory_id = ( SELECT get_user_factory_id() AS get_user_factory_id)))))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "employee_rates",
+      "policyname": "employee_rates_update",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(EXISTS ( SELECT 1\n   FROM employees e\n  WHERE ((e.id = employee_rates.employee_id) AND (( SELECT is_director() AS is_director) OR ((( SELECT get_user_role() AS get_user_role) = 'production_manager'::user_role) AND (e.factory_id = ( SELECT get_user_factory_id() AS get_user_factory_id)))))))",
+      "with_check": "(EXISTS ( SELECT 1\n   FROM employees e\n  WHERE ((e.id = employee_rates.employee_id) AND (( SELECT is_director() AS is_director) OR ((( SELECT get_user_role() AS get_user_role) = 'production_manager'::user_role) AND (e.factory_id = ( SELECT get_user_factory_id() AS get_user_factory_id)))))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "employee_vacations",
+      "policyname": "employee_vacations_insert",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(EXISTS ( SELECT 1\n   FROM employees employee\n  WHERE ((employee.id = employee_vacations.employee_id) AND (( SELECT is_director() AS is_director) OR ((( SELECT get_user_role() AS get_user_role) = 'production_manager'::user_role) AND (employee.factory_id = ( SELECT get_user_factory_id() AS get_user_factory_id)))))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "employee_vacations",
+      "policyname": "employee_vacations_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM employees employee\n  WHERE ((employee.id = employee_vacations.employee_id) AND (( SELECT is_director() AS is_director) OR ((( SELECT get_user_role() AS get_user_role) = 'production_manager'::user_role) AND (employee.factory_id = ( SELECT get_user_factory_id() AS get_user_factory_id)))))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "employee_vacations",
+      "policyname": "employee_vacations_update",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(EXISTS ( SELECT 1\n   FROM employees employee\n  WHERE ((employee.id = employee_vacations.employee_id) AND (( SELECT is_director() AS is_director) OR ((( SELECT get_user_role() AS get_user_role) = 'production_manager'::user_role) AND (employee.factory_id = ( SELECT get_user_factory_id() AS get_user_factory_id)))))))",
+      "with_check": "(EXISTS ( SELECT 1\n   FROM employees employee\n  WHERE ((employee.id = employee_vacations.employee_id) AND (( SELECT is_director() AS is_director) OR ((( SELECT get_user_role() AS get_user_role) = 'production_manager'::user_role) AND (employee.factory_id = ( SELECT get_user_factory_id() AS get_user_factory_id)))))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "employees",
+      "policyname": "employees_insert",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(( SELECT is_director() AS is_director) OR ((( SELECT get_user_role() AS get_user_role) = 'production_manager'::user_role) AND (factory_id = ( SELECT get_user_factory_id() AS get_user_factory_id))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "employees",
+      "policyname": "employees_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(( SELECT is_director() AS is_director) OR ((( SELECT get_user_role() AS get_user_role) = 'production_manager'::user_role) AND (factory_id = ( SELECT get_user_factory_id() AS get_user_factory_id))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "employees",
+      "policyname": "employees_update",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(( SELECT is_director() AS is_director) OR ((( SELECT get_user_role() AS get_user_role) = 'production_manager'::user_role) AND (factory_id = ( SELECT get_user_factory_id() AS get_user_factory_id))))",
+      "with_check": "(( SELECT is_director() AS is_director) OR ((( SELECT get_user_role() AS get_user_role) = 'production_manager'::user_role) AND (factory_id = ( SELECT get_user_factory_id() AS get_user_factory_id))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "factory_zinc_outsourcing_defaults",
+      "policyname": "factory_zinc_defaults_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(is_director() OR (factory_id = get_user_factory_id()))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "factory_zinc_outsourcing_defaults",
+      "policyname": "factory_zinc_defaults_service_role_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "finance_budget_limits",
+      "policyname": "finance_budget_limits_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "ALL",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "finance_budget_limits",
+      "policyname": "finance_budget_limits_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "(is_director() OR (EXISTS ( SELECT 1\n   FROM users u\n  WHERE ((u.id = auth.uid()) AND (u.role = 'supply_manager'::user_role)))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "finance_event_actions",
+      "policyname": "finance_event_actions_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "ALL",
+      "qual": "(is_director() OR ((event_type = 'expense'::finance_event_type) AND (EXISTS ( SELECT 1\n   FROM users u\n  WHERE ((u.id = auth.uid()) AND (u.role = 'supply_manager'::user_role)))) AND (EXISTS ( SELECT 1\n   FROM finance_expenses e\n  WHERE ((e.id = finance_event_actions.event_id) AND (e.is_supply_plan = true))))))",
+      "with_check": "(is_director() OR ((event_type = 'expense'::finance_event_type) AND (EXISTS ( SELECT 1\n   FROM users u\n  WHERE ((u.id = auth.uid()) AND (u.role = 'supply_manager'::user_role)))) AND (EXISTS ( SELECT 1\n   FROM finance_expenses e\n  WHERE ((e.id = finance_event_actions.event_id) AND (e.is_supply_plan = true))))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "finance_event_actions",
+      "policyname": "finance_event_actions_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "(is_director() OR ((event_type = 'expense'::finance_event_type) AND (EXISTS ( SELECT 1\n   FROM users u\n  WHERE ((u.id = auth.uid()) AND (u.role = 'supply_manager'::user_role)))) AND (EXISTS ( SELECT 1\n   FROM finance_expenses e\n  WHERE ((e.id = finance_event_actions.event_id) AND (e.is_supply_plan = true))))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "finance_expense_series",
+      "policyname": "finance_expense_series_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "ALL",
+      "qual": "(is_director() OR ((is_supply_plan = true) AND (EXISTS ( SELECT 1\n   FROM users u\n  WHERE ((u.id = auth.uid()) AND (u.role = 'supply_manager'::user_role))))))",
+      "with_check": "(is_director() OR ((is_supply_plan = true) AND (EXISTS ( SELECT 1\n   FROM users u\n  WHERE ((u.id = auth.uid()) AND (u.role = 'supply_manager'::user_role))))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "finance_expense_series",
+      "policyname": "finance_expense_series_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "(is_director() OR (EXISTS ( SELECT 1\n   FROM finance_telegram_recipients r\n  WHERE ((r.user_id = auth.uid()) AND r.is_active))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "finance_expenses",
+      "policyname": "finance_expenses_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "ALL",
+      "qual": "(is_director() OR ((is_supply_plan = true) AND (EXISTS ( SELECT 1\n   FROM users u\n  WHERE ((u.id = auth.uid()) AND (u.role = 'supply_manager'::user_role))))))",
+      "with_check": "(is_director() OR ((is_supply_plan = true) AND (EXISTS ( SELECT 1\n   FROM users u\n  WHERE ((u.id = auth.uid()) AND (u.role = 'supply_manager'::user_role))))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "finance_expenses",
+      "policyname": "finance_expenses_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "(is_director() OR (responsible_user_id = auth.uid()) OR (EXISTS ( SELECT 1\n   FROM finance_telegram_recipients r\n  WHERE ((r.user_id = auth.uid()) AND r.is_active))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "finance_settings",
+      "policyname": "finance_settings_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "ALL",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "finance_settings",
+      "policyname": "finance_settings_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "(is_director() OR (EXISTS ( SELECT 1\n   FROM users u\n  WHERE ((u.id = auth.uid()) AND (u.role = 'supply_manager'::user_role)))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "finance_telegram_dialog_states",
+      "policyname": "finance_telegram_dialog_states_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "ALL",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "finance_telegram_dialog_states",
+      "policyname": "finance_telegram_dialog_states_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "is_director()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "finance_telegram_notifications",
+      "policyname": "finance_telegram_notifications_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "ALL",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "finance_telegram_notifications",
+      "policyname": "finance_telegram_notifications_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "is_director()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "finance_telegram_recipients",
+      "policyname": "finance_telegram_recipients_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "ALL",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "finance_telegram_recipients",
+      "policyname": "finance_telegram_recipients_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "(is_director() OR (EXISTS ( SELECT 1\n   FROM users u\n  WHERE ((u.id = auth.uid()) AND (u.role = 'supply_manager'::user_role)))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "inventory",
+      "policyname": "Inventory insert supply roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "security_can_manage_supply()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "inventory",
+      "policyname": "Inventory read supply roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "security_can_manage_supply()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "inventory",
+      "policyname": "Inventory update supply roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "security_can_manage_supply()",
+      "with_check": "security_can_manage_supply()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "inventory_reservations",
+      "policyname": "Inventory reservations delete supply roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "security_can_manage_supply()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "inventory_reservations",
+      "policyname": "Inventory reservations insert supply roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "security_can_manage_supply()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "inventory_reservations",
+      "policyname": "Inventory reservations read supply roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "security_can_manage_supply()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "inventory_reservations",
+      "policyname": "Inventory reservations update supply roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "security_can_manage_supply()",
+      "with_check": "security_can_manage_supply()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "inventory_transactions",
+      "policyname": "Inventory transactions insert supply roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "security_can_manage_supply()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "inventory_transactions",
+      "policyname": "Inventory transactions read supply roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "security_can_manage_supply()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "invoices",
+      "policyname": "Invoices - Select role specific",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "invoices",
+      "policyname": "invoices_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_chat_mentions",
+      "policyname": "machine_chat_mentions_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM machines m\n  WHERE ((m.id = machine_chat_mentions.machine_id) AND\n        CASE\n            WHEN (get_user_role() = 'production_manager'::user_role) THEN ((m.factory_id = get_user_factory_id()) OR (m.factory_id IS NULL))\n            ELSE true\n        END)))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_chat_mentions",
+      "policyname": "machine_chat_mentions_service_role_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_chat_messages",
+      "policyname": "machine_chat_messages_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM machines m\n  WHERE ((m.id = machine_chat_messages.machine_id) AND\n        CASE\n            WHEN (get_user_role() = 'production_manager'::user_role) THEN ((m.factory_id = get_user_factory_id()) OR (m.factory_id IS NULL))\n            ELSE true\n        END)))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_chat_messages",
+      "policyname": "machine_chat_messages_service_role_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_expenses",
+      "policyname": "machine_expenses_delete",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "((get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role])) AND (EXISTS ( SELECT 1\n   FROM machines m\n  WHERE (m.id = machine_expenses.machine_id))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_expenses",
+      "policyname": "machine_expenses_insert",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "((get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role])) AND (EXISTS ( SELECT 1\n   FROM machines m\n  WHERE (m.id = machine_expenses.machine_id))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_expenses",
+      "policyname": "machine_expenses_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM machines m\n  WHERE ((m.id = machine_expenses.machine_id) AND\n        CASE\n            WHEN (get_user_role() = 'production_manager'::user_role) THEN ((m.factory_id = get_user_factory_id()) OR (m.factory_id IS NULL))\n            ELSE true\n        END)))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_expenses",
+      "policyname": "machine_expenses_update",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "((get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role])) AND (EXISTS ( SELECT 1\n   FROM machines m\n  WHERE (m.id = machine_expenses.machine_id))))",
+      "with_check": "((get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role])) AND (EXISTS ( SELECT 1\n   FROM machines m\n  WHERE (m.id = machine_expenses.machine_id))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_item_nesting_runs",
+      "policyname": "Nesting managers delete machine item nesting runs",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_item_nesting_runs",
+      "policyname": "Nesting managers insert machine item nesting runs",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_item_nesting_runs",
+      "policyname": "Nesting managers read machine item nesting runs",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_item_nesting_runs",
+      "policyname": "Nesting managers update machine item nesting runs",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))",
+      "with_check": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_items",
+      "policyname": "machine_items_delete",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "((get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role])) AND (EXISTS ( SELECT 1\n   FROM machines m\n  WHERE (m.id = machine_items.machine_id))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_items",
+      "policyname": "machine_items_insert",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "((get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role])) AND (EXISTS ( SELECT 1\n   FROM machines m\n  WHERE (m.id = machine_items.machine_id))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_items",
+      "policyname": "machine_items_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM machines m\n  WHERE ((m.id = machine_items.machine_id) AND\n        CASE\n            WHEN (get_user_role() = 'production_manager'::user_role) THEN ((m.factory_id = get_user_factory_id()) OR (m.factory_id IS NULL))\n            ELSE true\n        END)))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_items",
+      "policyname": "machine_items_update",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "((get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role])) AND (EXISTS ( SELECT 1\n   FROM machines m\n  WHERE (m.id = machine_items.machine_id))))",
+      "with_check": "((get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role])) AND (EXISTS ( SELECT 1\n   FROM machines m\n  WHERE (m.id = machine_items.machine_id))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_layout_requests",
+      "policyname": "Machine layout manage sales tech directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "ALL",
+      "qual": "security_has_role(ARRAY['planning_director'::text, 'financial_director'::text, 'commercial_director'::text, 'sales_manager'::text, 'technologist'::text])",
+      "with_check": "security_has_role(ARRAY['planning_director'::text, 'financial_director'::text, 'commercial_director'::text, 'sales_manager'::text, 'technologist'::text])"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_layout_requests",
+      "policyname": "Machine layout read app roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "security_has_role(ARRAY['planning_director'::text, 'financial_director'::text, 'commercial_director'::text, 'sales_manager'::text, 'engineer'::text, 'technologist'::text, 'supply_manager'::text, 'production_manager'::text, 'procurement_head'::text, 'painting_head'::text])",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_outsourcing_operation_items",
+      "policyname": "machine_outsourcing_operation_items_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM (machine_outsourcing_operations op\n     JOIN machines m ON ((m.id = op.machine_id)))\n  WHERE ((op.id = machine_outsourcing_operation_items.operation_id) AND (is_director() OR (m.factory_id = get_user_factory_id()) OR (m.factory_id IS NULL) OR (get_user_role() = ANY (ARRAY['sales_manager'::user_role, 'engineer'::user_role, 'technologist'::user_role, 'supply_manager'::user_role, 'procurement_head'::user_role])) OR ((op.executor_type = 'factory'::outsourcing_executor_type) AND (op.executor_factory_id = get_user_factory_id()))))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_outsourcing_operation_items",
+      "policyname": "machine_outsourcing_operation_items_service_role_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_outsourcing_operations",
+      "policyname": "machine_outsourcing_operations_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(is_director() OR (EXISTS ( SELECT 1\n   FROM machines m\n  WHERE ((m.id = machine_outsourcing_operations.machine_id) AND ((m.factory_id = get_user_factory_id()) OR (m.factory_id IS NULL) OR (get_user_role() = ANY (ARRAY['sales_manager'::user_role, 'engineer'::user_role, 'technologist'::user_role, 'supply_manager'::user_role, 'procurement_head'::user_role])))))) OR ((executor_type = 'factory'::outsourcing_executor_type) AND (executor_factory_id = get_user_factory_id())))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_outsourcing_operations",
+      "policyname": "machine_outsourcing_operations_service_role_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_outsourcing_transport_needs",
+      "policyname": "outsourcing_transport_needs_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(is_director() OR (get_user_role() = ANY (ARRAY['supply_manager'::user_role, 'procurement_head'::user_role])) OR (EXISTS ( SELECT 1\n   FROM (machine_outsourcing_operations op\n     JOIN machines m ON ((m.id = op.machine_id)))\n  WHERE ((op.id = machine_outsourcing_transport_needs.operation_id) AND ((m.factory_id = get_user_factory_id()) OR ((op.executor_type = 'factory'::outsourcing_executor_type) AND (op.executor_factory_id = get_user_factory_id())))))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_outsourcing_transport_needs",
+      "policyname": "outsourcing_transport_needs_service_role_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_outsourcing_transport_orders",
+      "policyname": "outsourcing_transport_orders_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(is_director() OR (get_user_role() = ANY (ARRAY['supply_manager'::user_role, 'procurement_head'::user_role, 'production_manager'::user_role])))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_outsourcing_transport_orders",
+      "policyname": "outsourcing_transport_orders_service_role_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_outsourcing_vrb_items",
+      "policyname": "machine_outsourcing_vrb_items_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM (machine_outsourcing_operations operation\n     JOIN machines machine ON ((machine.id = operation.machine_id)))\n  WHERE ((operation.id = machine_outsourcing_vrb_items.operation_id) AND (is_director() OR (machine.factory_id = get_user_factory_id()) OR (get_user_role() = ANY (ARRAY['sales_manager'::user_role, 'production_manager'::user_role, 'supply_manager'::user_role, 'procurement_head'::user_role]))))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_outsourcing_vrb_items",
+      "policyname": "machine_outsourcing_vrb_items_service_role_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_outsourcing_vrb_receipts",
+      "policyname": "machine_outsourcing_vrb_receipts_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(is_director() OR (factory_id = get_user_factory_id()) OR (get_user_role() = ANY (ARRAY['supply_manager'::user_role, 'procurement_head'::user_role])))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_outsourcing_vrb_receipts",
+      "policyname": "machine_outsourcing_vrb_receipts_service_role_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_packing_groups",
+      "policyname": "machine_packing_groups_delete",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "((get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role])) AND (EXISTS ( SELECT 1\n   FROM machines m\n  WHERE ((m.id = machine_packing_groups.machine_id) AND\n        CASE\n            WHEN (get_user_role() = 'production_manager'::user_role) THEN ((m.factory_id = get_user_factory_id()) OR (m.factory_id IS NULL))\n            ELSE true\n        END))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_packing_groups",
+      "policyname": "machine_packing_groups_insert",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "((get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role])) AND (EXISTS ( SELECT 1\n   FROM machines m\n  WHERE ((m.id = machine_packing_groups.machine_id) AND\n        CASE\n            WHEN (get_user_role() = 'production_manager'::user_role) THEN ((m.factory_id = get_user_factory_id()) OR (m.factory_id IS NULL))\n            ELSE true\n        END))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_packing_groups",
+      "policyname": "machine_packing_groups_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM machines m\n  WHERE ((m.id = machine_packing_groups.machine_id) AND\n        CASE\n            WHEN (get_user_role() = 'production_manager'::user_role) THEN ((m.factory_id = get_user_factory_id()) OR (m.factory_id IS NULL))\n            ELSE true\n        END)))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_packing_groups",
+      "policyname": "machine_packing_groups_update",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "((get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role])) AND (EXISTS ( SELECT 1\n   FROM machines m\n  WHERE ((m.id = machine_packing_groups.machine_id) AND\n        CASE\n            WHEN (get_user_role() = 'production_manager'::user_role) THEN ((m.factory_id = get_user_factory_id()) OR (m.factory_id IS NULL))\n            ELSE true\n        END))))",
+      "with_check": "((get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role])) AND (EXISTS ( SELECT 1\n   FROM machines m\n  WHERE ((m.id = machine_packing_groups.machine_id) AND\n        CASE\n            WHEN (get_user_role() = 'production_manager'::user_role) THEN ((m.factory_id = get_user_factory_id()) OR (m.factory_id IS NULL))\n            ELSE true\n        END))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_updates",
+      "policyname": "machine_updates_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "((deleted_at IS NULL) AND (EXISTS ( SELECT 1\n   FROM machines m\n  WHERE ((m.id = machine_updates.machine_id) AND\n        CASE\n            WHEN (get_user_role() = 'production_manager'::user_role) THEN ((m.factory_id = get_user_factory_id()) OR (m.factory_id IS NULL))\n            ELSE true\n        END))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machine_updates",
+      "policyname": "machine_updates_service_role_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machines",
+      "policyname": "Machines - Delete directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "is_director()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machines",
+      "policyname": "Machines - Insert staff",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machines",
+      "policyname": "Machines - Update staff",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "machines",
+      "policyname": "machines_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "\nCASE\n    WHEN (get_user_role() = 'production_manager'::user_role) THEN ((factory_id = get_user_factory_id()) OR (factory_id IS NULL))\n    ELSE true\nEND",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "material_variants",
+      "policyname": "Material variants insert catalog roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "security_can_manage_catalog()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "material_variants",
+      "policyname": "Material variants read catalog roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(security_can_manage_catalog() OR security_can_view_request_materials())",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "material_variants",
+      "policyname": "Material variants update catalog roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "security_can_manage_catalog()",
+      "with_check": "security_can_manage_catalog()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "materials",
+      "policyname": "Materials insert catalog roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "security_can_manage_catalog()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "materials",
+      "policyname": "Materials read catalog roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(security_can_manage_catalog() OR security_can_view_request_materials())",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "materials",
+      "policyname": "Materials update catalog roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "security_can_manage_catalog()",
+      "with_check": "security_can_manage_catalog()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_action_items",
+      "policyname": "actions_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "ALL",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_action_items",
+      "policyname": "actions_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "(auth.uid() IS NOT NULL)",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_agenda_items",
+      "policyname": "agenda_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "ALL",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_agenda_items",
+      "policyname": "agenda_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "(auth.uid() IS NOT NULL)",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_agenda_pool_items",
+      "policyname": "agenda_pool_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "ALL",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_agenda_pool_items",
+      "policyname": "agenda_pool_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "(auth.uid() IS NOT NULL)",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_attendees",
+      "policyname": "attendees_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "ALL",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_attendees",
+      "policyname": "attendees_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "(auth.uid() IS NOT NULL)",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_decisions",
+      "policyname": "decisions_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "ALL",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_decisions",
+      "policyname": "decisions_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "(auth.uid() IS NOT NULL)",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_external_attendees",
+      "policyname": "ext_attendees_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "ALL",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_external_attendees",
+      "policyname": "ext_attendees_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "(auth.uid() IS NOT NULL)",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_recurrence_rules",
+      "policyname": "meeting_recurrence_rules_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "ALL",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_recurrence_rules",
+      "policyname": "meeting_recurrence_rules_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "(auth.uid() IS NOT NULL)",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_telegram_reminders",
+      "policyname": "meeting_telegram_reminders_manage_directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "ALL",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_telegram_reminders",
+      "policyname": "meeting_telegram_reminders_select_directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "is_director()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_types",
+      "policyname": "meeting_types_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "ALL",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meeting_types",
+      "policyname": "meeting_types_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "(auth.uid() IS NOT NULL)",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meetings",
+      "policyname": "meetings_delete",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "DELETE",
+      "qual": "is_director()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meetings",
+      "policyname": "meetings_insert",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meetings",
+      "policyname": "meetings_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "SELECT",
+      "qual": "(auth.uid() IS NOT NULL)",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "meetings",
+      "policyname": "meetings_update",
+      "permissive": "PERMISSIVE",
+      "roles": "{public}",
+      "cmd": "UPDATE",
+      "qual": "is_director()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "nesting_batch_items",
+      "policyname": "Nesting managers delete nesting batch items",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "nesting_batch_items",
+      "policyname": "Nesting managers insert nesting batch items",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "nesting_batch_items",
+      "policyname": "Nesting managers read nesting batch items",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "nesting_batch_items",
+      "policyname": "Nesting managers update nesting batch items",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))",
+      "with_check": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "nesting_batches",
+      "policyname": "Nesting managers delete nesting batches",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "nesting_batches",
+      "policyname": "Nesting managers insert nesting batches",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "nesting_batches",
+      "policyname": "Nesting managers read nesting batches",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "nesting_batches",
+      "policyname": "Nesting managers update nesting batches",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))",
+      "with_check": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "nesting_precut_parts",
+      "policyname": "Nesting managers delete precut parts",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "nesting_precut_parts",
+      "policyname": "Nesting managers insert precut parts",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "nesting_precut_parts",
+      "policyname": "Nesting managers read precut parts",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "nesting_precut_parts",
+      "policyname": "Nesting managers update precut parts",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))",
+      "with_check": "(get_user_role() = ANY (ARRAY['technologist'::user_role, 'planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "product_files",
+      "policyname": "Authenticated read product files",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "true",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "product_files",
+      "policyname": "Catalog managers delete product files",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role, 'engineer'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "product_files",
+      "policyname": "Catalog managers insert product files",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role, 'engineer'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "product_project_files",
+      "policyname": "Authenticated read product project files",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "true",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "product_project_files",
+      "policyname": "Catalog managers delete product project files",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role, 'engineer'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "product_project_files",
+      "policyname": "Catalog managers insert product project files",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role, 'engineer'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "product_project_versions",
+      "policyname": "Authenticated read product project versions",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "true",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "product_project_versions",
+      "policyname": "Catalog managers insert product project versions",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role, 'engineer'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "product_project_versions",
+      "policyname": "Catalog managers update product project versions",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role, 'engineer'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "product_projects",
+      "policyname": "Authenticated read product projects",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "true",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "product_projects",
+      "policyname": "Catalog managers insert product projects",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role, 'engineer'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "product_projects",
+      "policyname": "Catalog managers update product projects",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role, 'engineer'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "product_versions",
+      "policyname": "Authenticated read product versions",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "true",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "product_versions",
+      "policyname": "Catalog managers insert product versions",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'engineer'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "product_versions",
+      "policyname": "Catalog managers update product versions",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'engineer'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_fact_sections",
+      "policyname": "production_fact_sections_insert",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(is_director() OR ((get_user_role() = 'production_manager'::user_role) AND (factory_id = get_user_factory_id())))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_fact_sections",
+      "policyname": "production_fact_sections_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(is_director() OR ((get_user_role() = 'production_manager'::user_role) AND (factory_id = get_user_factory_id())))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_fact_sections",
+      "policyname": "production_fact_sections_update",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(is_director() OR ((get_user_role() = 'production_manager'::user_role) AND (factory_id = get_user_factory_id())))",
+      "with_check": "(is_director() OR ((get_user_role() = 'production_manager'::user_role) AND (factory_id = get_user_factory_id())))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_machine_facts",
+      "policyname": "production_machine_facts_delete",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "(is_director() OR ((get_user_role() = 'production_manager'::user_role) AND (factory_id = get_user_factory_id())))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_machine_facts",
+      "policyname": "production_machine_facts_insert",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(is_director() OR ((get_user_role() = 'production_manager'::user_role) AND (factory_id = get_user_factory_id())))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_machine_facts",
+      "policyname": "production_machine_facts_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(is_director() OR ((get_user_role() = 'production_manager'::user_role) AND (factory_id = get_user_factory_id())))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_machine_facts",
+      "policyname": "production_machine_facts_update",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(is_director() OR ((get_user_role() = 'production_manager'::user_role) AND (factory_id = get_user_factory_id())))",
+      "with_check": "(is_director() OR ((get_user_role() = 'production_manager'::user_role) AND (factory_id = get_user_factory_id())))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_machine_item_facts",
+      "policyname": "production_machine_item_facts_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM production_machine_facts fact\n  WHERE ((fact.id = production_machine_item_facts.production_machine_fact_id) AND (is_director() OR ((get_user_role() = 'production_manager'::user_role) AND (fact.factory_id = get_user_factory_id()))))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_month_plans",
+      "policyname": "production_month_plans_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "\nCASE\n    WHEN (get_user_role() = 'production_manager'::user_role) THEN (factory_id = get_user_factory_id())\n    ELSE true\nEND",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_month_plans",
+      "policyname": "production_month_plans_service_role_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_plan_date_change_request_items",
+      "policyname": "production_plan_date_change_request_items_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM production_plan_date_change_requests r\n  WHERE ((r.id = production_plan_date_change_request_items.request_id) AND ((r.requested_by = auth.uid()) OR (EXISTS ( SELECT 1\n           FROM tasks t\n          WHERE ((t.id = r.task_id) AND (t.assigned_to = auth.uid())))) OR is_director() OR (EXISTS ( SELECT 1\n           FROM machines m\n          WHERE ((m.id = r.machine_id) AND (get_user_role() = 'production_manager'::user_role) AND (m.factory_id = get_user_factory_id()))))))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_plan_date_change_request_items",
+      "policyname": "production_plan_date_change_request_items_service_role_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_plan_date_change_requests",
+      "policyname": "production_plan_date_change_requests_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "((requested_by = auth.uid()) OR (EXISTS ( SELECT 1\n   FROM tasks t\n  WHERE ((t.id = production_plan_date_change_requests.task_id) AND (t.assigned_to = auth.uid())))) OR is_director() OR (EXISTS ( SELECT 1\n   FROM machines m\n  WHERE ((m.id = production_plan_date_change_requests.machine_id) AND (get_user_role() = 'production_manager'::user_role) AND (m.factory_id = get_user_factory_id())))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_plan_date_change_requests",
+      "policyname": "production_plan_date_change_requests_service_role_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_stage_intervals",
+      "policyname": "production_stage_intervals_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM (production_stages ps\n     JOIN machines m ON ((m.id = ps.machine_id)))\n  WHERE ((ps.id = production_stage_intervals.production_stage_id) AND\n        CASE\n            WHEN (get_user_role() = 'production_manager'::user_role) THEN ((m.factory_id = get_user_factory_id()) OR (m.factory_id IS NULL))\n            ELSE true\n        END)))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_stage_intervals",
+      "policyname": "production_stage_intervals_service_role_all",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_stages",
+      "policyname": "Production Stages - Insert staff",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'production_manager'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_stages",
+      "policyname": "Production Stages - Update staff",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'production_manager'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_stages",
+      "policyname": "production_stages_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM machines m\n  WHERE ((m.id = production_stages.machine_id) AND\n        CASE\n            WHEN (get_user_role() = 'production_manager'::user_role) THEN ((m.factory_id = get_user_factory_id()) OR (m.factory_id IS NULL))\n            ELSE true\n        END)))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_tonnage_facts",
+      "policyname": "production_tonnage_facts_delete",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "(is_director() OR ((get_user_role() = 'production_manager'::user_role) AND (factory_id = get_user_factory_id())))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_tonnage_facts",
+      "policyname": "production_tonnage_facts_insert",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(is_director() OR ((get_user_role() = 'production_manager'::user_role) AND (factory_id = get_user_factory_id())))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_tonnage_facts",
+      "policyname": "production_tonnage_facts_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(is_director() OR ((get_user_role() = 'production_manager'::user_role) AND (factory_id = get_user_factory_id())))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "production_tonnage_facts",
+      "policyname": "production_tonnage_facts_update",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(is_director() OR ((get_user_role() = 'production_manager'::user_role) AND (factory_id = get_user_factory_id())))",
+      "with_check": "(is_director() OR ((get_user_role() = 'production_manager'::user_role) AND (factory_id = get_user_factory_id())))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "products",
+      "policyname": "Authenticated read products",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "true",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "products",
+      "policyname": "Catalog managers insert products",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role, 'engineer'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "products",
+      "policyname": "Catalog managers update products",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'sales_manager'::user_role, 'engineer'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_chain_cord",
+      "policyname": "Request chain cord delete request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "security_can_manage_request_materials()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_chain_cord",
+      "policyname": "Request chain cord insert request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "security_can_manage_request_materials()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_chain_cord",
+      "policyname": "Request chain cord read request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "security_can_view_request_materials()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_chain_cord",
+      "policyname": "Request chain cord update request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "security_can_manage_request_materials()",
+      "with_check": "security_can_manage_request_materials()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_chain_cord",
+      "policyname": "financial_supply_item_visibility",
+      "permissive": "RESTRICTIVE",
+      "roles": "{authenticated}",
+      "cmd": "ALL",
+      "qual": "fn_financial_supply_visibility(request_id)",
+      "with_check": "fn_financial_supply_visibility(request_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_circle",
+      "policyname": "Request circle delete request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "(security_can_manage_request_materials() AND (EXISTS ( SELECT 1\n   FROM technologist_requests request\n  WHERE ((request.id = request_circle.request_id) AND (NOT request.is_recalculation_staging)))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_circle",
+      "policyname": "Request circle insert request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(security_can_manage_request_materials() AND (EXISTS ( SELECT 1\n   FROM technologist_requests request\n  WHERE ((request.id = request_circle.request_id) AND (NOT request.is_recalculation_staging)))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_circle",
+      "policyname": "Request circle read request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(security_can_view_request_materials() AND (EXISTS ( SELECT 1\n   FROM technologist_requests request\n  WHERE ((request.id = request_circle.request_id) AND (NOT request.is_recalculation_staging)))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_circle",
+      "policyname": "Request circle update request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(security_can_manage_request_materials() AND (EXISTS ( SELECT 1\n   FROM technologist_requests request\n  WHERE ((request.id = request_circle.request_id) AND (NOT request.is_recalculation_staging)))))",
+      "with_check": "(security_can_manage_request_materials() AND (EXISTS ( SELECT 1\n   FROM technologist_requests request\n  WHERE ((request.id = request_circle.request_id) AND (NOT request.is_recalculation_staging)))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_circle",
+      "policyname": "financial_supply_item_visibility",
+      "permissive": "RESTRICTIVE",
+      "roles": "{authenticated}",
+      "cmd": "ALL",
+      "qual": "fn_financial_supply_visibility(request_id)",
+      "with_check": "fn_financial_supply_visibility(request_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_components",
+      "policyname": "Request components delete request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "security_can_manage_request_materials()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_components",
+      "policyname": "Request components insert request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "security_can_manage_request_materials()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_components",
+      "policyname": "Request components read request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "security_can_view_request_materials()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_components",
+      "policyname": "Request components update request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "security_can_manage_request_materials()",
+      "with_check": "security_can_manage_request_materials()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_components",
+      "policyname": "financial_supply_item_visibility",
+      "permissive": "RESTRICTIVE",
+      "roles": "{authenticated}",
+      "cmd": "ALL",
+      "qual": "fn_financial_supply_visibility(request_id)",
+      "with_check": "fn_financial_supply_visibility(request_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_knives",
+      "policyname": "Request knives delete request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "(security_can_manage_request_materials() AND (EXISTS ( SELECT 1\n   FROM technologist_requests request\n  WHERE ((request.id = request_knives.request_id) AND (NOT request.is_recalculation_staging)))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_knives",
+      "policyname": "Request knives insert request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(security_can_manage_request_materials() AND (EXISTS ( SELECT 1\n   FROM technologist_requests request\n  WHERE ((request.id = request_knives.request_id) AND (NOT request.is_recalculation_staging)))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_knives",
+      "policyname": "Request knives read request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(security_can_view_request_materials() AND (EXISTS ( SELECT 1\n   FROM technologist_requests request\n  WHERE ((request.id = request_knives.request_id) AND (NOT request.is_recalculation_staging)))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_knives",
+      "policyname": "Request knives update request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(security_can_manage_request_materials() AND (EXISTS ( SELECT 1\n   FROM technologist_requests request\n  WHERE ((request.id = request_knives.request_id) AND (NOT request.is_recalculation_staging)))))",
+      "with_check": "(security_can_manage_request_materials() AND (EXISTS ( SELECT 1\n   FROM technologist_requests request\n  WHERE ((request.id = request_knives.request_id) AND (NOT request.is_recalculation_staging)))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_knives",
+      "policyname": "financial_supply_item_visibility",
+      "permissive": "RESTRICTIVE",
+      "roles": "{authenticated}",
+      "cmd": "ALL",
+      "qual": "fn_financial_supply_visibility(request_id)",
+      "with_check": "fn_financial_supply_visibility(request_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_mesh",
+      "policyname": "Request mesh delete request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "security_can_manage_request_materials()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_mesh",
+      "policyname": "Request mesh insert request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "security_can_manage_request_materials()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_mesh",
+      "policyname": "Request mesh read request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "security_can_view_request_materials()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_mesh",
+      "policyname": "Request mesh update request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "security_can_manage_request_materials()",
+      "with_check": "security_can_manage_request_materials()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_mesh",
+      "policyname": "financial_supply_item_visibility",
+      "permissive": "RESTRICTIVE",
+      "roles": "{authenticated}",
+      "cmd": "ALL",
+      "qual": "fn_financial_supply_visibility(request_id)",
+      "with_check": "fn_financial_supply_visibility(request_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_paint",
+      "policyname": "Request paint delete request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "security_can_manage_request_materials()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_paint",
+      "policyname": "Request paint insert request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "security_can_manage_request_materials()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_paint",
+      "policyname": "Request paint read request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "security_can_view_request_materials()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_paint",
+      "policyname": "Request paint update request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "security_can_manage_request_materials()",
+      "with_check": "security_can_manage_request_materials()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_paint",
+      "policyname": "financial_supply_item_visibility",
+      "permissive": "RESTRICTIVE",
+      "roles": "{authenticated}",
+      "cmd": "ALL",
+      "qual": "fn_financial_supply_visibility(request_id)",
+      "with_check": "fn_financial_supply_visibility(request_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_pipe",
+      "policyname": "Request pipe delete request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "(security_can_manage_request_materials() AND (EXISTS ( SELECT 1\n   FROM technologist_requests request\n  WHERE ((request.id = request_pipe.request_id) AND (NOT request.is_recalculation_staging)))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_pipe",
+      "policyname": "Request pipe insert request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(security_can_manage_request_materials() AND (EXISTS ( SELECT 1\n   FROM technologist_requests request\n  WHERE ((request.id = request_pipe.request_id) AND (NOT request.is_recalculation_staging)))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_pipe",
+      "policyname": "Request pipe read request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(security_can_view_request_materials() AND (EXISTS ( SELECT 1\n   FROM technologist_requests request\n  WHERE ((request.id = request_pipe.request_id) AND (NOT request.is_recalculation_staging)))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_pipe",
+      "policyname": "Request pipe update request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(security_can_manage_request_materials() AND (EXISTS ( SELECT 1\n   FROM technologist_requests request\n  WHERE ((request.id = request_pipe.request_id) AND (NOT request.is_recalculation_staging)))))",
+      "with_check": "(security_can_manage_request_materials() AND (EXISTS ( SELECT 1\n   FROM technologist_requests request\n  WHERE ((request.id = request_pipe.request_id) AND (NOT request.is_recalculation_staging)))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_pipe",
+      "policyname": "financial_supply_item_visibility",
+      "permissive": "RESTRICTIVE",
+      "roles": "{authenticated}",
+      "cmd": "ALL",
+      "qual": "fn_financial_supply_visibility(request_id)",
+      "with_check": "fn_financial_supply_visibility(request_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_round_tube",
+      "policyname": "Request round tube delete request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "security_can_manage_request_materials()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_round_tube",
+      "policyname": "Request round tube insert request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "security_can_manage_request_materials()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_round_tube",
+      "policyname": "Request round tube read request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "security_can_view_request_materials()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_round_tube",
+      "policyname": "Request round tube update request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "security_can_manage_request_materials()",
+      "with_check": "security_can_manage_request_materials()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_round_tube",
+      "policyname": "financial_supply_item_visibility",
+      "permissive": "RESTRICTIVE",
+      "roles": "{authenticated}",
+      "cmd": "ALL",
+      "qual": "fn_financial_supply_visibility(request_id)",
+      "with_check": "fn_financial_supply_visibility(request_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_sheet_metal",
+      "policyname": "Request sheet metal delete request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "security_can_manage_request_materials()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_sheet_metal",
+      "policyname": "Request sheet metal insert request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "security_can_manage_request_materials()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_sheet_metal",
+      "policyname": "Request sheet metal read request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "security_can_view_request_materials()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_sheet_metal",
+      "policyname": "Request sheet metal update request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "security_can_manage_request_materials()",
+      "with_check": "security_can_manage_request_materials()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "request_sheet_metal",
+      "policyname": "financial_supply_item_visibility",
+      "permissive": "RESTRICTIVE",
+      "roles": "{authenticated}",
+      "cmd": "ALL",
+      "qual": "fn_financial_supply_visibility(request_id)",
+      "with_check": "fn_financial_supply_visibility(request_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "role_permission_audit_log",
+      "policyname": "role_permission_audit_insert_directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "role_permission_audit_log",
+      "policyname": "role_permission_audit_select_directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "is_director()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "role_permissions",
+      "policyname": "role_permissions_modify_directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "ALL",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "role_permissions",
+      "policyname": "role_permissions_select_authenticated",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "true",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "steel_types",
+      "policyname": "Steel types delete directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "is_director()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "steel_types",
+      "policyname": "Steel types insert nesting roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(security_can_manage_nesting_catalog() OR security_can_manage_catalog())"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "steel_types",
+      "policyname": "Steel types read nesting roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(security_can_manage_nesting_catalog() OR security_can_manage_catalog())",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "steel_types",
+      "policyname": "Steel types update nesting roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(security_can_manage_nesting_catalog() OR security_can_manage_catalog())",
+      "with_check": "(security_can_manage_nesting_catalog() OR security_can_manage_catalog())"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "supplier_delivery_days",
+      "policyname": "Supplier delivery days delete directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "is_director()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "supplier_delivery_days",
+      "policyname": "Supplier delivery days insert directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "supplier_delivery_days",
+      "policyname": "Supplier delivery days read supply roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "security_can_manage_supply()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "supplier_delivery_days",
+      "policyname": "Supplier delivery days update directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "supplier_material_categories",
+      "policyname": "Supplier categories delete directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "is_director()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "supplier_material_categories",
+      "policyname": "Supplier categories insert directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "supplier_material_categories",
+      "policyname": "Supplier categories read supply roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "security_can_manage_supply()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "supplier_material_categories",
+      "policyname": "Supplier categories update directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "suppliers",
+      "policyname": "Suppliers insert directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "suppliers",
+      "policyname": "Suppliers read supply roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "security_can_manage_supply()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "suppliers",
+      "policyname": "Suppliers update directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "is_director()",
+      "with_check": "is_director()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "supply_items",
+      "policyname": "Supply Items - Insert staff",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'technologist'::user_role, 'supply_manager'::user_role]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "supply_items",
+      "policyname": "Supply Items - Update staff",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(get_user_role() = ANY (ARRAY['planning_director'::user_role, 'financial_director'::user_role, 'commercial_director'::user_role, 'engineer'::user_role, 'technologist'::user_role, 'supply_manager'::user_role]))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "supply_items",
+      "policyname": "supply_items_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM machines m\n  WHERE ((m.id = supply_items.machine_id) AND\n        CASE\n            WHEN (get_user_role() = 'production_manager'::user_role) THEN ((m.factory_id = get_user_factory_id()) OR (m.factory_id IS NULL))\n            ELSE true\n        END)))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "supply_order_delivery_schedule_changes",
+      "policyname": "Supply schedule changes insert supply roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "security_can_manage_supply()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "supply_order_delivery_schedule_changes",
+      "policyname": "Supply schedule changes read supply roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "security_can_manage_supply()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "supply_order_delivery_schedules",
+      "policyname": "Supply schedules insert supply roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "security_can_manage_supply()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "supply_order_delivery_schedules",
+      "policyname": "Supply schedules read supply roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "security_can_manage_supply()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "supply_order_delivery_schedules",
+      "policyname": "Supply schedules update supply roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "security_can_manage_supply()",
+      "with_check": "security_can_manage_supply()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "supply_position_revisions",
+      "policyname": "supply_position_revisions_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "((requested_by = ( SELECT auth.uid() AS uid)) OR (assigned_to = ( SELECT auth.uid() AS uid)) OR security_can_view_request_materials())",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "task_delegations",
+      "policyname": "task_delegations_select_involved",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "((delegated_by = auth.uid()) OR (delegated_from = auth.uid()) OR (delegated_to = auth.uid()) OR is_director())",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "tasks",
+      "policyname": "Tasks insert own or directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "((assigned_to = auth.uid()) OR is_director())"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "tasks",
+      "policyname": "Tasks read app roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "security_has_role(ARRAY['planning_director'::text, 'financial_director'::text, 'commercial_director'::text, 'sales_manager'::text, 'engineer'::text, 'technologist'::text, 'supply_manager'::text, 'production_manager'::text, 'procurement_head'::text, 'painting_head'::text])",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "tasks",
+      "policyname": "Tasks update own or directors",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "((assigned_to = auth.uid()) OR is_director())",
+      "with_check": "((assigned_to = auth.uid()) OR is_director())"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "technologist_request_approval_versions",
+      "policyname": "technologist_request_approval_versions_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "((submitted_by = auth.uid()) OR (EXISTS ( SELECT 1\n   FROM users u\n  WHERE ((u.id = auth.uid()) AND u.is_active AND (u.role = 'financial_director'::user_role)))) OR (EXISTS ( SELECT 1\n   FROM ((department_members dm\n     JOIN positions p ON ((p.id = dm.position_id)))\n     JOIN users u ON ((u.id = dm.user_id)))\n  WHERE ((dm.user_id = auth.uid()) AND u.is_active AND p.is_active AND (p.name = 'Администратор CRM'::text)))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "technologist_requests",
+      "policyname": "Technologist requests insert request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "((NOT is_recalculation_staging) AND security_can_manage_request_materials())"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "technologist_requests",
+      "policyname": "Technologist requests read request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "((NOT is_recalculation_staging) AND security_can_view_request_materials())",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "technologist_requests",
+      "policyname": "Technologist requests update request roles",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "((NOT is_recalculation_staging) AND security_can_manage_request_materials())",
+      "with_check": "((NOT is_recalculation_staging) AND security_can_manage_request_materials())"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "technologist_requests",
+      "policyname": "financial_request_insert_state",
+      "permissive": "RESTRICTIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "((status)::text <> ALL (ARRAY['pending_financial_approval'::text, 'submitted_to_supply'::text, 'completed'::text]))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "technologist_requests",
+      "policyname": "financial_supply_request_visibility",
+      "permissive": "RESTRICTIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "fn_financial_supply_visibility(id)",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "transport_trip_date_change_items",
+      "policyname": "transport_trip_date_items_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(EXISTS ( SELECT 1\n   FROM transport_trip_date_change_requests r\n  WHERE ((r.id = transport_trip_date_change_items.request_id) AND ((r.requested_by = auth.uid()) OR is_director() OR (EXISTS ( SELECT 1\n           FROM tasks t\n          WHERE ((t.id = r.task_id) AND (t.assigned_to = auth.uid()))))))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "transport_trip_date_change_items",
+      "policyname": "transport_trip_date_items_service_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "transport_trip_date_change_requests",
+      "policyname": "transport_trip_date_requests_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "((requested_by = auth.uid()) OR is_director() OR (EXISTS ( SELECT 1\n   FROM tasks t\n  WHERE ((t.id = transport_trip_date_change_requests.task_id) AND (t.assigned_to = auth.uid())))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "transport_trip_date_change_requests",
+      "policyname": "transport_trip_date_requests_service_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "transport_trip_need_links",
+      "policyname": "transport_trip_need_links_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(( SELECT is_director() AS is_director) OR (( SELECT get_user_role() AS get_user_role) = ANY (ARRAY['supply_manager'::user_role, 'procurement_head'::user_role, 'production_manager'::user_role])))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "transport_trip_need_links",
+      "policyname": "transport_trip_need_links_service_role_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "transport_trip_stops",
+      "policyname": "transport_trip_stops_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(( SELECT is_director() AS is_director) OR (( SELECT get_user_role() AS get_user_role) = ANY (ARRAY['supply_manager'::user_role, 'procurement_head'::user_role, 'production_manager'::user_role])))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "transport_trip_stops",
+      "policyname": "transport_trip_stops_service_role_modify",
+      "permissive": "PERMISSIVE",
+      "roles": "{service_role}",
+      "cmd": "ALL",
+      "qual": "true",
+      "with_check": "true"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "technologist_request_approval_versions",
+      "policyname": "technologist_request_approval_versions_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "((submitted_by = auth.uid()) OR (EXISTS ( SELECT 1\\n   FROM users u\\n  WHERE ((u.id = auth.uid()) AND u.is_active AND (u.role = 'financial_director'::user_role)))) OR (EXISTS ( SELECT 1\\n   FROM ((department_members dm\\n     JOIN positions p ON ((p.id = dm.position_id)))\\n     JOIN users u ON ((u.id = dm.user_id)))\\n  WHERE ((dm.user_id = auth.uid()) AND u.is_active AND p.is_active AND (p.name = 'Администратор CRM'::text)))))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "users",
+      "policyname": "Users - Delete planning_director",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "DELETE",
+      "qual": "(get_user_role() = 'planning_director'::user_role)",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "users",
+      "policyname": "Users - Insert planning_director",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "INSERT",
+      "qual": null,
+      "with_check": "(get_user_role() = 'planning_director'::user_role)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "users",
+      "policyname": "Users - Update planning_director",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(get_user_role() = 'planning_director'::user_role)",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "users",
+      "policyname": "users_select",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "((get_user_role() = 'planning_director'::user_role) OR (id = auth.uid()) OR ((factory_id IS NOT NULL) AND (factory_id = get_user_factory_id())))",
+      "with_check": null
+    }
+  ]
+}

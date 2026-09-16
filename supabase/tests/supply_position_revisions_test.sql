@@ -87,6 +87,8 @@ declare
   v_repeat_submit jsonb;
   v_revision_id uuid;
   v_finance uuid := gen_random_uuid();
+  v_technology_department uuid := gen_random_uuid();
+  v_finance_department uuid := gen_random_uuid();
   v_approval uuid;
   v_waste jsonb := '[]'::jsonb;
   v_department_request_id uuid;
@@ -104,6 +106,7 @@ begin
   values
     (v_supply, v_supply || '@revision.test', 'Снабжение', 'supply_manager', v_factory, true),
     (v_technologist, v_technologist || '@revision.test', 'Технолог', 'technologist', v_factory, true);
+  perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   insert into public.machines(id, factory_id, name, created_by)
   values (v_machine, v_factory, 'REVISION-' || p_table || '-' || coalesce(p_variant, 'default'), v_technologist);
   insert into public.technologist_requests(
@@ -259,12 +262,25 @@ begin
   end;
   insert into public.users(id,email,full_name,role,factory_id,is_active)
   values (v_finance,v_finance || '@revision.test','Финансовый директор','financial_director',v_factory,true);
+  insert into public.departments(id, name, factory_id) values
+    (v_technology_department, 'REVISION TECHNOLOGY ' || v_technology_department, v_factory),
+    (v_finance_department, 'REVISION FINANCE ' || v_finance_department, v_factory);
+  insert into public.department_members(user_id, department_id, is_department_head) values
+    (v_technologist, v_technology_department, false),
+    (v_finance, v_finance_department, false);
+  insert into public.department_access_permissions(
+    department_id, subject_scope, resource_key, can_view, can_manage
+  ) values
+    (v_technology_department, 'member', 'technologist_requests', true, true),
+    (v_technology_department, 'member', 'inventory_detailing', true, true),
+    (v_finance_department, 'member', 'technologist_request_results', true, true);
   if p_table in ('request_sheet_metal','request_pipe') then
     if p_table = 'request_sheet_metal' then
       update public.request_sheet_metal set thickness_mm = 10, sheet_size = '1000x1000', remainder_qty = 2 where id = v_replacement_item_id;
     end if;
     v_waste := jsonb_build_array(jsonb_build_object('sourceTable',p_table,'sourceId',v_replacement_item_id,'wastePercent',10,'itemName','Металл','materialName','Металл'));
   end if;
+  perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   v_approval := public.fn_submit_technologist_request_for_approval(v_replacement_request_id,v_technologist,
     jsonb_build_object('decision','none','enteredPlasmaMinutes',0,'wasteItems',v_waste,'futureItems','[]'::jsonb,'archives','[]'::jsonb),
     jsonb_build_object('sourceData',public.fn_technologist_approval_source(v_replacement_request_id)));
@@ -272,7 +288,9 @@ begin
   if v_row->>'order_status' = 'cancelled' or (select status from public.supply_position_revisions where id = v_revision_id) = 'submitted' then
     raise exception 'Correction changed its source before financial approval';
   end if;
+  perform set_config('request.jwt.claim.sub', v_finance::text, true);
   perform public.fn_approve_technologist_request(v_approval,v_finance);
+  perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   v_submit := public.fn_submit_supply_position_revision_v1(v_replacement_request_id, v_technologist);
   v_repeat_submit := public.fn_submit_supply_position_revision_v1(v_replacement_request_id, v_technologist);
   if not coalesce((v_repeat_submit->>'idempotent')::boolean, false)
@@ -688,6 +706,7 @@ begin
   v_reservation := public.fn_reserve_inventory_for_machine(
     v_material, v_machine, 2, 'request_components', v_replacement_item, v_supply
   );
+  perform set_config('request.jwt.claim.sub', v_assigned::text, true);
   update public.technologist_requests set status = 'pending_stock_check', updated_at = now()
   where id = v_replacement_request;
   if (select status from public.supply_position_revisions where id = (v_return->>'revision_id')::uuid) <> 'stock_check' then
@@ -910,6 +929,7 @@ begin
     raise exception 'Repeated approval duplicated or hid the active row';
   end if;
 
+  perform set_config('request.jwt.claim.sub', v_actor::text, true);
   update public.technologist_requests
   set status = 'pending_stock_check', updated_at = now()
   where id = v_request;

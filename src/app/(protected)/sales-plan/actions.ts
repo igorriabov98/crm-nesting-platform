@@ -147,15 +147,8 @@ function omitExpenseId<T extends { id?: unknown }>(expense: T) {
   return payload
 }
 
-function applyProductionManagerFactoryScope<T>(query: T, factoryId: string | null): T {
-  const scopedQuery = query as { or: (filters: string) => T; is: (column: string, value: unknown) => T }
-  if (!factoryId) return scopedQuery.is('factory_id', null)
-  return scopedQuery.or(`factory_id.eq.${factoryId},factory_id.is.null`)
-}
-
-function applySalesPlanFactoryScope<T>(query: T, user: CurrentUser, factoryFilter?: string | null): T {
+function applySalesPlanFactoryScope<T>(query: T, factoryFilter?: string | null): T {
   const scopedQuery = query as { eq: (column: string, value: unknown) => T; is: (column: string, value: unknown) => T }
-  if (user.role === 'production_manager') return applyProductionManagerFactoryScope(query, user.factory_id)
   if (factoryFilter === 'no_factory') return scopedQuery.is('factory_id', null)
   if (factoryFilter && factoryFilter !== 'all') return scopedQuery.eq('factory_id', factoryFilter)
   return query
@@ -899,7 +892,7 @@ async function syncCoatingDependentProductionStages(db: LooseDb, machineId: stri
 // === Получение списка ===
 export async function getProductionMonthFilterOptions(factoryFilter?: string | null) {
   try {
-    const { supabase, user } = await requireSalesPlanPermission('view')
+    const { supabase } = await requireSalesPlanPermission('view')
 
     let query = supabase
       .from('machines')
@@ -907,7 +900,7 @@ export async function getProductionMonthFilterOptions(factoryFilter?: string | n
       .eq('is_archived', false)
       .not('production_month', 'is', null)
 
-    query = applySalesPlanFactoryScope(query, user, factoryFilter)
+    query = applySalesPlanFactoryScope(query, factoryFilter)
 
     const { data, error } = await query
       .order('production_month', { ascending: false })
@@ -985,7 +978,7 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
       `)
       .eq('is_archived', false)
 
-    query = applySalesPlanFactoryScope(query, user, factoryFilter)
+    query = applySalesPlanFactoryScope(query, factoryFilter)
 
     if (normalizedProductionMonth) {
       query = query.eq('production_month', normalizedProductionMonth)
@@ -1087,7 +1080,7 @@ export async function getMachine(id: string) {
     const context = await requireSalesPlanPermission('view')
     const { db, user, permissions, permissionDetails } = context
 
-    let query = createAdminClient()
+    const query = createAdminClient()
       .from('machines')
       .select(`
         *,
@@ -1103,10 +1096,6 @@ export async function getMachine(id: string) {
       `)
       .eq('id', id)
 
-    if (user.role === 'production_manager') {
-      query = applyProductionManagerFactoryScope(query, user.factory_id)
-    }
-    
     const { data, error } = await query.single()
 
     if (error) throw error
@@ -1571,7 +1560,7 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
       throw new Error('Факт поставки материала заполняется автоматически после приемки всех материалов по заявке')
     }
     if (
-      user.role === 'production_manager' &&
+      !hasPermission(context.permissions, 'production_reports', 'manage') &&
       data.planned_material_date !== undefined &&
       await isMachineInConfirmedProductionPlan(id)
     ) {
@@ -2117,7 +2106,7 @@ export async function addMachineItem(machineId: string, data: unknown) {
 
 export async function updateMachineConfirmation(id: string, isConfirmed: boolean) {
   try {
-    const { db, user } = await requireSalesPlanPermission('manage')
+    const { db } = await requireSalesPlanPermission('manage')
 
     const { data: machineData, error: machineError } = await db
       .from('machines')
@@ -2128,14 +2117,6 @@ export async function updateMachineConfirmation(id: string, isConfirmed: boolean
     if (machineError || !machineData) throw new Error('Машина не найдена')
     const machine = machineData as { created_by: string; is_archived?: boolean }
     if (machine.is_archived) throw new Error('Машина архивирована. Действия с ней остановлены.')
-
-    const canEditConfirmation = user.role === 'sales_manager'
-      ? machine.created_by === user.id
-      : true
-
-    if (!canEditConfirmation) {
-      throw new Error('Недостаточно прав для изменения подтверждения')
-    }
 
     if (isConfirmed) {
       const goodsCount = await getMachineGoodsCount(db, id)
