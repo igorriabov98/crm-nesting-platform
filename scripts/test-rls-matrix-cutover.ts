@@ -28,8 +28,13 @@ const dependencies = JSON.parse(readFileSync(join(root, 'supabase/reports/rls_le
 const affected = JSON.parse(readFileSync(join(root, 'supabase/reports/rls_dependency_affected_tables_policy_snapshot.json'), 'utf8')) as PolicySnapshot
 const migrationPath = join(root, 'supabase/migrations/20260916090000_department_rls_matrix_cutover.sql')
 const rollbackPath = join(root, 'supabase/rollback/20260916090000_department_rls_matrix_cutover.sql')
+const factoryScopeCompatibilityPath = join(
+  root,
+  'supabase/migrations/20260916083000_expand_department_access_factory_scope.sql',
+)
 const migration = readFileSync(migrationPath, 'utf8')
 const rollback = readFileSync(rollbackPath, 'utf8')
+const factoryScopeCompatibility = readFileSync(factoryScopeCompatibilityPath, 'utf8')
 const policySnapshotPath = join(root, 'supabase/reports/rls_dependency_affected_tables_policy_snapshot.json')
 const functionSnapshotPath = join(root, 'supabase/reports/rls_legacy_function_snapshot.json')
 
@@ -102,6 +107,31 @@ assert.match(rollback, /DROP POLICY IF EXISTS "department_access_permissions_sel
 assert.match(rollback, /CREATE POLICY "department_access_permissions_select_authenticated"/)
 assert.match(rollback, /DROP FUNCTION IF EXISTS private\.crm_has_permission/)
 assert.match(rollback, /Exact cutover ACL snapshot is missing/)
+
+const expectedFactoryScopeResources = [
+  'production_reports',
+  'customs_clearance',
+  'production_fact',
+  'production_cutting_area',
+] as const
+const codeFactoryScopeResources = PERMISSION_RESOURCES
+  .filter((resource) => 'supportsFactoryScope' in resource && resource.supportsFactoryScope === true)
+  .map((resource) => resource.key)
+  .sort()
+assert.deepEqual(codeFactoryScopeResources, [...expectedFactoryScopeResources].sort(),
+  'Runtime и DB должны поддерживать одинаковый набор factory-scoped ресурсов')
+const rollbackFactoryConstraint = rollback.slice(
+  rollback.indexOf('ADD CONSTRAINT department_access_permissions_factory_scope_check'),
+  rollback.indexOf('ADD CONSTRAINT department_access_permissions_company_view_scope_check'),
+)
+for (const resource of expectedFactoryScopeResources) {
+  assert.match(factoryScopeCompatibility, new RegExp(`'${resource}'`),
+    `Pre-cutover factory scope constraint должен разрешать ${resource}`)
+  assert.match(rollbackFactoryConstraint, new RegExp(`'${resource}'`),
+    `Rollback должен сохранять factory scope для ${resource}`)
+}
+assert.doesNotMatch(factoryScopeCompatibility, /'supply'/,
+  'Ресурс supply не имеет однозначного factory ownership и не должен получать scope=all')
 
 const migrationFiles = readdirSync(join(root, 'supabase/migrations'))
   .filter((file) => /^\d{14}_.+\.sql$/.test(file))

@@ -137,6 +137,29 @@ BEGIN
     RAISE EXCEPTION 'Idempotent matrix save wrote a false audit diff';
   END IF;
 
+  SELECT public.fn_save_department_access_permissions(jsonb_build_array(jsonb_build_object(
+    'departmentId', v_head_department,
+    'subjectScope', 'head',
+    'resourceKey', 'production_fact',
+    'canView', true,
+    'canManage', true,
+    'factoryScope', 'all',
+    'companyViewScope', 'own',
+    'companyManageScope', 'own'
+  ))) INTO v_saved;
+  IF v_saved->0->>'factoryScope' <> 'all'
+     OR NOT EXISTS (
+       SELECT 1
+       FROM public.department_access_audit_log
+       WHERE department_id = v_head_department
+         AND subject_scope = 'head'
+         AND resource_key = 'production_fact'
+         AND old_factory_scope = 'own'
+         AND new_factory_scope = 'all'
+     ) THEN
+    RAISE EXCEPTION 'Factory scope save or audit failed for production_fact';
+  END IF;
+
   PERFORM set_config('request.jwt.claim.sub', v_inactive::text, true);
   IF private.crm_has_permission('materials', 'view') THEN
     RAISE EXCEPTION 'Inactive user received access';

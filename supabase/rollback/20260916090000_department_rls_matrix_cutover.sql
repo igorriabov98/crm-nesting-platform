@@ -5860,7 +5860,7 @@ ALTER TABLE public.department_access_permissions
   DROP CONSTRAINT IF EXISTS department_access_permissions_company_manage_scope_check;
 ALTER TABLE public.department_access_permissions
   ADD CONSTRAINT department_access_permissions_factory_scope_check
-    CHECK (factory_scope IN ('own', 'all') AND (factory_scope = 'own' OR resource_key IN ('production_cutting_area', 'customs_clearance'))),
+    CHECK (factory_scope IN ('own', 'all') AND (factory_scope = 'own' OR resource_key IN ('production_reports', 'customs_clearance', 'production_fact', 'production_cutting_area'))),
   ADD CONSTRAINT department_access_permissions_company_view_scope_check
     CHECK (company_view_scope IN ('own', 'all') AND (company_view_scope = 'own' OR resource_key IN ('invoices', 'client_payments'))),
   ADD CONSTRAINT department_access_permissions_company_manage_scope_check
