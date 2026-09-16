@@ -178,6 +178,7 @@ do $$
 declare
   v_actor uuid := gen_random_uuid();
   v_supply_actor uuid := gen_random_uuid();
+  v_department uuid := gen_random_uuid();
   v_factory_a uuid;
   v_factory_b uuid := gen_random_uuid();
   v_machine_a uuid := gen_random_uuid();
@@ -228,6 +229,15 @@ begin
   values
     (v_actor, 'selected-source@example.test', 'Технолог источников', 'technologist', v_factory_a, true),
     (v_supply_actor, 'selected-source-supply@example.test', 'Снабжение источников', 'supply_manager', v_factory_b, true);
+  insert into public.departments(id, name, factory_id, is_active, created_by)
+  values (v_department, 'Selected source detailing ' || v_actor, v_factory_a, true, v_actor);
+  insert into public.department_members(user_id, department_id, is_department_head, created_by)
+  values (v_actor, v_department, false, v_actor);
+  insert into public.department_access_permissions(
+    department_id, subject_scope, resource_key, can_view, can_manage, updated_by
+  ) values (
+    v_department, 'member', 'inventory_detailing_receiving', true, true, v_actor
+  );
   perform set_config('request.jwt.claim.sub', v_actor::text, true);
   insert into public.machines(id, factory_id, name, created_by)
   values
