@@ -24,6 +24,8 @@ declare
   v_version uuid;
   v_reservation uuid;
   v_reviewer uuid := gen_random_uuid();
+  v_technology_department uuid := gen_random_uuid();
+  v_finance_department uuid := gen_random_uuid();
   v_approval uuid;
   v_settings jsonb;
   v_rollback_machine uuid := '20000000-0000-4000-8000-000000000001';
@@ -142,11 +144,26 @@ begin
   -- Receiving fixtures must pass the same financial handoff as real requests.
   insert into public.users(id, email, full_name, role, factory_id, is_active)
   values (v_reviewer, v_reviewer || '@approval.test', 'Финансовый директор теста', 'financial_director', v_factory, true);
+  insert into public.departments(id, name, factory_id) values
+    (v_technology_department, 'CUTTING RACE TECHNOLOGY', v_factory),
+    (v_finance_department, 'CUTTING RACE FINANCE', v_factory);
+  insert into public.department_members(user_id, department_id, is_department_head) values
+    (v_actor, v_technology_department, false),
+    (v_reviewer, v_finance_department, false);
+  insert into public.department_access_permissions(
+    department_id, subject_scope, resource_key, can_view, can_manage
+  ) values
+    (v_technology_department, 'member', 'technologist_requests', true, true),
+    (v_technology_department, 'member', 'inventory_detailing', true, true),
+    (v_finance_department, 'member', 'technologist_request_results', true, true);
+  perform set_config('request.jwt.claim.sub', v_actor::text, true);
   update public.technologist_requests set status = 'stock_checked' where id = v_request;
   v_approval := public.fn_submit_technologist_request_for_approval(v_request, v_actor,
     jsonb_build_object('decision', 'none', 'enteredPlasmaMinutes', 0, 'wasteItems', '[]'::jsonb, 'futureItems', '[]'::jsonb, 'archives', '[]'::jsonb),
     jsonb_build_object('sourceData', public.fn_technologist_approval_source(v_request)));
+  perform set_config('request.jwt.claim.sub', v_reviewer::text, true);
   perform public.fn_approve_technologist_request(v_approval, v_reviewer);
+  perform set_config('request.jwt.claim.sub', v_actor::text, true);
 
   -- Matching receipt: it is only the immutable document used by the explicit
   -- invalidation transaction in the concurrent test.
