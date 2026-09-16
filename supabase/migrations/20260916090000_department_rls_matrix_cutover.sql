@@ -1383,7 +1383,7 @@ declare
   v_storage storage.objects%rowtype;
   v_path_prefix text;
 begin
-  if p_actor is distinct from auth.uid() or not private.crm_has_permission('technologist_request_results', 'manage') then raise exception 'Недостаточно прав' using errcode = '42501'; end if;
+  if p_actor is distinct from auth.uid() or not private.crm_has_permission('technologist_requests', 'manage') then raise exception 'Недостаточно прав' using errcode = '42501'; end if;
   if jsonb_typeof(p_completion_payload) <> 'object' or jsonb_typeof(p_summary_snapshot) <> 'object' then
     raise exception 'Некорректный снимок заявки';
   end if;
@@ -1396,7 +1396,7 @@ begin
   where r.id = p_request_id
   for update of r;
   if not found or v_request.created_by <> p_actor then raise exception 'Заявка недоступна'; end if;
-  if p_actor is distinct from auth.uid() or not private.crm_has_permission('technologist_request_results', 'manage') then raise exception 'Недостаточно прав' using errcode = '42501'; end if;
+  if p_actor is distinct from auth.uid() or not private.crm_has_permission('technologist_requests', 'manage') then raise exception 'Недостаточно прав' using errcode = '42501'; end if;
   select m.name into v_machine_name from public.machines m where m.id = v_request.machine_id and not m.is_archived;
   if not found then raise exception 'Заказ находится в архиве'; end if;
   if v_request.status <> 'stock_checked' then raise exception 'Заявка не готова к согласованию'; end if;

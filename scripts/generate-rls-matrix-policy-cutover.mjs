@@ -315,7 +315,7 @@ function technologistApprovalFunctionSql(entry) {
   if (entry.function_name === 'fn_submit_technologist_request_for_approval') {
     definition = definition.replace(
       /if not exists \(select 1 from public\.users where id = p_actor and is_active\) then raise exception 'Недостаточно прав'; end if;/gi,
-      "if p_actor is distinct from auth.uid() or not private.crm_has_permission('technologist_request_results', 'manage') then raise exception 'Недостаточно прав' using errcode = '42501'; end if;",
+      "if p_actor is distinct from auth.uid() or not private.crm_has_permission('technologist_requests', 'manage') then raise exception 'Недостаточно прав' using errcode = '42501'; end if;",
     )
   } else {
     definition = definition.replace(
