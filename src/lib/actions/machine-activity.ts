@@ -19,9 +19,8 @@ import {
   type MachineChatAttachmentKind,
   type StoredMachineChatAttachment,
 } from '@/lib/machine-chat-attachments'
-import type { CurrentUser, UserRole } from '@/lib/types'
+import type { UserRole } from '@/lib/types'
 
-const DIRECTOR_ROLES: readonly UserRole[] = ['planning_director', 'financial_director', 'commercial_director']
 const MACHINE_CHAT_NOTIFICATION_TYPE = 'machine_chat_message'
 const RECIPIENT_KEYWORDS = [
   'финанс',
@@ -257,28 +256,14 @@ async function uploadChatAttachments(
   return attachments
 }
 
-function canManageMachineUpdates(user: CurrentUser, machine: MachineAccessRow) {
-  return machine.created_by === user.id || DIRECTOR_ROLES.includes(user.role)
-}
-
-function applyProductionManagerMachineScope<T>(query: T, factoryId: string | null): T {
-  const scopedQuery = query as { or: (filters: string) => T; is: (column: string, value: unknown) => T }
-  if (!factoryId) return scopedQuery.is('factory_id', null)
-  return scopedQuery.or(`factory_id.eq.${factoryId},factory_id.is.null`)
-}
-
 async function requireMachineAccess(machineId: string, operation: PermissionOperation = 'view') {
   const parsedMachineId = machineIdSchema.parse(machineId)
   const context = await requirePermission('sales_plan', operation)
 
-  let query = context.supabase
+  const query = context.supabase
     .from('machines')
     .select('id, name, created_by, factory_id, is_archived')
     .eq('id', parsedMachineId)
-
-  if (context.role === 'production_manager') {
-    query = applyProductionManagerMachineScope(query, context.factoryId)
-  }
 
   const { data, error } = await query.maybeSingle()
   if (error) throw error
@@ -294,12 +279,6 @@ async function requireMachineAccess(machineId: string, operation: PermissionOper
 function assertMachineWritable(machine: MachineAccessRow) {
   if (machine.is_archived) {
     throw new Error('Машина архивирована. Действия с ней остановлены.')
-  }
-}
-
-function assertCanManageUpdates(user: CurrentUser, machine: MachineAccessRow) {
-  if (!canManageMachineUpdates(user, machine)) {
-    throw new Error('Последние обновления может вести менеджер машины или директор')
   }
 }
 
@@ -455,7 +434,7 @@ function revalidateActivity(machineId: string) {
 
 export async function getMachineActivity(machineId: string): Promise<{ data: MachineActivityPayload | null; error: string | null }> {
   try {
-    const { machine, user, canManageModule } = await requireMachineAccess(machineId)
+    const { machine, canManageModule } = await requireMachineAccess(machineId)
     const db = dbFrom(createAdminClient())
 
     const [{ data: updatesData, error: updatesError }, { data: messagesData, error: messagesError }, mentionUsers] = await Promise.all([
@@ -511,7 +490,7 @@ export async function getMachineActivity(machineId: string): Promise<{ data: Mac
         updates: updates.map((update) => mapUpdate(update, usersById)),
         messages: messages.map((message) => mapMessage(message, usersById, mentionsByMessage)),
         mentionUsers,
-        canManageUpdates: !machine.is_archived && canManageModule && canManageMachineUpdates(user, machine),
+        canManageUpdates: !machine.is_archived && canManageModule,
         canSendChat: !machine.is_archived && canManageModule,
       },
       error: null,
@@ -526,7 +505,6 @@ export async function createMachineUpdate(machineId: string, body: string) {
     const parsedBody = bodySchema.parse(body)
     const { machine, user } = await requireMachineAccess(machineId, 'manage')
     assertMachineWritable(machine)
-    assertCanManageUpdates(user, machine)
 
     const db = dbFrom(createAdminClient())
     const { error } = await db.from('machine_updates').insert({
@@ -550,7 +528,6 @@ export async function editMachineUpdate(machineId: string, updateId: string, bod
     const parsedBody = bodySchema.parse(body)
     const { machine, user } = await requireMachineAccess(machineId, 'manage')
     assertMachineWritable(machine)
-    assertCanManageUpdates(user, machine)
 
     const db = dbFrom(createAdminClient())
     const { data: existing, error: existingError } = await db
@@ -585,7 +562,6 @@ export async function deleteMachineUpdate(machineId: string, updateId: string) {
     const parsedUpdateId = updateIdSchema.parse(updateId)
     const { machine, user } = await requireMachineAccess(machineId, 'manage')
     assertMachineWritable(machine)
-    assertCanManageUpdates(user, machine)
 
     const db = dbFrom(createAdminClient())
     const { data: existing, error: existingError } = await db

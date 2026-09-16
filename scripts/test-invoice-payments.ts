@@ -83,7 +83,7 @@ assert(hasPermission(directorDefaults, 'client_payments', 'manage'))
 assert(hasPermission(directorDefaults, 'invoices', 'manage'))
 assert(hasPermission(getFullPermissionMap(), 'client_payments', 'manage'))
 assert.equal(getPermissionRequirementForPath('/sales/payments')?.resourceKey, 'client_payments')
-assert.equal(getSidebarResources('sales_manager', managerDefaults, 'sales').at(-1)?.key, 'client_payments')
+assert.equal(getSidebarResources(managerDefaults, 'sales').at(-1)?.key, 'client_payments')
 
 const resolved = resolveDepartmentPermissions(
   [{ departmentId: 'sales', departmentName: 'Sales', isDepartmentHead: false }],

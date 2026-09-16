@@ -58,10 +58,10 @@ export function SupplyRequestPage({ data, detailing }: Props) {
   }, [data.sections, selectedFactoryId])
   const isStockCheckMode = isBusinessScrapReservationStatus(request.status)
   const isWarehouseReservationMode = isSupplyWarehouseReservationStatus(request.status)
-  const canReserveByRole = ['engineer', 'technologist', 'planning_director', 'financial_director', 'commercial_director'].includes(data.current_role)
+  const canReserveByRole = data.can_reserve
   const canReserve = (isStockCheckMode || isWarehouseReservationMode) && canReserveByRole
   const canCompleteReservation = canReserve
-  const canManageDetailing = isStockCheckMode && ['technologist', 'planning_director', 'financial_director', 'commercial_director'].includes(data.current_role)
+  const canManageDetailing = isStockCheckMode && data.can_manage_detailing
   const totalWeight = [
     ...data.sections.sheetMetal,
     ...data.sections.circles,

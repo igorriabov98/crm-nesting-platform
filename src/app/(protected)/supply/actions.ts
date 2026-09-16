@@ -1,20 +1,8 @@
 "use server"
 
-import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { SUPPLY_DASHBOARD_MACHINE_LIMIT } from '@/lib/constants/performance-limits'
 import { requirePermission } from '@/lib/permissions/server'
 import { differenceInDays } from 'date-fns'
-
-function applyProductionManagerFactoryScope<T>(query: T, factoryId: string | null): T {
-  const scopedQuery = query as { or: (filters: string) => T; is: (column: string, value: unknown) => T }
-  if (!factoryId) return scopedQuery.is('factory_id', null)
-  return scopedQuery.or(`factory_id.eq.${factoryId},factory_id.is.null`)
-}
-
-type UserProfileRow = {
-  factory_id: string | null
-  role: string
-}
 
 type SupplyItemStatus = 'not_ordered' | 'ordered' | 'received'
 
@@ -54,13 +42,7 @@ type SupplyMachineSummaryRow = {
 }
 
 export async function getSupplyDashboard(factoryFilter?: string | null) {
-  await requirePermission('supply', 'view')
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Не авторизован')
-
-  const { data: profile } = await supabase.from('users').select('factory_id, role').eq('id', user.id).single()
-  if (!profile) throw new Error('Профиль не найден')
+  const { supabase } = await requirePermission('supply', 'view')
 
   let query = supabase
     .from('machines_with_totals')
@@ -76,11 +58,7 @@ export async function getSupplyDashboard(factoryFilter?: string | null) {
     `)
     .eq('is_archived', false)
 
-  const profileRow = profile as UserProfileRow
-
-  if (profileRow.role === 'production_manager') {
-    query = applyProductionManagerFactoryScope(query, profileRow.factory_id)
-  } else if (factoryFilter === 'no_factory') {
+  if (factoryFilter === 'no_factory') {
     query = query.is('factory_id', null)
   } else if (factoryFilter && factoryFilter !== 'all') {
     query = query.eq('factory_id', factoryFilter)
@@ -183,13 +161,7 @@ export async function getSupplyDashboard(factoryFilter?: string | null) {
 }
 
 export async function getSupplyByMachine(machineId: string) {
-  await requirePermission('supply', 'view')
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Не авторизован')
-
-  const { data: profile } = await supabase.from('users').select('factory_id, role').eq('id', user.id).single()
-  if (!profile) throw new Error('Профиль не найден')
+  const { supabase } = await requirePermission('supply', 'view')
 
   const { data: machine, error: mErr } = await supabase
     .from('machines_with_totals')
@@ -199,12 +171,7 @@ export async function getSupplyByMachine(machineId: string) {
     .single()
 
   if (mErr || !machine) throw new Error('Машина не найдена')
-  const profileRow = profile as UserProfileRow
   const machineRow = machine as SupplyMachineSummaryRow
-
-  if (profileRow.role === 'production_manager' && machineRow.factory_id !== null && machineRow.factory_id !== profileRow.factory_id) {
-    throw new Error('Доступ запрещён')
-  }
 
   const { data: items, error: iErr } = await supabase
     .from('supply_items')

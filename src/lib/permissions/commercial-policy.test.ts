@@ -4,7 +4,6 @@ import { canUseClientDocumentPolicy, resolveCommercialPolicy, type CommercialPol
 
 const base: CommercialPolicyInput = {
   userId: 'viewer',
-  role: 'engineer',
   isAdmin: false,
   responsibleUserId: 'owner',
   identityView: false,
@@ -16,11 +15,17 @@ const base: CommercialPolicyInput = {
   salesPlanManage: false,
 }
 
-test('owner receives identity, prices, management and client card automatically', () => {
-  const decision = resolveCommercialPolicy({ ...base, responsibleUserId: base.userId })
+test('owner receives own-scope capabilities only when the matrix grants them', () => {
+  const decision = resolveCommercialPolicy({
+    ...base,
+    responsibleUserId: base.userId,
+    identityView: true,
+    priceView: true,
+    priceManage: true,
+    salesPlanManage: true,
+  })
   assert.deepEqual(decision, {
     isOwner: true,
-    isSalesManager: false,
     isAdmin: false,
     canViewFullClientName: true,
     canViewOrderPrices: true,
@@ -29,10 +34,9 @@ test('owner receives identity, prices, management and client card automatically'
   })
 })
 
-test('foreign sales manager never receives card, management or document access', () => {
+test('legacy role cannot override an explicit all-company matrix grant', () => {
   const decision = resolveCommercialPolicy({
     ...base,
-    role: 'sales_manager',
     identityView: true,
     identityViewScope: 'all',
     priceView: true,
@@ -41,9 +45,9 @@ test('foreign sales manager never receives card, management or document access',
     priceManageScope: 'all',
     salesPlanManage: true,
   })
-  assert.equal(decision.canAccessClientCard, false)
-  assert.equal(decision.canManageOrderPrices, false)
-  assert.equal(canUseClientDocumentPolicy(decision, true, true), false)
+  assert.equal(decision.canAccessClientCard, true)
+  assert.equal(decision.canManageOrderPrices, true)
+  assert.equal(canUseClientDocumentPolicy(decision, true, true), true)
 })
 
 test('another department follows own/all scopes and functional document permission', () => {

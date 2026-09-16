@@ -15,6 +15,8 @@
     "test:business-scrap-corrections": "node scripts/test-business-scrap-corrections.mjs",
     "test:supply-reservation-scope": "tsx scripts/test-supply-reservation-scope.ts",
     "test:access-control": "tsx scripts/test-access-control.ts",
+    "test:rls-matrix-cutover": "tsx scripts/test-rls-matrix-cutover.ts",
+    "test:rls-matrix-cutover:db": "node scripts/test-rls-matrix-cutover-db.mjs",
     "test:commercial-visibility": "tsx --test src/lib/clients/public-alias.test.ts src/lib/permissions/commercial-policy.test.ts && node scripts/test-commercial-visibility.mjs && node scripts/test-commercial-visibility-db.mjs",
     "test:my-orders": "tsx scripts/test-my-orders.ts",
     "test:sales-order-confirmation-tasks": "node scripts/test-sales-order-confirmation-tasks.mjs && node scripts/test-sales-order-confirmation-tasks-db.mjs",

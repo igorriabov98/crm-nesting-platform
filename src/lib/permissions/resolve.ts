@@ -44,10 +44,6 @@ export type ResolvedDepartmentPermissions = {
   appliedDepartmentRows: number
 }
 
-export function shouldUseLegacyPermissionFallback(appliedDepartmentRows: number) {
-  return appliedDepartmentRows === 0
-}
-
 function addSource(
   sources: Partial<Record<ResourceKey, string[]>>,
   resourceKey: ResourceKey,

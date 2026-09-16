@@ -4,7 +4,6 @@ import { resolve } from 'node:path'
 import {
   DEPARTMENT_REQUEST_TARGETS,
   DEPARTMENT_REQUEST_STATUS_LABELS,
-  canManageDepartmentRequestTarget,
   getDepartmentRequestTabStatuses,
   isDepartmentRequestTarget,
   normalizeDepartmentRequestFilters,
@@ -34,12 +33,6 @@ assert.deepEqual(getDepartmentRequestTabStatuses('active'), ['new', 'in_progress
 assert.deepEqual(getDepartmentRequestTabStatuses('completed'), ['done', 'cancelled'])
 assert.deepEqual(getDepartmentRequestTabStatuses('rejected'), ['rejected'])
 
-assert.equal(canManageDepartmentRequestTarget({
-  target: 'supply',
-  role: 'supply_manager',
-  memberships: [],
-}), true)
-
 assert.deepEqual(getNotificationDestination({
   id: 'notification-id',
   type: 'department_request_new_supply',
@@ -54,32 +47,6 @@ assert.deepEqual(getNotificationDestination({
   href: '/requests/detail/9e34f8c1-83c7-48a7-80e4-6f82cd2aeb2f',
   label: 'Открыть запрос',
 })
-assert.equal(canManageDepartmentRequestTarget({
-  target: 'technologist',
-  role: 'sales_manager',
-  memberships: [{ departmentName: 'Технический отдел ' }],
-}), true)
-assert.equal(canManageDepartmentRequestTarget({
-  target: 'technologist',
-  role: 'sales_manager',
-  memberships: [{ departmentName: 'Конструкторский отдел', positionName: 'Технолог' }],
-}), true)
-assert.equal(canManageDepartmentRequestTarget({
-  target: 'production',
-  role: 'sales_manager',
-  memberships: [{ departmentName: 'Производство Берегово' }],
-}), true)
-assert.equal(canManageDepartmentRequestTarget({
-  target: 'production',
-  role: 'sales_manager',
-  memberships: [{ departmentName: 'Отдел продаж' }],
-}), false)
-assert.equal(canManageDepartmentRequestTarget({
-  target: 'supply',
-  role: 'planning_director',
-  memberships: [],
-}), true)
-
 const migration = readFileSync(
   resolve('supabase/migrations/20260726121851_unify_department_requests.sql'),
   'utf8',
@@ -104,7 +71,8 @@ assert.match(sidebar, /TECHNOLOGIST_DEPARTMENT_REQUESTS/)
 assert.match(sidebar, /SUPPLY_DEPARTMENT_REQUESTS/)
 assert.match(sidebar, /PRODUCTION_DEPARTMENT_REQUESTS/)
 assert.doesNotMatch(sidebar, /PLANNING_DEPARTMENT_REQUESTS/)
-assert.match(sidebar, /canManageDepartmentRequestTarget/)
+assert.match(sidebar, /permissions\.department_requests\?\.canManage === true/)
+assert.doesNotMatch(sidebar, /canManageDepartmentRequestTarget/)
 assert.match(sidebar, /label: 'Аутсорсинг'/)
 
 const personalPage = readFileSync(
@@ -145,7 +113,8 @@ assert.match(requestActions, /created_by\.eq\.\$\{input\.userId\},assigned_to\.e
 assert.match(requestActions, /create_department_request_with_mail/)
 assert.match(requestActions, /p_mail_link/)
 assert.match(requestActions, /request\.can_process_position_revision = request\.assigned_to === context\.userId/)
-assert.match(requestActions, /DIRECTORS\.includes\(context\.role\)/)
+assert.match(requestActions, /hasPermission\(context\.permissions, 'department_requests', 'manage'\)/)
+assert.doesNotMatch(requestActions, /DIRECTORS\.includes\(context\.role\)/)
 assert.match(requestActions, /context\.permissionDetails\.isAdminPosition/)
 
 const requestActionUi = readFileSync(

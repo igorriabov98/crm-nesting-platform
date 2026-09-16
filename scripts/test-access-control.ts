@@ -12,7 +12,6 @@ import {
 } from '../src/lib/permissions/resources'
 import {
   resolveDepartmentPermissions,
-  shouldUseLegacyPermissionFallback,
   type DepartmentAccessPermissionRow,
   type DepartmentPermissionMembershipInput,
 } from '../src/lib/permissions/resolve'
@@ -128,16 +127,16 @@ assert(hasPermission(getFullPermissionMap(), 'meeting_rules', 'manage'), 'CRM-а
 assert.equal(getPermissionRequirementForPath('/admin/settings/meetings')?.resourceKey, 'meeting_templates', 'Конструктор совещаний должен иметь отдельное право')
 assert.equal(getPermissionRequirementForPath('/sales/my-orders')?.resourceKey, 'my_orders', 'Маршрут Моих заказов должен использовать отдельное право')
 assert.equal(getPermissionRequirementForPath('/sales/my-orders')?.operation, 'view', 'Маршрут Моих заказов должен требовать право просмотра')
-assert(!getSidebarResources('sales_manager', getDefaultPermissionMap('sales_manager'), 'sales').some((resource) => resource.key === 'my_orders'), 'Пункт Моих заказов должен быть скрыт без матричного права')
-const salesSidebarWithFullAccess = getSidebarResources('sales_manager', getFullPermissionMap(), 'sales')
+assert(!getSidebarResources(getDefaultPermissionMap('sales_manager'), 'sales').some((resource) => resource.key === 'my_orders'), 'Пункт Моих заказов должен быть скрыт без матричного права')
+const salesSidebarWithFullAccess = getSidebarResources(getFullPermissionMap(), 'sales')
 const salesPlanIndex = salesSidebarWithFullAccess.findIndex((resource) => resource.key === 'sales_plan')
 const myOrdersIndex = salesSidebarWithFullAccess.findIndex((resource) => resource.key === 'my_orders')
 assert.equal(myOrdersIndex, salesPlanIndex + 1, 'Мои заказы должны идти сразу после Плана продаж')
 assert(hasPermission(getDefaultPermissionMap('sales_manager'), 'client_payments', 'manage'), 'Sales-менеджер должен вести оплаты своих компаний')
 assert(hasPermission(getDefaultPermissionMap('commercial_director'), 'client_payments', 'manage'), 'Директор должен вести оплаты всех компаний')
 assert(hasPermission(getDefaultPermissionMap('commercial_director'), 'invoices', 'manage'), 'Коммерческий директор должен управлять инвойсами в своей области')
-assert.equal(getSidebarResources('financial_director', getDefaultPermissionMap('financial_director'), 'reports').length, 0, 'Раздел отчётов должен быть скрыт без права')
-assert.equal(getSidebarResources('financial_director', getFullPermissionMap(), 'reports')[0]?.key, 'complex_reports', 'Раздел отчётов должен появляться с правом')
+assert.equal(getSidebarResources(getDefaultPermissionMap('financial_director'), 'reports').length, 0, 'Раздел отчётов должен быть скрыт без права')
+assert.equal(getSidebarResources(getFullPermissionMap(), 'reports')[0]?.key, 'complex_reports', 'Раздел отчётов должен появляться с правом')
 assert.equal(
   getPermissionRequirementForPath('/reports/complex')?.resourceKey,
   'complex_reports',
@@ -233,8 +232,11 @@ assert(hasPermission(resolved.permissions, 'nesting', 'view'), 'manage долж�
 assert(hasPermission(resolved.permissions, 'nesting_catalog', 'view'), 'Каталог должен иметь независимое право')
 assert(!hasPermission(resolved.permissions, 'nesting_catalog', 'manage'), 'view каталога не должен разрешать запись')
 assert(!hasPermission(resolved.permissions, 'nesting_settings', 'view'), 'Настройки nesting должны быть независимы от nesting.manage')
-assert(!shouldUseLegacyPermissionFallback(resolved.appliedDepartmentRows), 'Явные строки отделов нельзя обходить legacy-ролью')
-assert(shouldUseLegacyPermissionFallback(0), 'Legacy fallback допустим только без настроенных строк отделов')
+assert.equal(
+  resolveDepartmentPermissions([], []).permissions.dashboard?.canView,
+  false,
+  'Пользователь без отдела должен получать нулевой доступ без legacy fallback',
+)
 assert.equal(resolved.factoryScopes.production_cutting_area?.view, 'all', 'Охват просмотра нескольких отделов должен объединяться через OR')
 assert.equal(resolved.factoryScopes.production_cutting_area?.manage, 'all', 'Охват управления должен учитываться только из строки с manage')
 
@@ -256,11 +258,11 @@ assert(!canAccessAllFactories({
   ...ownFactoryPermission,
   permissionDetails: { isAdminPosition: false, factoryScopes: { production_cutting_area: { view: 'all', manage: 'own' } } },
 }, 'production_cutting_area', 'manage'), 'Глобальный просмотр не должен расширять управление другого отдела')
-assert(canAccessAllFactories({
+assert(!canAccessAllFactories({
   ...ownFactoryPermission,
   role: 'planning_director',
   factoryId: null,
-}, 'production_cutting_area', 'manage'), 'Действующий глобальный доступ директоров должен сохраниться')
+}, 'production_cutting_area', 'manage'), 'Legacy-роль директора не должна расширять заводской доступ')
 assert(canAccessAllFactories({
   ...ownFactoryPermission,
   factoryId: null,

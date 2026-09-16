@@ -11,6 +11,7 @@ DECLARE
   v_supply_actor uuid := gen_random_uuid();
   v_matrix_actor uuid := gen_random_uuid();
   v_matrix_department uuid := gen_random_uuid();
+  v_inventory_department uuid := gen_random_uuid();
   v_material uuid := gen_random_uuid();
   v_scrap_material uuid := gen_random_uuid();
   v_knife_material uuid := gen_random_uuid();
@@ -89,7 +90,26 @@ BEGIN
     (v_supply_actor, 'inventory-transfer-supply@example.test', 'Тестовый снабженец перевозок', 'procurement_head', v_beregovo, true),
     (v_matrix_actor, 'inventory-transfer-matrix@example.test', 'Тестовый сотрудник с правом отдела', 'sales_manager', v_beregovo, true);
   INSERT INTO public.departments(name, head_user_id, factory_id, is_active, sort_order, created_by)
-  VALUES ('Снабжение', v_supply_actor, v_beregovo, true, -1000, v_actor);
+  VALUES ('Снабжение', v_supply_actor, v_beregovo, true, -1000, v_actor)
+  RETURNING id INTO v_inventory_department;
+  INSERT INTO public.department_members(user_id, department_id, is_department_head, created_by)
+  VALUES (v_supply_actor, v_inventory_department, true, v_actor);
+  INSERT INTO public.department_access_permissions(
+    department_id, subject_scope, resource_key, can_view, can_manage, updated_by
+  ) VALUES (
+    v_inventory_department, 'head', 'supply_transport', true, true, v_actor
+  );
+
+  v_inventory_department := gen_random_uuid();
+  INSERT INTO public.departments(id, name, head_user_id, factory_id, is_active, sort_order, created_by)
+  VALUES (v_inventory_department, 'Тест прав склада', v_actor, v_beregovo, true, -1002, v_actor);
+  INSERT INTO public.department_members(user_id, department_id, is_department_head, created_by)
+  VALUES (v_actor, v_inventory_department, true, v_actor);
+  INSERT INTO public.department_access_permissions(
+    department_id, subject_scope, resource_key, can_view, can_manage, updated_by
+  ) VALUES
+    (v_inventory_department, 'head', 'inventory', true, true, v_actor),
+    (v_inventory_department, 'head', 'inventory_detailing_receiving', true, true, v_actor);
 
   INSERT INTO public.departments(id, name, head_user_id, factory_id, is_active, sort_order, created_by)
   VALUES (v_matrix_department, 'Тест права межзаводской приёмки', v_supply_actor, v_beregovo, true, -1001, v_actor);

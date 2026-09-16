@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { CLIENTS_LIST_LIMIT } from '@/lib/constants/performance-limits'
 import { ROUTES } from '@/lib/constants/routes'
-import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
+import { requirePermission } from '@/lib/permissions/server'
 import { hasPermission, type PermissionOperation } from '@/lib/permissions/resources'
 import { clientContactSchema, clientSchema, type ClientContactInput, type ClientInput } from '@/lib/types/schemas'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
@@ -154,12 +154,6 @@ async function createSignedImageUrl(path: string | null | undefined) {
 
   if (error) return null
   return data?.signedUrl || null
-}
-
-function assertCanManageClients(context: Awaited<ReturnType<typeof requireClientPermission>>) {
-  if (context.role !== 'sales_manager' && !context.permissionDetails.isAdminPosition) {
-    throw new PermissionDeniedError('clients', 'manage')
-  }
 }
 
 export async function getClientOptions() {
@@ -312,15 +306,12 @@ export async function getClientImageUrls(id: string) {
 export async function createClient(input: ClientInput) {
   try {
     const context = await requireClientPermission('manage')
-    assertCanManageClients(context)
     const parsed = clientSchema.parse(input)
     const clientValues = { ...parsed }
     delete clientValues.responsible_user_id
-    const responsibleUserId = context.role === 'sales_manager'
-      ? context.userId
-      : canAssignResponsible(context)
-        ? await assertResponsibleManager(parsed.responsible_user_id)
-        : null
+    const responsibleUserId = canAssignResponsible(context)
+      ? await assertResponsibleManager(parsed.responsible_user_id)
+      : context.userId
     const payload: ClientInsert = {
       ...clientValues,
       primary_contact_name: parsed.primary_contact_name || null,
@@ -362,7 +353,6 @@ export async function createClient(input: ClientInput) {
 export async function updateClient(id: string, input: ClientInput) {
   try {
     const context = await requireClientPermission('manage')
-    assertCanManageClients(context)
     await requireClientCardAccess(id, context)
 
     const parsed = clientSchema.parse(input)
@@ -417,7 +407,6 @@ export async function uploadClientImage(
 
   try {
     const context = await requireClientPermission('manage')
-    assertCanManageClients(context)
     await requireClientCardAccess(clientId, context)
     if (type !== 'signature' && type !== 'stamp') throw new Error('Некорректный тип изображения')
 
@@ -465,7 +454,6 @@ export async function uploadClientImage(
 export async function createClientContact(clientId: string, input: ClientContactInput) {
   try {
     const context = await requireClientPermission('manage')
-    assertCanManageClients(context)
     await requireClientCardAccess(clientId, context)
 
     const parsed = clientContactSchema.parse(input)
@@ -495,7 +483,6 @@ export async function createClientContact(clientId: string, input: ClientContact
 export async function updateClientContact(clientId: string, contactId: string, input: ClientContactInput) {
   try {
     const context = await requireClientPermission('manage')
-    assertCanManageClients(context)
     await requireClientCardAccess(clientId, context)
 
     const parsed = clientContactSchema.parse(input)
@@ -525,7 +512,6 @@ export async function updateClientContact(clientId: string, contactId: string, i
 export async function deleteClientContact(clientId: string, contactId: string) {
   try {
     const context = await requireClientPermission('manage')
-    assertCanManageClients(context)
     await requireClientCardAccess(clientId, context)
 
     const { error } = await looseDb(createAdminClient()).from('client_contacts')
@@ -545,7 +531,6 @@ export async function applyClientPaymentTermsToMachines(clientId: string, machin
   try {
     const context = await requireClientPermission('manage')
     const { supabase } = context
-    assertCanManageClients(context)
     await requireClientCardAccess(clientId, context)
 
     const ids = Array.from(new Set(machineIds.filter(Boolean)))

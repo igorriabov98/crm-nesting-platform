@@ -10,13 +10,13 @@ import { ROUTES } from '@/lib/constants/routes'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import {
   DEPARTMENT_REQUEST_TARGETS,
-  canManageDepartmentRequestTarget,
   getDepartmentRequestTabStatuses,
   isDepartmentRequestTarget,
   type DepartmentRequestFilters,
   type DepartmentRequestStatus,
   type DepartmentRequestTarget,
 } from '@/lib/department-requests'
+import { hasPermission } from '@/lib/permissions/resources'
 import {
   type DepartmentRequestDirectUpload,
   validateDepartmentRequestUploads,
@@ -24,7 +24,6 @@ import {
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 
 const PAGE_SIZE = 40
-const DIRECTORS = ['financial_director', 'commercial_director', 'planning_director']
 
 const targetSchema = z.enum(['technologist', 'supply', 'production'])
 const attachmentSchema = z.object({
@@ -275,25 +274,10 @@ const requestDetailSelect = `
   )
 `
 
-function membershipInput(permissionDetails: Awaited<ReturnType<typeof requirePermission>>['permissionDetails']) {
-  return permissionDetails.memberships.map((membership) => ({
-    departmentName: membership.departmentName,
-    positionName: membership.positionName,
-  }))
-}
-
 function canClaimMachineLayout(
   context: Awaited<ReturnType<typeof requirePermission>>,
 ) {
-  if (context.role === 'technologist' || context.role === 'engineer') return true
-  return context.permissionDetails.memberships.some((membership) => {
-    const structure = `${membership.departmentName || ''} ${membership.positionName || ''}`.toLowerCase()
-    return structure.includes('технолог') || structure.includes('technolog')
-  })
-}
-
-function isDirector(role: string) {
-  return DIRECTORS.includes(role)
+  return hasPermission(context.permissions, 'department_requests', 'manage')
 }
 
 function normalizeSearch(value: string) {
@@ -334,7 +318,6 @@ function applyScope(
     mode: 'mine' | 'inbox'
     userId: string
     target?: DepartmentRequestTarget
-    role: string
     factoryId: string | null
   },
 ) {
@@ -342,7 +325,7 @@ function applyScope(
     return query.or(`created_by.eq.${input.userId},assigned_to.eq.${input.userId}`)
   }
   let result = query.eq('target_department', input.target)
-  if (input.target === 'production' && !isDirector(input.role) && input.factoryId) {
+  if (input.target === 'production' && input.factoryId) {
     result = result.eq('factory_id', input.factoryId)
   }
   return result
@@ -354,7 +337,6 @@ async function loadFilterOptions(
     mode: 'mine' | 'inbox'
     userId: string
     target?: DepartmentRequestTarget
-    role: string
     factoryId: string | null
   },
   archivedMachineIds: string[],
@@ -401,11 +383,7 @@ async function loadWorkspace(input: {
   const context = await requirePermission('department_requests', 'view')
   if (input.mode === 'inbox') {
     if (!input.target) throw new Error('Неизвестный отдел')
-    const canManage = canManageDepartmentRequestTarget({
-      target: input.target,
-      role: context.role,
-      memberships: membershipInput(context.permissionDetails),
-    })
+    const canManage = hasPermission(context.permissions, 'department_requests', 'manage')
     if (!canManage) throw new Error('Недостаточно прав для просмотра запросов отдела')
   }
 
@@ -413,7 +391,6 @@ async function loadWorkspace(input: {
     mode: input.mode,
     userId: context.userId,
     target: input.target,
-    role: context.role,
     factoryId: context.factoryId,
   } as const
   const admin = createAdminClient()
@@ -460,7 +437,7 @@ async function loadWorkspace(input: {
     replacement_request_id: string | null
     replacement_request_item_id: string | null
   }>).map((revision) => [revision.department_request_id, revision]))
-  const canManageReturnedPositions = DIRECTORS.includes(context.role) || context.permissionDetails.isAdminPosition
+  const canManageReturnedPositions = hasPermission(context.permissions, 'department_requests', 'manage')
   for (const request of requests) {
     request.can_process_position_revision = request.assigned_to === context.userId || canManageReturnedPositions
     if (request.request_kind === 'supply_position_revision') {
@@ -507,8 +484,7 @@ export async function getDepartmentRequestDetail(requestId: string) {
   if (error || !data) return null
   const request = data as unknown as DepartmentRequestRow
   request.can_process_position_revision = request.assigned_to === context.userId
-    || DIRECTORS.includes(context.role)
-    || context.permissionDetails.isAdminPosition
+    || hasPermission(context.permissions, 'department_requests', 'manage')
   if (request.request_kind === 'supply_position_revision') {
     const { data: revisionData, error: revisionError } = await admin
       .from('supply_position_revisions')
@@ -519,13 +495,9 @@ export async function getDepartmentRequestDetail(requestId: string) {
     request.position_revision = revisionData as DepartmentRequestRow['position_revision']
   }
 
-  const departmentAllowed = canManageDepartmentRequestTarget({
-    target: request.target_department,
-    role: context.role,
-    memberships: membershipInput(context.permissionDetails),
-  })
+  const departmentAllowed = hasPermission(context.permissions, 'department_requests', 'manage')
   const factoryAllowed = request.target_department !== 'production'
-    || isDirector(context.role)
+    || context.permissionDetails.isAdminPosition
     || !request.factory_id
     || request.factory_id === context.factoryId
   const canManage = departmentAllowed && factoryAllowed

@@ -2187,7 +2187,7 @@ function addSupplierSummary(
 
 export async function getSupplyOrderAggregates(factoryId?: string | null) {
   try {
-    const { db, userId, role, permissionDetails } = await requireAccess()
+    const { db, userId, permissions } = await requireAccess()
     const items = await loadAggregateInputItems(db, factoryId, true)
     const schedules = await loadReceivingSchedules(db, items)
     const schedulesByItem = new Map<string, ReceivingScheduleRow[]>()
@@ -2254,8 +2254,7 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
     }
 
     const aggregates = new Map<string, MutableAggregate>()
-    const canManageReturnedPositions = ['planning_director', 'financial_director', 'commercial_director'].includes(role)
-      || permissionDetails.isAdminPosition
+    const canManageReturnedPositions = Boolean(permissions.supply_orders?.canManage)
 
     for (const item of items) {
       const positionReturned = isReturnedSupplyPosition(item)
@@ -3755,7 +3754,7 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
       loadSelectedOrderItems(db, affectedItems),
       getAffectedMachineIds(db, affectedItems),
     ])
-    const receivingRpcDb = createAdminClient() as unknown as RpcDb
+    const receivingRpcDb = db
 
     let scheduleId = input.schedule_id || null
     let createdScheduleId: string | null = null

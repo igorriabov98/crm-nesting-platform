@@ -46,7 +46,6 @@ import { Button } from '@/components/ui/button'
 import type { CurrentUser } from '@/lib/types'
 import { ROUTES } from '@/lib/constants/routes'
 import { MailUnreadBadge } from '@/components/features/mail/MailUnreadBadge'
-import { canManageDepartmentRequestTarget } from '@/lib/department-requests'
 import {
   getSidebarWorkQueueCounts,
 } from '@/lib/actions/sidebar-work-queues'
@@ -170,8 +169,8 @@ function toNavItem(resource: PermissionResource): NavItem | null {
   }
 }
 
-function sectionItems(user: CurrentUser, permissions: PermissionMap, section: Parameters<typeof getSidebarResources>[2]) {
-  return getSidebarResources(user.role, permissions, section)
+function sectionItems(_user: CurrentUser, permissions: PermissionMap, section: Parameters<typeof getSidebarResources>[1]) {
+  return getSidebarResources(permissions, section)
     .map(toNavItem)
     .filter((item): item is NavItem => Boolean(item))
 }
@@ -245,25 +244,9 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const financeItems = sectionItems(user, permissions, 'finance')
   const reportsItems = sectionItems(user, permissions, 'reports')
   const workflowItemsBase = sectionItems(user, permissions, 'workflow')
-  const requestMemberships = (user.department_memberships || []).map((membership) => ({
-    departmentName: membership.department?.name || null,
-    positionName: membership.position?.name || null,
-  }))
-  const canManageTechnologistRequests = permissions.department_requests?.canView && canManageDepartmentRequestTarget({
-    target: 'technologist',
-    role: user.role,
-    memberships: requestMemberships,
-  })
-  const canManageProductionRequests = permissions.department_requests?.canView && canManageDepartmentRequestTarget({
-    target: 'production',
-    role: user.role,
-    memberships: requestMemberships,
-  })
-  const canManageSupplyRequests = permissions.department_requests?.canView && canManageDepartmentRequestTarget({
-    target: 'supply',
-    role: user.role,
-    memberships: requestMemberships,
-  })
+  const canManageTechnologistRequests = permissions.department_requests?.canManage === true
+  const canManageProductionRequests = permissions.department_requests?.canManage === true
+  const canManageSupplyRequests = permissions.department_requests?.canManage === true
   const workflowItems = workflowItemsBase
   const technologistItems = [
     ...(canManageTechnologistRequests

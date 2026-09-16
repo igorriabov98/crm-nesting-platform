@@ -6,13 +6,8 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import {
   PERMISSION_RESOURCES,
   RESOURCE_BY_KEY,
-  DIRECTOR_ACCESS_ROLES,
-  getDefaultPermission,
-  getDefaultPermissionMap,
   getEmptyPermissionMap,
   getFullPermissionMap,
-  isLockedResource,
-  type PermissionMap,
   type PermissionState,
   type FactoryAccessScope,
   type CompanyAccessScope,
@@ -29,7 +24,6 @@ import {
   type CompanyAccessOperationScopes,
   type FactoryAccessOperationScopes,
 } from '@/lib/permissions/resolve'
-import type { UserRole } from '@/lib/types'
 
 export type DepartmentAccessSubjectScope = 'head' | 'member'
 
@@ -46,13 +40,6 @@ type DepartmentAccessRow = DepartmentAccessPermissionRow & {
   updated_at?: string | null
 }
 
-type LegacyPermissionRow = {
-  role: UserRole
-  resource_key: string
-  can_view: boolean
-  can_manage: boolean
-}
-
 type DepartmentRow = {
   id: string
   name: string
@@ -64,7 +51,6 @@ type UserRow = {
   id: string
   full_name: string | null
   email: string
-  role: UserRole | null
   is_active: boolean | null
 }
 
@@ -132,6 +118,13 @@ type LooseAuthAdminClient = LooseDb & {
   }
 }
 
+type RpcClient = {
+  rpc: (name: string, args: Record<string, unknown>) => Promise<{
+    data: unknown
+    error: { message?: string; code?: string } | null
+  }>
+}
+
 export type DepartmentAccessPermissionInput = {
   departmentId: string
   subjectScope: DepartmentAccessSubjectScope
@@ -162,7 +155,6 @@ export type UserAccessPreview = {
   email: string
   isActive: boolean
   isAdminPosition: boolean
-  usedLegacyFallback: boolean
   memberships: DepartmentPermissionMembership[]
   permissions: Array<{
     resourceKey: ResourceKey
@@ -267,13 +259,6 @@ function normalizeMembership(row: MembershipRow): DepartmentPermissionMembership
   }
 }
 
-function normalizeLegacyPermission(row: Pick<LegacyPermissionRow, 'can_view' | 'can_manage'>): PermissionState {
-  return {
-    canView: row.can_view || row.can_manage,
-    canManage: row.can_manage,
-  }
-}
-
 async function getDepartments(db: LooseDb) {
   const { data, error } = await db
     .from<DepartmentRow[]>('departments')
@@ -309,7 +294,7 @@ async function getUsers(client: LooseAuthAdminClient) {
   const [{ data, error }, authUserIds] = await Promise.all([
     client
       .from<UserRow[]>('users')
-      .select('id, full_name, email, role, is_active')
+      .select('id, full_name, email, is_active')
       .order('full_name', { ascending: true }),
     getAuthUserIds(client),
   ])
@@ -436,35 +421,10 @@ function buildUserSummaries(users: UserRow[], memberships: MembershipRow[]) {
   )
 }
 
-async function getLegacyPermissionMap(db: LooseDb, role: UserRole): Promise<PermissionMap> {
-  const defaults = getDefaultPermissionMap(role)
-  const { data } = await db
-    .from<LegacyPermissionRow[]>('role_permissions')
-    .select('role, resource_key, can_view, can_manage')
-    .eq('role', role)
-
-  const map: PermissionMap = { ...defaults }
-  if (Array.isArray(data)) {
-    for (const row of data) {
-      if (row.resource_key in RESOURCE_BY_KEY) {
-        map[row.resource_key as ResourceKey] = normalizeLegacyPermission(row)
-      }
-    }
-  }
-
-  for (const resource of PERMISSION_RESOURCES) {
-    if (isLockedResource(resource)) {
-      map[resource.key] = getDefaultPermission(resource, role)
-    }
-  }
-
-  return map
-}
-
 async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<UserAccessPreview> {
   const { data: userData, error: userError } = await db
     .from<UserRow>('users')
-    .select('id, full_name, email, role, is_active')
+    .select('id, full_name, email, is_active')
     .eq('id', userId)
     .maybeSingle()
 
@@ -482,7 +442,6 @@ async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<User
     : []
 
   const isAdminPosition = memberships.some((membership) => membership.positionName === CRM_ADMIN_POSITION_NAME)
-  let usedLegacyFallback = false
   let permissions = isAdminPosition ? getFullPermissionMap() : getEmptyPermissionMap()
   const sources: Partial<Record<ResourceKey, string[]>> = {}
   const factoryScopes: Partial<Record<ResourceKey, FactoryAccessOperationScopes>> = {}
@@ -515,21 +474,6 @@ async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<User
     Object.assign(factoryScopes, resolved.factoryScopes)
     Object.assign(companyScopes, resolved.companyScopes)
 
-    if (resolved.appliedDepartmentRows === 0 && userData.role) {
-      permissions = await getLegacyPermissionMap(db, userData.role)
-      usedLegacyFallback = true
-      if ((DIRECTOR_ACCESS_ROLES as readonly UserRole[]).includes(userData.role)) {
-        factoryScopes.production_cutting_area = { view: 'all', manage: 'all' }
-        companyScopes.invoices = { view: 'all', manage: 'all' }
-        companyScopes.client_payments = { view: 'all', manage: 'all' }
-      }
-      for (const resource of PERMISSION_RESOURCES) {
-        const state = permissions[resource.key]
-        if (state?.canView || state?.canManage) {
-          sources[resource.key] = ['Legacy role fallback']
-        }
-      }
-    }
   }
 
   return {
@@ -538,7 +482,6 @@ async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<User
     email: userData.email,
     isActive: userData.is_active !== false,
     isAdminPosition,
-    usedLegacyFallback,
     memberships,
     permissions: PERMISSION_RESOURCES.map((resource) => {
       const state = permissions[resource.key] || { canView: false, canManage: false }
@@ -660,6 +603,27 @@ export async function saveDepartmentAccessPermissions(input: DepartmentAccessPer
     const db = createAdminClient() as unknown as LooseDb
     const departments = await getDepartments(db)
     const normalized = validateInput(input, new Set(departments.map((department) => department.id)))
+
+    const rpcResult = await (context.supabase as unknown as RpcClient).rpc(
+      'fn_save_department_access_permissions',
+      { p_permissions: normalized },
+    )
+    if (!rpcResult.error) {
+      const saved = Array.isArray(rpcResult.data)
+        ? rpcResult.data as DepartmentAccessPermissionInput[]
+        : normalized
+      revalidatePath('/', 'layout')
+      revalidatePath(ROUTES.ADMIN_SETTINGS)
+      revalidatePath(ROUTES.ADMIN_ACCESS_SETTINGS)
+      return { success: true, error: null, permissions: saved }
+    }
+    if (!['PGRST202', '42883'].includes(rpcResult.error.code || '')) {
+      throw new Error(rpcResult.error.message || 'Не удалось сохранить права доступа')
+    }
+
+    // Compatibility path for the application release that precedes the
+    // database cutover. Once the migration is applied, the RPC above is the
+    // only path used and the matrix plus audit commit atomically.
     const existingRows = await getAccessRows(db)
     const existing = new Map<string, PermissionState & {
       factoryScope: FactoryAccessScope

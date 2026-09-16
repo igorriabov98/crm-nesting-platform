@@ -241,7 +241,7 @@ export function TechnologistTab({
 }: Props) {
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const { isDirector, can } = useRole()
+  const { isAdminPosition, can } = useRole()
   const { user } = useUser()
   const [isUpdatingMaterialType, setIsUpdatingMaterialType] = useState(false)
   const [isRequestingLayout, setIsRequestingLayout] = useState(false)
@@ -256,7 +256,7 @@ export function TechnologistTab({
   const hasOpenLayoutRequest = Boolean(openLayoutVersion)
   const canRequestLayout = !machine.is_archived && currentItems.length > 0 && !hasOpenLayoutRequest && can('sales_plan', 'manage')
   const canUploadPdf = !machine.is_archived && latest?.status === 'requested' && (
-    can('department_requests', 'manage') && (isDirector || latest.assignedTo === user?.id)
+    can('department_requests', 'manage') && (isAdminPosition || latest.assignedTo === user?.id)
   )
   const materialTypeValue = (machine.material_type || 'undefined') as MaterialType
   const materialTypeLabel = MATERIAL_TYPE_LABELS[materialTypeValue] ?? MATERIAL_TYPE_LABELS['undefined']

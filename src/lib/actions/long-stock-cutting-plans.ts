@@ -33,6 +33,7 @@ import {
 } from '@/lib/long-stock-material-weight'
 import { createMaterial, recordMaterialUsage } from '@/lib/actions/materials'
 import { requirePermission } from '@/lib/permissions/server'
+import { hasPermission } from '@/lib/permissions/resources'
 import { knifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { requireCanonicalPipeProfile, roundPipeOuterDiameterMm, validatePipeProfileGeometry } from '@/lib/materials/pipe-profile'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -485,8 +486,7 @@ export async function getLongStockCuttingPlanItemOverview(
     const recovery = await loadLongStockPlanningRecoveryState(db, requestItem)
     const canCancelReturn = isGenericReturn && (
       returnedAssignedTo === permission.userId
-      || ['planning_director', 'financial_director', 'commercial_director'].includes(permission.role)
-      || permission.permissionDetails.isAdminPosition
+      || hasPermission(permission.permissions, 'department_requests', 'manage')
     )
     return recovery
       ? { status: 'planning', segments: [], total_length_mm: 0, piece_count: 0, is_returned: isGenericReturn, can_cancel_return: canCancelReturn, cancel_return_ref: genericCancelRef }
@@ -510,8 +510,7 @@ export async function getLongStockCuttingPlanItemOverview(
   const isReturned = isGenericReturn || status === 'requires_recalculation'
   const canCancelReturn = isReturned && (
     returnedAssignedTo === permission.userId
-    || ['planning_director', 'financial_director', 'commercial_director'].includes(permission.role)
-    || permission.permissionDetails.isAdminPosition
+    || hasPermission(permission.permissions, 'department_requests', 'manage')
   )
   const cancelReturnRef = genericCancelRef ?? (status === 'requires_recalculation' ? requestItem : null)
   const expectedVersionStatus = status === 'requires_recalculation'

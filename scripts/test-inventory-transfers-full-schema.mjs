@@ -30,6 +30,9 @@ const cuttingAreaCancelledRequestsPath = path.join(
   'tests',
   'production_cutting_area_cancelled_requests_test.sql',
 )
+const rlsManifest = JSON.parse(
+  readFileSync(path.join(root, 'config', 'rls-resource-manifest.json'), 'utf8'),
+)
 const databaseUrl = new URL(
   process.env.FULL_SCHEMA_TEST_DATABASE_URL ?? 'postgresql://localhost/crm_full_schema_test',
 )
@@ -84,6 +87,22 @@ const replayPreludes = new Map([
        ('97000000-0000-4000-8000-000000000001', 'general', 'Replay series A', '09:00', ARRAY[1]::smallint[], CURRENT_DATE, 3),
        ('97000000-0000-4000-8000-000000000002', 'general', 'Replay series B', '11:00', ARRAY[3]::smallint[], CURRENT_DATE, 3)
      ON CONFLICT (id) DO NOTHING;
+    `,
+  ],
+  [
+    '20260916090000_department_rls_matrix_cutover.sql',
+    `INSERT INTO public.departments(id, name, is_active)
+     VALUES ('97000000-0000-4000-8000-000000000064', 'RLS replay fixture', true)
+     ON CONFLICT (id) DO NOTHING;
+     INSERT INTO public.department_access_permissions(
+       department_id, subject_scope, resource_key, can_view, can_manage,
+       factory_scope, company_view_scope, company_manage_scope
+     )
+     SELECT
+       '97000000-0000-4000-8000-000000000064'::uuid,
+       'member', resource_key, false, false, 'own', 'own', 'own'
+     FROM unnest(ARRAY[${rlsManifest.resources.map((resource) => `'${resource.replaceAll("'", "''")}'`).join(', ')}]::text[]) AS resource_key
+     ON CONFLICT (department_id, subject_scope, resource_key) DO NOTHING;
     `,
   ],
 ])

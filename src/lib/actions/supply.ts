@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
-import { isDirector } from '@/lib/utils/permissions'
+import { hasPermission } from '@/lib/permissions/resources'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 
 const createSupplyItemSchema = z.object({
@@ -33,8 +33,7 @@ const updateSupplyItemSchema = z.object({
 }).strict()
 
 async function requireSupplyManage() {
-  const { supabase, user } = await requirePermission('supply', 'manage')
-  return { supabase, user }
+  return requirePermission('supply', 'manage')
 }
 
 function handleRevalidate(machineId: string) {
@@ -58,9 +57,12 @@ async function assertMachineNotArchived(supabase: Awaited<ReturnType<typeof crea
 
 export async function createSupplyItem(machineId: string, rawData: unknown) {
   try {
-    const { supabase, user } = await requireSupplyManage()
+    const { supabase, user, permissions } = await requireSupplyManage()
     const data = createSupplyItemSchema.parse(rawData)
     await assertMachineNotArchived(supabase, machineId)
+    if (data.price_per_unit !== undefined && !hasPermission(permissions, 'supply_finance', 'manage')) {
+      throw new Error('Недостаточно прав для изменения закупочной цены')
+    }
 
     const { error: insertErr } = await supabase.from('supply_items').insert({
       machine_id: machineId,
@@ -85,32 +87,12 @@ export async function createSupplyItem(machineId: string, rawData: unknown) {
 
 export async function updateSupplyItem(itemId: string, rawData: unknown, machineId: string) {
   try {
-    const { supabase, user } = await requireSupplyManage()
-    const role = user.role
+    const { supabase, permissions } = await requireSupplyManage()
     const data = updateSupplyItemSchema.parse(rawData)
     await assertMachineNotArchived(supabase, machineId)
-    const allowedFields: Record<string, unknown> = {}
-
-    if (isDirector(role)) {
-      Object.assign(allowedFields, data)
-    } else {
-      if (role === 'engineer') {
-        if (data.engineer_confirmation !== undefined) allowedFields.engineer_confirmation = data.engineer_confirmation
-        if (data.engineer_deadline !== undefined) allowedFields.engineer_deadline = data.engineer_deadline
-      }
-      if (role === 'technologist') {
-        if (data.nomenclature !== undefined) allowedFields.nomenclature = data.nomenclature
-        if (data.unit !== undefined) allowedFields.unit = data.unit
-        if (data.quantity !== undefined) allowedFields.quantity = data.quantity
-        if (data.technologist_deadline !== undefined) allowedFields.technologist_deadline = data.technologist_deadline
-      }
-      if (role === 'supply_manager') {
-        if (data.supplier !== undefined) allowedFields.supplier = data.supplier
-        if (data.price_per_unit !== undefined) allowedFields.price_per_unit = data.price_per_unit
-        if (data.status !== undefined) allowedFields.status = data.status
-        if (data.comment !== undefined) allowedFields.comment = data.comment
-        if (data.planned_delivery_date !== undefined) allowedFields.planned_delivery_date = data.planned_delivery_date
-      }
+    const allowedFields: Record<string, unknown> = { ...data }
+    if (data.price_per_unit !== undefined && !hasPermission(permissions, 'supply_finance', 'manage')) {
+      delete allowedFields.price_per_unit
     }
 
     if (Object.keys(allowedFields).length === 0) {
@@ -133,13 +115,13 @@ export async function updateSupplyItem(itemId: string, rawData: unknown, machine
 
 export async function deleteSupplyItem(itemId: string, machineId: string) {
   try {
-    const { supabase, user } = await requireSupplyManage()
+    const { supabase, user, permissionDetails } = await requireSupplyManage()
     await assertMachineNotArchived(supabase, machineId)
     const { data: item } = await supabase.from('supply_items').select('created_by').eq('id', itemId).single()
     const isOwner = (item as { created_by?: string } | null)?.created_by === user.id
 
-    if (!isDirector(user.role) && !isOwner) {
-      throw new Error('Только директор или создатель позиции могут её удалить')
+    if (!isOwner && !permissionDetails.isAdminPosition) {
+      throw new Error('Удалить позицию может только её создатель или администратор CRM')
     }
 
     const { error } = await supabase

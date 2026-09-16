@@ -49,7 +49,7 @@ type SupplyMachineDetailData = {
 
 export function SupplyMachineDetail({ data }: { data: SupplyMachineDetailData }) {
   const router = useRouter()
-  const { isEngineer, isTechnologist, isSupplyManager, isDirector, can } = useRole()
+  const { can } = useRole()
   const { machine, items, summary } = data
   const [filterMode, setFilterMode] = useState('all')
 
@@ -81,10 +81,10 @@ export function SupplyMachineDetail({ data }: { data: SupplyMachineDetailData })
   })
 
   const canManage = can('supply', 'manage')
-  const canDelete = (userId: string | null) => canManage && (isDirector || (!!userId && userId === data.currentUser?.id))
-  const disableEng = !canManage || (!isEngineer && !isDirector)
-  const disableTech = !canManage || (!isTechnologist && !isDirector)
-  const disableSup = !canManage || (!isSupplyManager && !isDirector)
+  const canDelete = () => canManage
+  const disableEng = !canManage
+  const disableTech = !canManage
+  const disableSup = !canManage
 
   async function handleUpdate(id: string, field: string, value: string | number | boolean | null) {
     const res = await updateSupplyItem(id, { [field]: value }, machine.id)
@@ -289,7 +289,7 @@ export function SupplyMachineDetail({ data }: { data: SupplyMachineDetailData })
                         />
                       </td>
                       <td className="sticky right-0 border-l border-[#E8ECF0] bg-white/90 px-3 py-2 text-center">
-                        {canDelete(item.created_by) ? (
+                        {canDelete() ? (
                           <button onClick={() => handleDelete(item.id)} className="px-2 text-xs text-[#DC2626] hover:underline">
                             Удалить
                           </button>

@@ -8,7 +8,6 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
 import { hasPermission } from '@/lib/permissions/resources'
 import type { PermissionMap } from '@/lib/permissions/resources'
-import type { UserRole } from '@/lib/types'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import {
   MACHINE_CUTTING_BUCKET,
@@ -98,7 +97,7 @@ const registrationSchema = z.object({
 
 async function loadPayload(
   machineId: string,
-  actor: { userId: string; role: UserRole; permissions: PermissionMap },
+  actor: { userId: string; permissions: PermissionMap; permissionDetails: { isAdminPosition: boolean } },
 ): Promise<MachineCuttingPayload> {
   const admin = createAdminClient() as any
   const [machineResult, requestsResult, completionResult, archivesResult] = await Promise.all([
@@ -179,8 +178,8 @@ async function loadPayload(
       })),
       canUpload: canUploadMachineCutting({
         userId: actor.userId,
-        role: actor.role,
         canManage,
+        canBypassOwnership: actor.permissionDetails.isAdminPosition,
         isArchived: Boolean(machineResult.data.is_archived),
         completionCreatedBy: completion?.created_by || null,
       }),

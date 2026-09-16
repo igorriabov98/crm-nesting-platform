@@ -5,7 +5,12 @@ import { after } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
-import type { PermissionOperation, ResourceKey } from '@/lib/permissions/resources'
+import { hasPermission, type PermissionOperation, type ResourceKey } from '@/lib/permissions/resources'
+import {
+  assertFactoryAccess as assertMatrixFactoryAccess,
+  canAccessAllFactories,
+  type FactoryScopedPermissionContext,
+} from '@/lib/permissions/factory-scope'
 import { ROUTES } from '@/lib/constants/routes'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import { updateMachineDate } from '@/lib/actions/production'
@@ -22,7 +27,6 @@ import type {
   ProductionFactShift,
   ProductionMachineFact,
   ProductionTonnageFact,
-  UserRole,
 } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
 import {
@@ -158,7 +162,6 @@ export type ProductionFactActionResult<T = undefined> = {
   error: string | null
 }
 
-const DIRECTORS: UserRole[] = ['financial_director', 'commercial_director', 'planning_director']
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const CHISINAU_TIME_ZONE = 'Europe/Chisinau'
 const CUTTING_STAGE_TYPE = 'cutting' as const
@@ -175,16 +178,6 @@ function getErrorMessage(error: unknown) {
 
 function looseDb(admin: AdminClient): LooseDb {
   return admin as unknown as LooseDb
-}
-
-function isDirector(role: UserRole) {
-  return DIRECTORS.includes(role)
-}
-
-function assertFactoryAccess(role: UserRole, userFactoryId: string | null, factoryId: string) {
-  if (isDirector(role)) return
-  if (userFactoryId === factoryId) return
-  throw new Error('Недостаточно прав для выбранного завода')
 }
 
 function chisinauDateOnly(date = new Date()) {
@@ -217,14 +210,14 @@ function addDays(value: string, days: number) {
   return date.toISOString().slice(0, 10)
 }
 
-function canEditFactDate(role: UserRole, factDate: string) {
-  if (isDirector(role)) return true
+function canEditFactDate(canEditHistory: boolean, factDate: string) {
+  if (canEditHistory) return true
   const cutoff = addDays(chisinauDateOnly(), -7)
   return dateOnly(factDate) >= cutoff
 }
 
-function assertCanEditFactDate(role: UserRole, factDate: string) {
-  if (!canEditFactDate(role, factDate)) {
+function assertCanEditFactDate(canEditHistory: boolean, factDate: string) {
+  if (!canEditFactDate(canEditHistory, factDate)) {
     throw new Error('Дата старше 7 дней: запись доступна только для просмотра')
   }
 }
@@ -266,10 +259,16 @@ async function getContext(
   }
 }
 
-async function getVisibleFactories(admin: AdminClient, role: UserRole, userFactoryId: string | null) {
+async function getVisibleFactories(
+  admin: AdminClient,
+  permission: FactoryScopedPermissionContext,
+  resourceKey: Extract<ResourceKey, 'production_fact' | 'production_fact_settings'>,
+  operation: PermissionOperation,
+) {
+  if (!canAccessAllFactories(permission, resourceKey, operation) && !permission.factoryId) return []
   let query = admin.from('factories').select('id, name').order('name')
-  if (!isDirector(role) && userFactoryId) {
-    query = query.eq('id', userFactoryId || '00000000-0000-0000-0000-000000000000')
+  if (!canAccessAllFactories(permission, resourceKey, operation)) {
+    query = query.eq('id', permission.factoryId!)
   }
 
   const { data, error } = await query
@@ -881,8 +880,9 @@ export async function getProductionFactCuttingReadiness(input: {
   machine_ids: string[]
 }): Promise<ProductionFactActionResult<{ machines: ProductionFactCuttingReadiness[] }>> {
   try {
-    const { admin, role, factoryId: userFactoryId } = await getContext('production_fact', 'view')
-    assertFactoryAccess(role, userFactoryId, input.factory_id)
+    const permission = await getContext('production_fact', 'view')
+    const { admin } = permission
+    assertMatrixFactoryAccess(permission, 'production_fact', 'view', input.factory_id)
     const machines = await loadProductionFactCuttingReadiness(
       admin,
       input.factory_id,
@@ -898,9 +898,13 @@ export async function getProductionFactWorkspaceData(input: {
   factoryId?: string | null
   date?: string | null
 } = {}): Promise<ProductionFactWorkspaceData> {
-  const { admin, role, factoryId: userFactoryId, userId, permissions } = await getContext('production_fact', 'view')
+  const permission = await getContext('production_fact', 'view')
+  const { admin, userId, permissions, permissionDetails } = permission
   const canManage = Boolean(permissions.production_fact?.canManage)
-  const factories = await getVisibleFactories(admin, role, userFactoryId)
+  const canEditHistory = permissionDetails.isAdminPosition
+    || hasPermission(permissions, 'production_fact_settings', 'manage')
+  const canViewAllFactories = canAccessAllFactories(permission, 'production_fact', 'view')
+  const factories = await getVisibleFactories(admin, permission, 'production_fact', 'view')
   const selectedFactoryId = factories.some((factory) => factory.id === input.factoryId)
     ? input.factoryId!
     : factories[0]?.id || null
@@ -920,7 +924,7 @@ export async function getProductionFactWorkspaceData(input: {
       previousTonnageBySection: {},
       canEditSelectedDate: false,
       canManage,
-      isDirector: isDirector(role),
+      isDirector: canViewAllFactories,
       stats: {
         machineFactCount: 0,
         uniqueMachineCount: 0,
@@ -933,7 +937,7 @@ export async function getProductionFactWorkspaceData(input: {
     }
   }
 
-  assertFactoryAccess(role, userFactoryId, selectedFactoryId)
+  assertMatrixFactoryAccess(permission, 'production_fact', 'view', selectedFactoryId)
   const previousDate = addDays(selectedDate, -1)
   const [
     initialSections,
@@ -988,7 +992,7 @@ export async function getProductionFactWorkspaceData(input: {
       parentSection,
       createdByName: userDisplayName(fact.created_by ? usersById.get(fact.created_by) : undefined),
       updatedByName: userDisplayName(fact.updated_by ? usersById.get(fact.updated_by) : undefined),
-      canEdit: canManage && canEditFactDate(role, fact.fact_date),
+      canEdit: canManage && canEditFactDate(canEditHistory, fact.fact_date),
     }
   })
 
@@ -1021,7 +1025,7 @@ export async function getProductionFactWorkspaceData(input: {
       deltaTonnage: tonnage - previousTonnage,
       createdByName: userDisplayName(fact.created_by ? usersById.get(fact.created_by) : undefined),
       updatedByName: userDisplayName(fact.updated_by ? usersById.get(fact.updated_by) : undefined),
-      canEdit: canManage && canEditFactDate(role, fact.fact_date),
+      canEdit: canManage && canEditFactDate(canEditHistory, fact.fact_date),
     }
   })
 
@@ -1038,9 +1042,9 @@ export async function getProductionFactWorkspaceData(input: {
     machineFacts: machineFactRows,
     tonnageFacts: tonnageFactRows,
     previousTonnageBySection: visiblePreviousTonnageBySection,
-    canEditSelectedDate: canManage && canEditFactDate(role, selectedDate),
+    canEditSelectedDate: canManage && canEditFactDate(canEditHistory, selectedDate),
     canManage,
-    isDirector: isDirector(role),
+    isDirector: canViewAllFactories,
     stats: {
       machineFactCount: machineFacts.length,
       uniqueMachineCount: new Set(machineFacts.map((fact) => fact.machine_id)).size,
@@ -1062,9 +1066,10 @@ export async function getProductionFactMachineItems(input: {
   shift: ProductionFactShift
 }): Promise<ProductionFactActionResult<ProductionFactMachineItemsData>> {
   try {
-    const { admin, role, factoryId: userFactoryId } = await getContext('production_fact', 'view')
+    const permission = await getContext('production_fact', 'view')
+    const { admin } = permission
     const factDate = validatedDateOnly(input.fact_date)
-    assertFactoryAccess(role, userFactoryId, input.factory_id)
+    assertMatrixFactoryAccess(permission, 'production_fact', 'view', input.factory_id)
     if (!isItemizedProductionFactStage(input.stage_key)) {
       throw new Error('Этап не поддерживает ввод по номенклатуре')
     }
@@ -1182,10 +1187,13 @@ export async function saveProductionMachineItemFact(input: {
   comment?: string | null
 }): Promise<ProductionFactActionResult<{ factId: string; lineCount: number; tonnage: number }>> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact', 'manage')
+    const permission = await getContext('production_fact', 'manage')
+    const { admin, userId, permissions, permissionDetails } = permission
+    const canEditHistory = permissionDetails.isAdminPosition
+      || hasPermission(permissions, 'production_fact_settings', 'manage')
     const factDate = validatedDateOnly(input.fact_date)
-    assertFactoryAccess(role, userFactoryId, input.factory_id)
-    assertCanEditFactDate(role, factDate)
+    assertMatrixFactoryAccess(permission, 'production_fact', 'manage', input.factory_id)
+    assertCanEditFactDate(canEditHistory, factDate)
     if (!isItemizedProductionFactStage(input.stage_key)) {
       throw new Error('Этап не поддерживает ввод по номенклатуре')
     }
@@ -1244,9 +1252,10 @@ export async function saveProductionMachineItemFact(input: {
 export async function getProductionFactSettingsData(input: {
   factoryId?: string | null
 } = {}): Promise<ProductionFactSettingsData> {
-  const { admin, role, factoryId: userFactoryId } = await getContext('production_fact_settings', 'view')
+  const permission = await getContext('production_fact_settings', 'view')
+  const { admin } = permission
 
-  const factories = await getVisibleFactories(admin, role, userFactoryId)
+  const factories = await getVisibleFactories(admin, permission, 'production_fact_settings', 'view')
   const selectedFactoryId = factories.some((factory) => factory.id === input.factoryId)
     ? input.factoryId!
     : factories[0]?.id || null
@@ -1255,7 +1264,7 @@ export async function getProductionFactSettingsData(input: {
     return { factories, selectedFactoryId: null, sections: [] }
   }
 
-  assertFactoryAccess(role, userFactoryId, selectedFactoryId)
+  assertMatrixFactoryAccess(permission, 'production_fact_settings', 'view', selectedFactoryId)
   const sections = await getFactorySections(admin, selectedFactoryId)
 
   return { factories, selectedFactoryId, sections }
@@ -1265,8 +1274,9 @@ export async function ensureProductionFactStandardSections(input: {
   factory_id: string
 }): Promise<ProductionFactActionResult> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact_settings', 'manage')
-    assertFactoryAccess(role, userFactoryId, input.factory_id)
+    const permission = await getContext('production_fact_settings', 'manage')
+    const { admin, userId } = permission
+    assertMatrixFactoryAccess(permission, 'production_fact_settings', 'manage', input.factory_id)
     await ensureStandardProductionFactSections(admin, input.factory_id, userId)
     revalidateProductionFact()
     revalidatePath(ROUTES.ADMIN_PRODUCTION_FACT_SETTINGS)
@@ -1284,8 +1294,9 @@ export async function createProductionFactSection(input: {
   production_stage_type?: Database['public']['Enums']['stage_type'] | null
 }): Promise<ProductionFactActionResult<{ id: string }>> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact_settings', 'manage')
-    assertFactoryAccess(role, userFactoryId, input.factory_id)
+    const permission = await getContext('production_fact_settings', 'manage')
+    const { admin, userId } = permission
+    assertMatrixFactoryAccess(permission, 'production_fact_settings', 'manage', input.factory_id)
     const name = normalizeText(input.name)
     if (!name) throw new Error('Укажите название участка')
 
@@ -1332,7 +1343,8 @@ export async function updateProductionFactSection(input: {
   production_stage_type?: Database['public']['Enums']['stage_type'] | null
 }): Promise<ProductionFactActionResult> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact_settings', 'manage')
+    const permission = await getContext('production_fact_settings', 'manage')
+    const { admin, userId } = permission
     const { data: sectionRaw, error: sectionError } = await looseDb(admin)
       .from('production_fact_sections')
       .select('*')
@@ -1341,7 +1353,7 @@ export async function updateProductionFactSection(input: {
 
     const section = sectionRaw as ProductionFactSection | null
     if (sectionError || !section) throw new Error(sectionError?.message || 'Участок не найден')
-    assertFactoryAccess(role, userFactoryId, section.factory_id)
+    assertMatrixFactoryAccess(permission, 'production_fact_settings', 'manage', section.factory_id)
 
     const name = normalizeText(input.name)
     if (!name) throw new Error('Укажите название участка')
@@ -1369,7 +1381,8 @@ export async function updateProductionFactSection(input: {
 
 export async function archiveProductionFactSection(id: string): Promise<ProductionFactActionResult> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact_settings', 'manage')
+    const permission = await getContext('production_fact_settings', 'manage')
+    const { admin, userId } = permission
     const { data: sectionRaw, error: sectionError } = await looseDb(admin)
       .from('production_fact_sections')
       .select('*')
@@ -1378,7 +1391,7 @@ export async function archiveProductionFactSection(id: string): Promise<Producti
 
     const section = sectionRaw as ProductionFactSection | null
     if (sectionError || !section) throw new Error(sectionError?.message || 'Участок не найден')
-    assertFactoryAccess(role, userFactoryId, section.factory_id)
+    assertMatrixFactoryAccess(permission, 'production_fact_settings', 'manage', section.factory_id)
 
     const idsToArchive = [section.id]
     if (!section.parent_id) {
@@ -1418,10 +1431,13 @@ export async function saveProductionMachineFact(input: {
   comment?: string | null
 }): Promise<ProductionFactActionResult<{ id: string }>> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact', 'manage')
+    const permission = await getContext('production_fact', 'manage')
+    const { admin, userId, permissions, permissionDetails } = permission
+    const canEditHistory = permissionDetails.isAdminPosition
+      || hasPermission(permissions, 'production_fact_settings', 'manage')
     const factDate = dateOnly(input.fact_date)
-    assertFactoryAccess(role, userFactoryId, input.factory_id)
-    assertCanEditFactDate(role, factDate)
+    assertMatrixFactoryAccess(permission, 'production_fact', 'manage', input.factory_id)
+    assertCanEditFactDate(canEditHistory, factDate)
     if (input.shift !== 'day' && input.shift !== 'night') throw new Error('Некорректная смена')
 
     let existing: ProductionMachineFact | null = null
@@ -1435,8 +1451,8 @@ export async function saveProductionMachineFact(input: {
 
       if (error || !data) throw new Error(error?.message || 'Запись факта не найдена')
       existing = data as ProductionMachineFact
-      assertFactoryAccess(role, userFactoryId, existing.factory_id)
-      assertCanEditFactDate(role, existing.fact_date)
+      assertMatrixFactoryAccess(permission, 'production_fact', 'manage', existing.factory_id)
+      assertCanEditFactDate(canEditHistory, existing.fact_date)
       existingWasCutting = await isCuttingFact(admin, existing)
     }
 
@@ -1489,7 +1505,10 @@ export async function saveProductionMachineFact(input: {
 
 export async function deleteProductionMachineFact(id: string): Promise<ProductionFactActionResult> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact', 'manage')
+    const permission = await getContext('production_fact', 'manage')
+    const { admin, userId, permissions, permissionDetails } = permission
+    const canEditHistory = permissionDetails.isAdminPosition
+      || hasPermission(permissions, 'production_fact_settings', 'manage')
     const { data: factRaw, error: factError } = await looseDb(admin)
       .from('production_machine_facts')
       .select('*')
@@ -1498,8 +1517,8 @@ export async function deleteProductionMachineFact(id: string): Promise<Productio
 
     const fact = factRaw as ProductionMachineFact | null
     if (factError || !fact) throw new Error(factError?.message || 'Запись факта не найдена')
-    assertFactoryAccess(role, userFactoryId, fact.factory_id)
-    assertCanEditFactDate(role, fact.fact_date)
+    assertMatrixFactoryAccess(permission, 'production_fact', 'manage', fact.factory_id)
+    assertCanEditFactDate(canEditHistory, fact.fact_date)
     const { data: itemizedRaw, error: itemizedError } = await looseDb(admin)
       .from('production_machine_item_facts')
       .select('id')
@@ -1545,11 +1564,14 @@ export async function copyProductionMachineFactsFromPreviousDay(input: {
   fact_date: string
 }): Promise<ProductionFactActionResult<{ inserted: number; skipped: number }>> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact', 'manage')
+    const permission = await getContext('production_fact', 'manage')
+    const { admin, userId, permissions, permissionDetails } = permission
+    const canEditHistory = permissionDetails.isAdminPosition
+      || hasPermission(permissions, 'production_fact_settings', 'manage')
     const targetDate = dateOnly(input.fact_date)
     const sourceDate = addDays(targetDate, -1)
-    assertFactoryAccess(role, userFactoryId, input.factory_id)
-    assertCanEditFactDate(role, targetDate)
+    assertMatrixFactoryAccess(permission, 'production_fact', 'manage', input.factory_id)
+    assertCanEditFactDate(canEditHistory, targetDate)
 
     const [sourceFacts, targetFacts, sections] = await Promise.all([
       getMachineFacts(admin, input.factory_id, sourceDate),
@@ -1612,12 +1634,15 @@ export async function saveProductionTonnageFact(input: {
   comment?: string | null
 }): Promise<ProductionFactActionResult<{ id: string }>> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact', 'manage')
+    const permission = await getContext('production_fact', 'manage')
+    const { admin, userId, permissions, permissionDetails } = permission
+    const canEditHistory = permissionDetails.isAdminPosition
+      || hasPermission(permissions, 'production_fact_settings', 'manage')
     const factDate = dateOnly(input.fact_date)
     const tonnage = Number(input.tonnage)
     if (!Number.isFinite(tonnage) || tonnage < 0) throw new Error('Тоннаж должен быть числом от 0')
-    assertFactoryAccess(role, userFactoryId, input.factory_id)
-    assertCanEditFactDate(role, factDate)
+    assertMatrixFactoryAccess(permission, 'production_fact', 'manage', input.factory_id)
+    assertCanEditFactDate(canEditHistory, factDate)
 
     let existing: ProductionTonnageFact | null = null
     if (input.id) {
@@ -1629,8 +1654,8 @@ export async function saveProductionTonnageFact(input: {
 
       if (error || !data) throw new Error(error?.message || 'Запись тоннажа не найдена')
       existing = data as ProductionTonnageFact
-      assertFactoryAccess(role, userFactoryId, existing.factory_id)
-      assertCanEditFactDate(role, existing.fact_date)
+      assertMatrixFactoryAccess(permission, 'production_fact', 'manage', existing.factory_id)
+      assertCanEditFactDate(canEditHistory, existing.fact_date)
     } else {
       const { data, error } = await looseDb(admin)
         .from('production_tonnage_facts')
@@ -1702,10 +1727,13 @@ export async function saveUnifiedProductionFact(input: {
   comment?: string | null
 }): Promise<ProductionFactActionResult<{ inserted: number; skipped: number; shippingUpdated: number; tonnageSaved: boolean }>> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact', 'manage')
+    const permission = await getContext('production_fact', 'manage')
+    const { admin, userId, permissions, permissionDetails } = permission
+    const canEditHistory = permissionDetails.isAdminPosition
+      || hasPermission(permissions, 'production_fact_settings', 'manage')
     const factDate = dateOnly(input.fact_date)
-    assertFactoryAccess(role, userFactoryId, input.factory_id)
-    assertCanEditFactDate(role, factDate)
+    assertMatrixFactoryAccess(permission, 'production_fact', 'manage', input.factory_id)
+    assertCanEditFactDate(canEditHistory, factDate)
     if (!isProductionFactStageKey(input.stage_key)) throw new Error('Некорректный этап факта производства')
     if (input.shift !== 'day' && input.shift !== 'night') throw new Error('Некорректная смена')
 
@@ -1863,7 +1891,10 @@ export async function saveUnifiedProductionFact(input: {
 
 export async function deleteProductionTonnageFact(id: string): Promise<ProductionFactActionResult> {
   try {
-    const { admin, role, factoryId: userFactoryId } = await getContext('production_fact', 'manage')
+    const permission = await getContext('production_fact', 'manage')
+    const { admin, permissions, permissionDetails } = permission
+    const canEditHistory = permissionDetails.isAdminPosition
+      || hasPermission(permissions, 'production_fact_settings', 'manage')
     const { data: factRaw, error: factError } = await looseDb(admin)
       .from('production_tonnage_facts')
       .select('*')
@@ -1872,8 +1903,8 @@ export async function deleteProductionTonnageFact(id: string): Promise<Productio
 
     const fact = factRaw as ProductionTonnageFact | null
     if (factError || !fact) throw new Error(factError?.message || 'Запись тоннажа не найдена')
-    assertFactoryAccess(role, userFactoryId, fact.factory_id)
-    assertCanEditFactDate(role, fact.fact_date)
+    assertMatrixFactoryAccess(permission, 'production_fact', 'manage', fact.factory_id)
+    assertCanEditFactDate(canEditHistory, fact.fact_date)
     if (fact.source === 'itemized') {
       throw new Error('Автоматический тоннаж удаляется вместе с детализированным фактом')
     }
