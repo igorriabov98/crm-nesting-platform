@@ -103,6 +103,46 @@ for (const forbidden of [
   assert(!forbidden.test(generatedPolicies), `Policy-блок содержит запрещённую конструкцию ${forbidden}`)
 }
 
+const inventorySelectPolicy = generatedPolicies.match(
+  /CREATE POLICY "Inventory read supply roles"[\s\S]*?;/,
+)?.[0] || ''
+assert.match(inventorySelectPolicy, /crm_has_permission\('inventory', 'view'\)/,
+  'Склад должен открываться по inventory/view')
+assert.doesNotMatch(inventorySelectPolicy, /crm_has_permission\('inventory', 'manage'\)/,
+  'Чтение склада не должно требовать inventory/manage')
+
+const supplyItemVisibilityPolicy = generatedPolicies.match(
+  /CREATE POLICY "financial_supply_item_visibility" ON public\."request_components"[\s\S]*?;/,
+)?.[0] || ''
+assert.match(supplyItemVisibilityPolicy, /fn_financial_supply_visibility\(request_id\)/,
+  'Restrictive lifecycle-политика позиций должна сохраняться')
+assert.doesNotMatch(supplyItemVisibilityPolicy, /crm_has_permission/,
+  'Restrictive lifecycle-политика не должна повторно требовать право другого ресурса')
+
+const machinesSelectPolicy = generatedPolicies.match(
+  /CREATE POLICY "machines_select"[\s\S]*?;/,
+)?.[0] || ''
+assert.match(machinesSelectPolicy, /crm_has_permission\('supply_orders', 'view'\)/,
+  'Заказы снабжения должны видеть связанные машины')
+assert.match(machinesSelectPolicy, /submitted_to_supply[\s\S]*completed/,
+  'Доступ снабжения к машинам должен быть ограничен переданными заявками')
+
+for (const table of [
+  'technologist_requests',
+  'request_sheet_metal',
+  'request_round_tube',
+  'request_circle',
+  'request_pipe',
+  'request_knives',
+  'request_components',
+  'request_paint',
+  'request_mesh',
+  'request_chain_cord',
+]) {
+  assert(manifest.tables[table].view.includes('supply_orders'),
+    `${table}: supply_orders/view должен читать данные страницы заказов`)
+}
+
 assert.match(rollback, /DROP POLICY IF EXISTS "department_access_permissions_select_matrix"/)
 assert.match(rollback, /CREATE POLICY "department_access_permissions_select_authenticated"/)
 assert.match(rollback, /DROP FUNCTION IF EXISTS private\.crm_has_permission/)

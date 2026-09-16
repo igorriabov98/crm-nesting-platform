@@ -2967,7 +2967,7 @@ WITH CHECK (((private.crm_has_permission('inventory', 'manage')) AND ((private.c
 DROP POLICY IF EXISTS "Inventory read supply roles" ON public."inventory";
 CREATE POLICY "Inventory read supply roles" ON public."inventory"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('inventory', 'view')) AND ((private.crm_has_permission('inventory', 'manage')))));
+USING (((private.crm_has_permission('inventory', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND ((private.crm_has_permission('inventory', 'view') OR private.crm_has_permission('supply_orders', 'view')))));
 
 DROP POLICY IF EXISTS "Inventory update supply roles" ON public."inventory";
 CREATE POLICY "Inventory update supply roles" ON public."inventory"
@@ -2988,7 +2988,7 @@ WITH CHECK (((private.crm_has_permission('inventory', 'manage') OR private.crm_h
 DROP POLICY IF EXISTS "Inventory reservations read supply roles" ON public."inventory_reservations";
 CREATE POLICY "Inventory reservations read supply roles" ON public."inventory_reservations"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('inventory', 'view') OR private.crm_has_permission('business_scrap_reservations', 'view')) AND ((private.crm_has_permission('inventory', 'manage') OR private.crm_has_permission('business_scrap_reservations', 'manage')))));
+USING (((private.crm_has_permission('inventory', 'view') OR private.crm_has_permission('business_scrap_reservations', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND ((private.crm_has_permission('inventory', 'view') OR private.crm_has_permission('business_scrap_reservations', 'view') OR private.crm_has_permission('supply_orders', 'view')))));
 
 DROP POLICY IF EXISTS "Inventory reservations update supply roles" ON public."inventory_reservations";
 CREATE POLICY "Inventory reservations update supply roles" ON public."inventory_reservations"
@@ -3004,7 +3004,7 @@ WITH CHECK (((private.crm_has_permission('inventory', 'manage') OR private.crm_h
 DROP POLICY IF EXISTS "Inventory transactions read supply roles" ON public."inventory_transactions";
 CREATE POLICY "Inventory transactions read supply roles" ON public."inventory_transactions"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('inventory', 'view') OR private.crm_has_permission('inventory_history', 'view')) AND ((private.crm_has_permission('inventory', 'manage') OR private.crm_has_permission('inventory_receiving', 'manage')))));
+USING (((private.crm_has_permission('inventory', 'view') OR private.crm_has_permission('inventory_history', 'view')) AND ((private.crm_has_permission('inventory', 'view') OR private.crm_has_permission('inventory_history', 'view')))));
 
 DROP POLICY IF EXISTS "inventory_transfer_items_read" ON public."inventory_transfer_items";
 CREATE POLICY "inventory_transfer_items_read" ON public."inventory_transfer_items"
@@ -3270,8 +3270,18 @@ USING (((private.crm_has_permission('sales_plan', 'manage')) AND (((private.crm_
 DROP POLICY IF EXISTS "machines_select" ON public."machines";
 CREATE POLICY "machines_select" ON public."machines"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('sales_plan', 'view') OR private.crm_has_permission('production', 'view')) AND (
-true)));
+USING (((private.crm_has_permission('sales_plan', 'view') OR private.crm_has_permission('production', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND (
+      private.crm_has_permission('sales_plan', 'view')
+      OR private.crm_has_permission('production', 'view')
+      OR (
+        private.crm_has_permission('supply_orders', 'view')
+        AND EXISTS (
+          SELECT 1
+          FROM public.technologist_requests AS supply_request
+          WHERE supply_request.machine_id = machines.id
+            AND supply_request.status IN ('submitted_to_supply', 'completed')
+        )
+      ))));
 
 DROP POLICY IF EXISTS "mail_messages_owner_or_crm_reader" ON public."mail_messages";
 CREATE POLICY "mail_messages_owner_or_crm_reader" ON public."mail_messages"
@@ -3314,7 +3324,7 @@ WITH CHECK (((private.crm_has_permission('materials', 'manage')) AND ((private.c
 DROP POLICY IF EXISTS "Material variants read catalog roles" ON public."material_variants";
 CREATE POLICY "Material variants read catalog roles" ON public."material_variants"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('materials', 'view') OR private.crm_has_permission('technologist_requests', 'view')) AND (((private.crm_has_permission('materials', 'manage')) OR (private.crm_has_permission('materials', 'view') OR private.crm_has_permission('technologist_requests', 'view'))))));
+USING (((private.crm_has_permission('materials', 'view') OR private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view') OR private.crm_has_permission('inventory', 'view')) AND (((private.crm_has_permission('materials', 'view') OR private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view') OR private.crm_has_permission('inventory', 'view')) OR (private.crm_has_permission('materials', 'view') OR private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view') OR private.crm_has_permission('inventory', 'view'))))));
 
 DROP POLICY IF EXISTS "Material variants update catalog roles" ON public."material_variants";
 CREATE POLICY "Material variants update catalog roles" ON public."material_variants"
@@ -3330,7 +3340,7 @@ WITH CHECK (((private.crm_has_permission('materials', 'manage')) AND ((private.c
 DROP POLICY IF EXISTS "Materials read catalog roles" ON public."materials";
 CREATE POLICY "Materials read catalog roles" ON public."materials"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('materials', 'view') OR private.crm_has_permission('technologist_requests', 'view')) AND (((private.crm_has_permission('materials', 'manage')) OR (private.crm_has_permission('materials', 'view') OR private.crm_has_permission('technologist_requests', 'view'))))));
+USING (((private.crm_has_permission('materials', 'view') OR private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view') OR private.crm_has_permission('inventory', 'view')) AND (((private.crm_has_permission('materials', 'view') OR private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view') OR private.crm_has_permission('inventory', 'view')) OR (private.crm_has_permission('materials', 'view') OR private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view') OR private.crm_has_permission('inventory', 'view'))))));
 
 DROP POLICY IF EXISTS "Materials update catalog roles" ON public."materials";
 CREATE POLICY "Materials update catalog roles" ON public."materials"
@@ -3956,7 +3966,7 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "Request chain cord read request roles" ON public."request_chain_cord";
 CREATE POLICY "Request chain cord read request roles" ON public."request_chain_cord"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'view')) AND ((private.crm_has_permission('technologist_requests', 'view')))));
+USING (((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND ((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')))));
 
 DROP POLICY IF EXISTS "Request chain cord update request roles" ON public."request_chain_cord";
 CREATE POLICY "Request chain cord update request roles" ON public."request_chain_cord"
@@ -3967,8 +3977,8 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "financial_supply_item_visibility" ON public."request_chain_cord";
 CREATE POLICY "financial_supply_item_visibility" ON public."request_chain_cord"
 AS RESTRICTIVE FOR ALL TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))))
-WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))));
+USING ((fn_financial_supply_visibility(request_id)))
+WITH CHECK ((fn_financial_supply_visibility(request_id)));
 
 DROP POLICY IF EXISTS "Request circle delete request roles" ON public."request_circle";
 CREATE POLICY "Request circle delete request roles" ON public."request_circle"
@@ -3987,7 +3997,7 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "Request circle read request roles" ON public."request_circle";
 CREATE POLICY "Request circle read request roles" ON public."request_circle"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'view')) AND (((private.crm_has_permission('technologist_requests', 'view')) AND (EXISTS ( SELECT 1
+USING (((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND (((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND (EXISTS ( SELECT 1
    FROM technologist_requests request
   WHERE ((request.id = request_circle.request_id) AND (NOT request.is_recalculation_staging))))))));
 
@@ -4004,8 +4014,8 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "financial_supply_item_visibility" ON public."request_circle";
 CREATE POLICY "financial_supply_item_visibility" ON public."request_circle"
 AS RESTRICTIVE FOR ALL TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))))
-WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))));
+USING ((fn_financial_supply_visibility(request_id)))
+WITH CHECK ((fn_financial_supply_visibility(request_id)));
 
 DROP POLICY IF EXISTS "Request components delete request roles" ON public."request_components";
 CREATE POLICY "Request components delete request roles" ON public."request_components"
@@ -4020,7 +4030,7 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "Request components read request roles" ON public."request_components";
 CREATE POLICY "Request components read request roles" ON public."request_components"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'view')) AND ((private.crm_has_permission('technologist_requests', 'view')))));
+USING (((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND ((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')))));
 
 DROP POLICY IF EXISTS "Request components update request roles" ON public."request_components";
 CREATE POLICY "Request components update request roles" ON public."request_components"
@@ -4031,8 +4041,8 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "financial_supply_item_visibility" ON public."request_components";
 CREATE POLICY "financial_supply_item_visibility" ON public."request_components"
 AS RESTRICTIVE FOR ALL TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))))
-WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))));
+USING ((fn_financial_supply_visibility(request_id)))
+WITH CHECK ((fn_financial_supply_visibility(request_id)));
 
 DROP POLICY IF EXISTS "Request knives delete request roles" ON public."request_knives";
 CREATE POLICY "Request knives delete request roles" ON public."request_knives"
@@ -4051,7 +4061,7 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "Request knives read request roles" ON public."request_knives";
 CREATE POLICY "Request knives read request roles" ON public."request_knives"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'view')) AND (((private.crm_has_permission('technologist_requests', 'view')) AND (EXISTS ( SELECT 1
+USING (((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND (((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND (EXISTS ( SELECT 1
    FROM technologist_requests request
   WHERE ((request.id = request_knives.request_id) AND (NOT request.is_recalculation_staging))))))));
 
@@ -4068,8 +4078,8 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "financial_supply_item_visibility" ON public."request_knives";
 CREATE POLICY "financial_supply_item_visibility" ON public."request_knives"
 AS RESTRICTIVE FOR ALL TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))))
-WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))));
+USING ((fn_financial_supply_visibility(request_id)))
+WITH CHECK ((fn_financial_supply_visibility(request_id)));
 
 DROP POLICY IF EXISTS "Request mesh delete request roles" ON public."request_mesh";
 CREATE POLICY "Request mesh delete request roles" ON public."request_mesh"
@@ -4084,7 +4094,7 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "Request mesh read request roles" ON public."request_mesh";
 CREATE POLICY "Request mesh read request roles" ON public."request_mesh"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'view')) AND ((private.crm_has_permission('technologist_requests', 'view')))));
+USING (((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND ((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')))));
 
 DROP POLICY IF EXISTS "Request mesh update request roles" ON public."request_mesh";
 CREATE POLICY "Request mesh update request roles" ON public."request_mesh"
@@ -4095,8 +4105,8 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "financial_supply_item_visibility" ON public."request_mesh";
 CREATE POLICY "financial_supply_item_visibility" ON public."request_mesh"
 AS RESTRICTIVE FOR ALL TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))))
-WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))));
+USING ((fn_financial_supply_visibility(request_id)))
+WITH CHECK ((fn_financial_supply_visibility(request_id)));
 
 DROP POLICY IF EXISTS "Request paint delete request roles" ON public."request_paint";
 CREATE POLICY "Request paint delete request roles" ON public."request_paint"
@@ -4111,7 +4121,7 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "Request paint read request roles" ON public."request_paint";
 CREATE POLICY "Request paint read request roles" ON public."request_paint"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'view')) AND ((private.crm_has_permission('technologist_requests', 'view')))));
+USING (((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND ((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')))));
 
 DROP POLICY IF EXISTS "Request paint update request roles" ON public."request_paint";
 CREATE POLICY "Request paint update request roles" ON public."request_paint"
@@ -4122,8 +4132,8 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "financial_supply_item_visibility" ON public."request_paint";
 CREATE POLICY "financial_supply_item_visibility" ON public."request_paint"
 AS RESTRICTIVE FOR ALL TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))))
-WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))));
+USING ((fn_financial_supply_visibility(request_id)))
+WITH CHECK ((fn_financial_supply_visibility(request_id)));
 
 DROP POLICY IF EXISTS "Request pipe delete request roles" ON public."request_pipe";
 CREATE POLICY "Request pipe delete request roles" ON public."request_pipe"
@@ -4142,7 +4152,7 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "Request pipe read request roles" ON public."request_pipe";
 CREATE POLICY "Request pipe read request roles" ON public."request_pipe"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'view')) AND (((private.crm_has_permission('technologist_requests', 'view')) AND (EXISTS ( SELECT 1
+USING (((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND (((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND (EXISTS ( SELECT 1
    FROM technologist_requests request
   WHERE ((request.id = request_pipe.request_id) AND (NOT request.is_recalculation_staging))))))));
 
@@ -4159,8 +4169,8 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "financial_supply_item_visibility" ON public."request_pipe";
 CREATE POLICY "financial_supply_item_visibility" ON public."request_pipe"
 AS RESTRICTIVE FOR ALL TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))))
-WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))));
+USING ((fn_financial_supply_visibility(request_id)))
+WITH CHECK ((fn_financial_supply_visibility(request_id)));
 
 DROP POLICY IF EXISTS "Request round tube delete request roles" ON public."request_round_tube";
 CREATE POLICY "Request round tube delete request roles" ON public."request_round_tube"
@@ -4175,7 +4185,7 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "Request round tube read request roles" ON public."request_round_tube";
 CREATE POLICY "Request round tube read request roles" ON public."request_round_tube"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'view')) AND ((private.crm_has_permission('technologist_requests', 'view')))));
+USING (((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND ((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')))));
 
 DROP POLICY IF EXISTS "Request round tube update request roles" ON public."request_round_tube";
 CREATE POLICY "Request round tube update request roles" ON public."request_round_tube"
@@ -4186,8 +4196,8 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "financial_supply_item_visibility" ON public."request_round_tube";
 CREATE POLICY "financial_supply_item_visibility" ON public."request_round_tube"
 AS RESTRICTIVE FOR ALL TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))))
-WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))));
+USING ((fn_financial_supply_visibility(request_id)))
+WITH CHECK ((fn_financial_supply_visibility(request_id)));
 
 DROP POLICY IF EXISTS "Request sheet metal delete request roles" ON public."request_sheet_metal";
 CREATE POLICY "Request sheet metal delete request roles" ON public."request_sheet_metal"
@@ -4202,7 +4212,7 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "Request sheet metal read request roles" ON public."request_sheet_metal";
 CREATE POLICY "Request sheet metal read request roles" ON public."request_sheet_metal"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'view')) AND ((private.crm_has_permission('technologist_requests', 'view')))));
+USING (((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND ((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')))));
 
 DROP POLICY IF EXISTS "Request sheet metal update request roles" ON public."request_sheet_metal";
 CREATE POLICY "Request sheet metal update request roles" ON public."request_sheet_metal"
@@ -4213,8 +4223,8 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "financial_supply_item_visibility" ON public."request_sheet_metal";
 CREATE POLICY "financial_supply_item_visibility" ON public."request_sheet_metal"
 AS RESTRICTIVE FOR ALL TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))))
-WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND (fn_financial_supply_visibility(request_id))));
+USING ((fn_financial_supply_visibility(request_id)))
+WITH CHECK ((fn_financial_supply_visibility(request_id)));
 
 DROP POLICY IF EXISTS "role_permission_audit_insert_directors" ON public."role_permission_audit_log";
 CREATE POLICY "role_permission_audit_insert_directors" ON public."role_permission_audit_log"
@@ -4250,7 +4260,7 @@ WITH CHECK (((private.crm_has_permission('materials', 'manage') OR private.crm_h
 DROP POLICY IF EXISTS "Steel types read nesting roles" ON public."steel_types";
 CREATE POLICY "Steel types read nesting roles" ON public."steel_types"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('materials', 'view') OR private.crm_has_permission('nesting_catalog', 'view')) AND (((private.crm_has_permission('materials', 'manage') OR private.crm_has_permission('nesting_catalog', 'manage')) OR (private.crm_has_permission('materials', 'manage') OR private.crm_has_permission('nesting_catalog', 'manage'))))));
+USING (((private.crm_has_permission('materials', 'view') OR private.crm_has_permission('nesting_catalog', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND (((private.crm_has_permission('materials', 'view') OR private.crm_has_permission('nesting_catalog', 'view') OR private.crm_has_permission('supply_orders', 'view')) OR (private.crm_has_permission('materials', 'view') OR private.crm_has_permission('nesting_catalog', 'view') OR private.crm_has_permission('supply_orders', 'view'))))));
 
 DROP POLICY IF EXISTS "Steel types update nesting roles" ON public."steel_types";
 CREATE POLICY "Steel types update nesting roles" ON public."steel_types"
@@ -4271,7 +4281,7 @@ WITH CHECK (((private.crm_has_permission('suppliers', 'manage')) AND ((private.c
 DROP POLICY IF EXISTS "Supplier delivery days read supply roles" ON public."supplier_delivery_days";
 CREATE POLICY "Supplier delivery days read supply roles" ON public."supplier_delivery_days"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('suppliers', 'view')) AND ((private.crm_has_permission('suppliers', 'manage')))));
+USING (((private.crm_has_permission('suppliers', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND ((private.crm_has_permission('suppliers', 'view') OR private.crm_has_permission('supply_orders', 'view')))));
 
 DROP POLICY IF EXISTS "Supplier delivery days update directors" ON public."supplier_delivery_days";
 CREATE POLICY "Supplier delivery days update directors" ON public."supplier_delivery_days"
@@ -4292,7 +4302,7 @@ WITH CHECK (((private.crm_has_permission('suppliers', 'manage')) AND ((private.c
 DROP POLICY IF EXISTS "Supplier categories read supply roles" ON public."supplier_material_categories";
 CREATE POLICY "Supplier categories read supply roles" ON public."supplier_material_categories"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('suppliers', 'view')) AND ((private.crm_has_permission('suppliers', 'manage')))));
+USING (((private.crm_has_permission('suppliers', 'view')) AND ((private.crm_has_permission('suppliers', 'view')))));
 
 DROP POLICY IF EXISTS "Supplier categories update directors" ON public."supplier_material_categories";
 CREATE POLICY "Supplier categories update directors" ON public."supplier_material_categories"
@@ -4308,7 +4318,7 @@ WITH CHECK (((private.crm_has_permission('suppliers', 'manage')) AND ((private.c
 DROP POLICY IF EXISTS "Suppliers read supply roles" ON public."suppliers";
 CREATE POLICY "Suppliers read supply roles" ON public."suppliers"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('suppliers', 'view')) AND ((private.crm_has_permission('suppliers', 'manage')))));
+USING (((private.crm_has_permission('suppliers', 'view') OR private.crm_has_permission('supply_orders', 'view') OR private.crm_has_permission('inventory', 'view')) AND ((private.crm_has_permission('suppliers', 'view') OR private.crm_has_permission('supply_orders', 'view') OR private.crm_has_permission('inventory', 'view')))));
 
 DROP POLICY IF EXISTS "Suppliers update directors" ON public."suppliers";
 CREATE POLICY "Suppliers update directors" ON public."suppliers"
@@ -4342,7 +4352,7 @@ WITH CHECK (((private.crm_has_permission('supply_orders', 'manage')) AND ((priva
 DROP POLICY IF EXISTS "Supply schedule changes read supply roles" ON public."supply_order_delivery_schedule_changes";
 CREATE POLICY "Supply schedule changes read supply roles" ON public."supply_order_delivery_schedule_changes"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('supply_orders', 'view')) AND ((private.crm_has_permission('supply_orders', 'manage')))));
+USING (((private.crm_has_permission('supply_orders', 'view')) AND ((private.crm_has_permission('supply_orders', 'view')))));
 
 DROP POLICY IF EXISTS "Supply schedules insert supply roles" ON public."supply_order_delivery_schedules";
 CREATE POLICY "Supply schedules insert supply roles" ON public."supply_order_delivery_schedules"
@@ -4352,7 +4362,7 @@ WITH CHECK (((private.crm_has_permission('supply_orders', 'manage')) AND ((priva
 DROP POLICY IF EXISTS "Supply schedules read supply roles" ON public."supply_order_delivery_schedules";
 CREATE POLICY "Supply schedules read supply roles" ON public."supply_order_delivery_schedules"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('supply_orders', 'view')) AND ((private.crm_has_permission('supply_orders', 'manage')))));
+USING (((private.crm_has_permission('supply_orders', 'view')) AND ((private.crm_has_permission('supply_orders', 'view')))));
 
 DROP POLICY IF EXISTS "Supply schedules update supply roles" ON public."supply_order_delivery_schedules";
 CREATE POLICY "Supply schedules update supply roles" ON public."supply_order_delivery_schedules"
@@ -4363,7 +4373,7 @@ WITH CHECK (((private.crm_has_permission('supply_orders', 'manage')) AND ((priva
 DROP POLICY IF EXISTS "supply_position_revisions_select" ON public."supply_position_revisions";
 CREATE POLICY "supply_position_revisions_select" ON public."supply_position_revisions"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('technologist_request_results', 'view') OR private.crm_has_permission('supply_material_requests', 'view')) AND (((requested_by = ( SELECT auth.uid() AS uid)) OR (assigned_to = ( SELECT auth.uid() AS uid)) OR (private.crm_has_permission('technologist_request_results', 'view') OR private.crm_has_permission('supply_material_requests', 'view'))))));
+USING (((private.crm_has_permission('technologist_request_results', 'view') OR private.crm_has_permission('supply_material_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND (((requested_by = ( SELECT auth.uid() AS uid)) OR (assigned_to = ( SELECT auth.uid() AS uid)) OR (private.crm_has_permission('technologist_request_results', 'view') OR private.crm_has_permission('supply_material_requests', 'view') OR private.crm_has_permission('supply_orders', 'view'))))));
 
 DROP POLICY IF EXISTS "task_delegations_select_involved" ON public."task_delegations";
 CREATE POLICY "task_delegations_select_involved" ON public."task_delegations"
@@ -4422,7 +4432,7 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "Technologist requests read request roles" ON public."technologist_requests";
 CREATE POLICY "Technologist requests read request roles" ON public."technologist_requests"
 FOR SELECT TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'view')) AND (((NOT is_recalculation_staging) AND (private.crm_has_permission('technologist_requests', 'view'))))));
+USING (((private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view')) AND (((NOT is_recalculation_staging) AND (private.crm_has_permission('technologist_requests', 'view') OR private.crm_has_permission('supply_orders', 'view'))))));
 
 DROP POLICY IF EXISTS "Technologist requests update request roles" ON public."technologist_requests";
 CREATE POLICY "Technologist requests update request roles" ON public."technologist_requests"
@@ -4433,12 +4443,12 @@ WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND
 DROP POLICY IF EXISTS "financial_request_insert_state" ON public."technologist_requests";
 CREATE POLICY "financial_request_insert_state" ON public."technologist_requests"
 AS RESTRICTIVE FOR INSERT TO authenticated
-WITH CHECK (((private.crm_has_permission('technologist_requests', 'manage')) AND (((status)::text <> ALL (ARRAY['pending_financial_approval'::text, 'submitted_to_supply'::text, 'completed'::text])))));
+WITH CHECK ((((status)::text <> ALL (ARRAY['pending_financial_approval'::text, 'submitted_to_supply'::text, 'completed'::text]))));
 
 DROP POLICY IF EXISTS "financial_supply_request_visibility" ON public."technologist_requests";
 CREATE POLICY "financial_supply_request_visibility" ON public."technologist_requests"
 AS RESTRICTIVE FOR SELECT TO authenticated
-USING (((private.crm_has_permission('technologist_requests', 'view')) AND (fn_financial_supply_visibility(id))));
+USING ((fn_financial_supply_visibility(id)));
 
 DROP POLICY IF EXISTS "transport_trip_date_items_select" ON public."transport_trip_date_change_items";
 CREATE POLICY "transport_trip_date_items_select" ON public."transport_trip_date_change_items"
@@ -4521,7 +4531,7 @@ USING (((private.crm_has_permission('departments', 'view') OR private.crm_has_pe
 
 
 -- snapshot-sha256: cecf8e44145872742dd3ec36921d2aec2530af4d5649031b62daa27fd2cd1726
--- manifest-sha256: 68188a7b1d7a74e1142ecb8eb49e0c491560acfd16534b4686f0753a8714fe7a
+-- manifest-sha256: 71deefc9b21c28be7a4b97a38eec28b08b7d8f293a1960b042e5f7e8eb60d359
 DO $invariants$
 DECLARE
   v_legacy_policy_count integer;

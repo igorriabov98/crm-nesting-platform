@@ -73,6 +73,14 @@ run(
     '-f', path.join(root, 'supabase/tests/rls_matrix_permissions_test.sql'),
   ],
 )
+run(
+  'supply orders and inventory visibility scenarios',
+  'psql',
+  [
+    '-v', 'ON_ERROR_STOP=1', connection,
+    '-f', path.join(root, 'supabase/tests/rls_supply_orders_inventory_visibility_test.sql'),
+  ],
+)
 
 run('rollback rehearsal', 'psql', ['-v', 'ON_ERROR_STOP=1', connection, '-f', rollback])
 const rollbackState = query(`

@@ -110,11 +110,15 @@ function replaceRoleChecks(expression, table, mapping, operation) {
   value = value.replace(/(?:public\.)?security_has_role\(ARRAY\[[\s\S]*?\]\)/gi, operationPermission)
   value = value.replace(/(?:public\.)?detailing_role_allowed\(ARRAY\[[\s\S]*?\]\)/gi, viewPermission)
   value = value.replace(/(?:public\.)?inventory_transfer_role_allowed\(ARRAY\[[\s\S]*?\]\)/gi, viewPermission)
-  value = value.replace(/(?:public\.)?security_can_manage_catalog\(\)/gi, managePermission)
-  value = value.replace(/(?:public\.)?security_can_manage_nesting_catalog\(\)/gi, managePermission)
-  value = value.replace(/(?:public\.)?security_can_view_request_materials\(\)/gi, viewPermission)
-  value = value.replace(/(?:public\.)?security_can_manage_request_materials\(\)/gi, managePermission)
-  value = value.replace(/(?:public\.)?security_can_manage_supply\(\)/gi, managePermission)
+  // The enclosing policy command is authoritative. A legacy helper named
+  // `security_can_manage_*` inside a SELECT policy was historically also used
+  // as its read gate; carrying the helper name across as `manage` would make
+  // view-only matrix permissions return an empty result set.
+  value = value.replace(/(?:public\.)?security_can_manage_catalog\(\)/gi, operationPermission)
+  value = value.replace(/(?:public\.)?security_can_manage_nesting_catalog\(\)/gi, operationPermission)
+  value = value.replace(/(?:public\.)?security_can_view_request_materials\(\)/gi, operationPermission)
+  value = value.replace(/(?:public\.)?security_can_manage_request_materials\(\)/gi, operationPermission)
+  value = value.replace(/(?:public\.)?security_can_manage_supply\(\)/gi, operationPermission)
 
   // The legacy finance policies granted a special path to the
   // `supply_manager` business label. That label is routing metadata after the
@@ -182,6 +186,20 @@ function parentScopePredicate(table, mapping, operation) {
 
 function overrideExpression(policy, expression) {
   if (!expression) return expression
+  if (policy.tablename === 'machines' && policy.policyname === 'machines_select') {
+    return `
+      private.crm_has_permission('sales_plan', 'view')
+      OR private.crm_has_permission('production', 'view')
+      OR (
+        private.crm_has_permission('supply_orders', 'view')
+        AND EXISTS (
+          SELECT 1
+          FROM public.technologist_requests AS supply_request
+          WHERE supply_request.machine_id = machines.id
+            AND supply_request.status IN ('submitted_to_supply', 'completed')
+        )
+      )`
+  }
   if (policy.tablename === 'technologist_request_approval_versions' && policy.policyname === 'technologist_request_approval_versions_select') {
     return `(submitted_by = auth.uid() OR private.crm_has_permission('technologist_request_results', 'manage'))`
   }
@@ -226,7 +244,16 @@ function policySql(policy) {
   const gate = scopedPermission(policy.tablename, mapping, operation, original)
   if (!gate) throw new Error(`Missing ${operation} resource for ${policy.tablename}`)
 
+  const isRestrictive = policy.permissive === 'RESTRICTIVE'
   const transform = (expression) => {
+    // Restrictive policies only narrow rows that a permissive policy already
+    // granted. Adding another resource gate here turns lifecycle guards into
+    // accidental deny rules for consumers such as supply_orders/view.
+    if (isRestrictive) {
+      if (!expression || /^true$/i.test(expression.trim())) return 'true'
+      const overridden = overrideExpression(policy, expression)
+      return `(${replaceRoleChecks(overridden, policy.tablename, mapping, operation)})`
+    }
     if (!expression || /^true$/i.test(expression.trim())) return `(${gate})`
     const overridden = overrideExpression(policy, expression)
     const preserved = replaceRoleChecks(overridden, policy.tablename, mapping, operation)
@@ -235,7 +262,7 @@ function policySql(policy) {
   }
 
   const command = policy.cmd === 'ALL' ? 'ALL' : policy.cmd
-  const permissive = policy.permissive === 'RESTRICTIVE' ? 'AS RESTRICTIVE ' : ''
+  const permissive = isRestrictive ? 'AS RESTRICTIVE ' : ''
   const using = policy.qual ? `\nUSING (${transform(policy.qual)})` : ''
   const check = policy.with_check ? `\nWITH CHECK (${transform(policy.with_check)})` : ''
   return `DROP POLICY IF EXISTS ${quoteIdent(policy.policyname)} ON public.${quoteIdent(policy.tablename)};\nCREATE POLICY ${quoteIdent(policy.policyname)} ON public.${quoteIdent(policy.tablename)}\n${permissive}FOR ${command} TO authenticated${using}${check};\n`
