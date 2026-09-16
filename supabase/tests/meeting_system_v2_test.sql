@@ -4,6 +4,7 @@ DO $$
 DECLARE
   v_first_question uuid;
   v_user uuid := '98000000-0000-4000-8000-000000000001';
+  v_department uuid := '98000000-0000-4000-8000-000000000008';
   v_task uuid := '98000000-0000-4000-8000-000000000002';
   v_template uuid := '98000000-0000-4000-8000-000000000003';
   v_schedule uuid := '98000000-0000-4000-8000-000000000004';
@@ -122,6 +123,15 @@ BEGIN
 
   INSERT INTO public.users(id, email, full_name, role, is_active)
   VALUES (v_user, 'meeting-v2-sql@example.test', 'Meeting v2 SQL', 'planning_director', true);
+  INSERT INTO public.departments(id, name, is_active, created_by)
+  VALUES (v_department, 'Meeting v2 SQL access', true, v_user);
+  INSERT INTO public.department_members(user_id, department_id, is_department_head, created_by)
+  VALUES (v_user, v_department, false, v_user);
+  INSERT INTO public.department_access_permissions(
+    department_id, subject_scope, resource_key, can_view, can_manage, updated_by
+  ) VALUES
+    (v_department, 'member', 'meetings', true, true, v_user),
+    (v_department, 'member', 'meeting_rules', true, true, v_user);
   UPDATE public.role_permissions
   SET can_view = true, can_manage = true
   WHERE role = 'planning_director' AND resource_key = 'meeting_rules';
