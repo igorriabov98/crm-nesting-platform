@@ -16,6 +16,7 @@ const item: CuttingAreaMaterialItem = {
   id: 'item-1', request_id: request.id, table: 'request_components', order_status: 'pending',
   ordered_at: '2026-08-28T10:00:00.123Z',
   quantity_needed: 10, stock_remainder: 0, reserved_from_stock: 0,
+  component_name: 'Подшипник 6204', specification: 'ГОСТ 8338-75',
   material_id: 'material-1', material_variant_id: 'variant-1',
 }
 const schedule: CuttingAreaMaterialSchedule = {
@@ -29,6 +30,14 @@ function summarize(items = [item], schedules: CuttingAreaMaterialSchedule[] = []
 
 assert.deepEqual(summarize([]), emptyCuttingAreaMaterialSummary())
 assert.equal(summarize().counts.not_ordered, 1, 'Завершение технологом не равно получению материала')
+assert.deepEqual(summarize().details.not_ordered, [{
+  id: item.id,
+  requestId: request.id,
+  category: 'Комплектация',
+  label: 'Подшипник 6204',
+  description: 'ГОСТ 8338-75',
+  quantity: '10 шт',
+}], 'Агрегат «Не заказано» должен раскрывать конкретную позицию и количество')
 assert.equal(summarize([{ ...item, order_status: 'ordered' }]).counts.delivery, 1)
 assert.equal(summarize([{ ...item, order_status: 'delivered' }]).counts.received, 1)
 assert.deepEqual(summarize([{ ...item, order_status: 'cancelled' }], [schedule]), emptyCuttingAreaMaterialSummary())
@@ -94,6 +103,7 @@ assert.deepEqual(sharedSummary({}, {}, [{ ...schedule, quantity: 20 }, { ...sche
 
 const mixed = mergeCuttingAreaMaterialSummaries([summarize(), summarize([{ ...item, order_status: 'delivered' }]), summarize([item], [schedule])])
 assert.deepEqual(mixed.counts, { not_ordered: 1, delivery: 1, received: 1, stock: 0 })
+assert.deepEqual(Object.fromEntries(Object.entries(mixed.details).map(([state, rows]) => [state, rows.length])), { not_ordered: 1, delivery: 1, received: 1, stock: 0 })
 assert.deepEqual(mixed.deliveryDates, ['2026-09-02'])
 assert.equal(mixed.hasUndatedDelivery, true)
 
@@ -157,6 +167,8 @@ async function main() {
   const ui = readFileSync('src/components/features/production/CuttingAreaMaterials.tsx', 'utf8')
   assert(ui.includes('openOnHover') && ui.includes('PopoverTrigger'))
   assert(ui.includes('hasUndatedDelivery') && ui.includes('Раздельная доставка'))
+  assert(ui.includes('Конкретные позиции и количество потребности'), 'Статус материала должен раскрывать состав')
+  assert(ui.includes('summary.details[state]'), 'В расшифровке должны использоваться конкретные позиции')
   console.log('cutting-area-materials: OK (statuses, dates, partial receipts, all categories, shared schedules, scope, pagination)')
 }
 

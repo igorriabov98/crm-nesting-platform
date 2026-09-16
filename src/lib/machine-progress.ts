@@ -163,7 +163,10 @@ function requestTimeRank(request: MachineProgressRequestInput) {
 }
 
 export function pickActiveTechnologistRequest(requests: MachineProgressRequestInput[]) {
-  return [...requests].sort((left, right) => requestTimeRank(left) - requestTimeRank(right)).at(-1) || null
+  return requests
+    .filter((request) => request.status !== 'draft' && request.status !== 'cancelled')
+    .sort((left, right) => requestTimeRank(left) - requestTimeRank(right))
+    .at(-1) || null
 }
 
 function isSubmittedToSupply(request: MachineProgressRequestInput | null | undefined) {

@@ -19,16 +19,16 @@ type Query = PromiseLike<DbResult> & {
 }
 type Db = { from: (table: string) => Query }
 
-const QUANTITY_COLUMNS: Record<CuttingAreaMaterialTable, string> = {
-  request_sheet_metal: 'remainder_qty,to_order_kg,reserved_from_stock_kg',
-  request_round_tube: 'order_kg,reserved_from_stock_kg',
-  request_circle: 'remainder_mm,reserved_from_stock_mm',
-  request_pipe: 'pipe_type,remainder_kg,remainder_length_mm,reserved_from_stock_kg,reserved_from_stock_length_mm',
-  request_knives: 'remainder_meters,to_order_mm,reserved_from_stock_mm',
-  request_components: 'quantity_needed,stock_remainder,reserved_from_stock',
-  request_paint: 'remainder_kg,to_order_kg,reserved_from_stock_kg',
-  request_mesh: 'remainder_qty,reserved_from_stock_qty',
-  request_chain_cord: 'remainder_meters,reserved_from_stock_meters',
+const ITEM_COLUMNS: Record<CuttingAreaMaterialTable, string> = {
+  request_sheet_metal: 'material_name,material_grade,sheet_size,thickness_mm,remainder_qty,to_order_kg,reserved_from_stock_kg',
+  request_round_tube: 'material_name,piece_count,order_kg,reserved_from_stock_kg',
+  request_circle: 'steel_grade,diameter_mm,is_calibrated,remainder_mm,reserved_from_stock_mm',
+  request_pipe: 'pipe_type,size,diameter_mm,wall_thickness_mm,remainder_kg,remainder_length_mm,reserved_from_stock_kg,reserved_from_stock_length_mm',
+  request_knives: 'knife_type,steel_grade,length_mm,width_mm,height_mm,remainder_meters,to_order_mm,reserved_from_stock_mm',
+  request_components: 'component_name,specification,diameter_mm,quantity_needed,stock_remainder,reserved_from_stock',
+  request_paint: 'paint_type,ral_code,finish,remainder_kg,to_order_kg,reserved_from_stock_kg',
+  request_mesh: 'description,length_mm,width_mm,remainder_qty,reserved_from_stock_qty',
+  request_chain_cord: 'item_type,parameters,remainder_meters,reserved_from_stock_meters',
 }
 const PAGE_SIZE = 500
 const ID_BATCH_SIZE = 100
@@ -72,7 +72,7 @@ export async function loadCuttingAreaMaterialSummaries(db: Db, factoryIds: strin
     plannedMaterialDate: request.machines.planned_material_date,
   }))
   const requestIds = requests.map((request) => request.id)
-  const rowsByTable = await Promise.all(Object.entries(QUANTITY_COLUMNS).map(async ([table, columns]) => {
+  const rowsByTable = await Promise.all(Object.entries(ITEM_COLUMNS).map(async ([table, columns]) => {
     const rows = await readBatches<Omit<CuttingAreaMaterialItem, 'table'>>(requestIds, (ids) => db.from(table)
       .select(`id,request_id,order_status,ordered_at,material_id,material_variant_id,custom_delivery_date,${columns}`)
       .in('request_id', ids))

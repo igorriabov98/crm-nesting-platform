@@ -49,6 +49,8 @@ const action = readFileSync(join(root, 'src/lib/actions/technologist-requests.ts
 assert((action.match(/assertTechnologistRequestEditable\(/g) || []).length >= 6, 'Все группы мутаций должны проверять статус заявки')
 assert(action.includes("request.status !== 'draft'"), 'Оформление должно выполняться только из черновика')
 assert(action.includes("request.status !== 'pending_stock_check' && request.status !== 'stock_checked'"), 'Проверка склада не должна менять закрытую заявку')
+assert(action.includes('export async function deleteDraftRequest'), 'Должно быть серверное действие удаления черновика')
+assert(action.includes("rpc('fn_delete_technologist_request_draft_v1'"), 'Удаление должно проходить через атомарную защищённую функцию')
 
 const page = readFileSync(join(root, 'src/components/features/requests/TechnologistRequestPage.tsx'), 'utf8')
 assert(page.includes('canManage && isTechnologistRequestEditable(status)'), 'Клиент должен использовать общую матрицу редактируемости')
@@ -60,6 +62,11 @@ assert.deepEqual(
   ['sheet', 'circle', 'pipe', 'knives', 'paint', 'components', 'mesh', 'chain_cord'],
   'Каждая категория должна сохранять локальные строки при переключении вкладок',
 )
+
+const listPage = readFileSync(join(root, 'src/components/features/requests/RequestListPage.tsx'), 'utf8')
+assert(listPage.includes("request.status === 'draft'"), 'Кнопка удаления должна показываться только для черновика')
+assert(listPage.includes('Удалить черновик заявки?'), 'Опасное действие должно требовать подтверждения')
+assert(listPage.includes('deleteDraftRequest(requestToDelete.id)'), 'Подтверждение должно вызывать серверное удаление')
 
 const sectionFiles = [
   'SheetMetalSection.tsx',

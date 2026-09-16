@@ -173,7 +173,9 @@ export async function getProductionCuttingAreaRequest(machineId: string, request
       if (result.error) throw new Error(result.error.message)
     }
     if (!stageResult.data) throw new Error('Заказ не относится к участку заготовки')
-    if (!requestResult.data) throw new Error('Заявка не найдена')
+    if (!requestResult.data || !isActiveCuttingAreaRequest(requestResult.data.status)) {
+      throw new Error('Заявка не участвует в очереди участка заготовки')
+    }
 
     const request = requestResult.data as TechnologistRequest
     const payload = await loadTechnologistRequestPayload(db, request)
@@ -248,6 +250,13 @@ export async function getProductionCuttingAreaWorkspace(): Promise<CuttingAreaWo
   const stageByMachine = new Map((stageResult.data || []).filter((stage: any) => !stage.is_skipped).map((stage: any) => [stage.machine_id, stage]))
   const visibleMachines = machines.filter((machine: any) => stageByMachine.has(machine.id))
   const requests = requestResult.data || []
+  const requestNumberById = new Map<string, number>()
+  const requestNumberByMachine = new Map<string, number>()
+  for (const request of requests) {
+    const number = (requestNumberByMachine.get(request.machine_id) || 0) + 1
+    requestNumberByMachine.set(request.machine_id, number)
+    requestNumberById.set(request.id, number)
+  }
   const activeRequests = requests.filter((request: any) => isActiveCuttingAreaRequest(request.status))
   const completions = completionResult.data || []
   const completionByRequest = new Map(completions.map((completion: any) => [completion.request_id, completion]))
@@ -269,6 +278,7 @@ export async function getProductionCuttingAreaWorkspace(): Promise<CuttingAreaWo
     const active = machineCycles.find((cycle) => cycle.status === 'in_progress') || null
     const latest = machineCycles[0] || null
     const unfinished = unprocessed.filter((request: any) => !completionByRequest.has(request.id))
+    const unfinishedNumbers = unfinished.map((request: any) => requestNumberById.get(request.id) || 0).filter(Boolean)
     const stage = stageByMachine.get(machine.id) as any
     let queueStatus: CuttingAreaQueueStatus = 'waiting'
     if (active) queueStatus = 'in_progress'
@@ -280,7 +290,7 @@ export async function getProductionCuttingAreaWorkspace(): Promise<CuttingAreaWo
         : unprocessed.length === 0
           ? 'Нет новых заявок для цикла'
           : unfinished.length > 0
-            ? `Не завершено заявок: ${unfinished.length}`
+            ? `Не завершены заявки технолога: ${unfinishedNumbers.map((number: number) => `№${number}`).join(', ')}`
             : null
     const factory = Array.isArray(machine.factories) ? machine.factories[0] : machine.factories
     return {
@@ -338,7 +348,9 @@ export async function getProductionCuttingAreaDetails(machineId: string) {
     ])
     if (requestResult.error) throw new Error(requestResult.error.message)
     if (itemResult.error) throw new Error(itemResult.error.message)
-    const requests = requestResult.data || []
+    const allRequests = requestResult.data || []
+    const requestNumberById = new Map(allRequests.map((request: any, index: number) => [request.id, index + 1]))
+    const requests = allRequests.filter((request: any) => isActiveCuttingAreaRequest(request.status))
     const items = itemResult.data || []
     const requestIds = requests.map((request: any) => request.id)
     const productIds = Array.from(new Set(items.map((item: any) => item.product_id).filter(Boolean))) as string[]
@@ -426,10 +438,10 @@ export async function getProductionCuttingAreaDetails(machineId: string) {
     const userNames = new Map((users.data || []).map((user: any) => [user.id, user.full_name || user.email || 'Пользователь']))
     const completionByRequest = new Map((completionResult.data || []).map((completion: any) => [completion.request_id, completion]))
     const details: CuttingAreaOrderDetails = {
-      requests: requests.map((request: any, index: number) => {
+      requests: requests.map((request: any) => {
         const completion = completionByRequest.get(request.id) as any
         return {
-          id: request.id, number: index + 1, createdAt: request.created_at,
+          id: request.id, number: requestNumberById.get(request.id) || 0, createdAt: request.created_at,
           authorName: userNames.get(request.created_by) || 'Технолог', status: request.status,
           materials: materialSummaries.get(request.id) || emptyCuttingAreaMaterialSummary(),
           completion: completion ? { enteredMinutes: completion.entered_plasma_minutes, addedMinutes: completion.added_plasma_minutes, actualMinutes: completion.actual_plasma_minutes, finalizedAt: completion.finalized_at } : null,
@@ -492,9 +504,9 @@ const startSchema = z.object({
 })
 
 async function unprocessedRequestIds(db: any, machineId: string) {
-  const requests = await db.from('technologist_requests').select('id,created_at').eq('machine_id', machineId).neq('status', 'cancelled').order('created_at').order('id')
+  const requests = await db.from('technologist_requests').select('id,created_at,status').eq('machine_id', machineId).order('created_at').order('id')
   if (requests.error) throw new Error(requests.error.message)
-  const rows = requests.data || []
+  const rows = (requests.data || []).filter((request: any) => isActiveCuttingAreaRequest(request.status))
   const covered = await loadCoveredRequestIds(db, rows.map((request: any) => request.id))
   return rows.filter((request: any) => !covered.has(request.id)).map((request: any) => request.id)
 }
