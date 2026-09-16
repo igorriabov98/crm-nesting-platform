@@ -232,7 +232,13 @@ JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
 CROSS JOIN LATERAL aclexplode(COALESCE(procedure.proacl, acldefault('f', procedure.proowner))) AS privilege
 WHERE namespace.nspname = 'public'
   AND procedure.prokind IN ('f', 'p')
-  AND pg_get_functiondef(procedure.oid) ~* '(users\.role|role_permissions|get_user_role\s*\(|is_director\s*\(|security_can_|security_has_role\s*\()'
+  AND (
+    pg_get_functiondef(procedure.oid) ~* '(users\.role|role_permissions|get_user_role\s*\(|is_director\s*\(|security_can_|security_has_role\s*\()'
+    OR procedure.proname IN (
+      'fn_receive_supply_order_schedule_v3',
+      'fn_receive_supply_order_schedule_batch_v2'
+    )
+  )
   AND CASE privilege.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_get_userbyid(privilege.grantee) END
       IN ('PUBLIC', 'anon', 'authenticated', 'service_role');
 
@@ -1595,7 +1601,7 @@ CREATE OR REPLACE FUNCTION public.fn_receive_supply_order_schedule_batch_v1(p_re
  RETURNS jsonb
  LANGUAGE plpgsql
  SECURITY DEFINER
- SET search_path TO ''
+ SET search_path TO 'pg_catalog', 'public', 'pg_temp'
 AS $function$
 DECLARE
   v_schedule public.supply_order_delivery_schedules%ROWTYPE;
@@ -1938,7 +1944,7 @@ CREATE OR REPLACE FUNCTION public.fn_receive_supply_order_schedule_v2(p_schedule
  RETURNS jsonb
  LANGUAGE plpgsql
  SECURITY DEFINER
- SET search_path TO ''
+ SET search_path TO 'pg_catalog', 'public', 'pg_temp'
 AS $function$
 DECLARE
   v_schedule public.supply_order_delivery_schedules%ROWTYPE;
@@ -2333,6 +2339,13 @@ $function$;
 
 REVOKE ALL ON FUNCTION public.fn_receive_supply_order_schedule_v2(p_schedule_id uuid, p_performed_by uuid, p_received_quantity numeric, p_allocations jsonb, p_received_piece_length_mm numeric, p_received_piece_count numeric) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.fn_receive_supply_order_schedule_v2(p_schedule_id uuid, p_performed_by uuid, p_received_quantity numeric, p_allocations jsonb, p_received_piece_length_mm numeric, p_received_piece_count numeric) TO authenticated, service_role;
+
+
+REVOKE ALL ON FUNCTION public.fn_receive_supply_order_schedule_v3(uuid, uuid, numeric, jsonb, numeric, numeric, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.fn_receive_supply_order_schedule_v3(uuid, uuid, numeric, jsonb, numeric, numeric, text) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION public.fn_receive_supply_order_schedule_batch_v2(jsonb, uuid, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.fn_receive_supply_order_schedule_batch_v2(jsonb, uuid, text) TO authenticated, service_role;
+
 
 CREATE OR REPLACE FUNCTION public.fn_replace_supply_order_delivery_schedules_v1(p_delete_ids uuid[], p_rows jsonb)
  RETURNS void
@@ -4645,6 +4658,8 @@ BEGIN
       'fn_submit_technologist_request_for_approval',
       'fn_receive_supply_order_schedule_batch_v1',
       'fn_receive_supply_order_schedule_v2',
+      'fn_receive_supply_order_schedule_v3',
+      'fn_receive_supply_order_schedule_batch_v2',
       'notify_production_managers_for_machine',
       'notify_users_by_role',
       'notify_users_by_role_in_factory',

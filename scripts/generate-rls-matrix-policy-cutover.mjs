@@ -454,7 +454,9 @@ GRANT EXECUTE ON FUNCTION public.fn_user_can_decide_machine_discount(uuid) TO se
 function receivingFunctionSql(entry) {
   const guard = "IF p_performed_by IS DISTINCT FROM auth.uid() OR NOT private.crm_has_permission('inventory_receiving', 'manage') THEN RAISE EXCEPTION 'Недостаточно прав для приёмки' USING ERRCODE = '42501'; END IF;"
   const definition = entry.definition
-    .replace(/SET search_path TO 'public'/gi, "SET search_path TO ''")
+    // Legacy update triggers reached by these RPCs use schema-local types;
+    // make public explicit before pg_temp rather than inheriting an empty path.
+    .replace(/SET search_path TO 'public'/gi, "SET search_path TO 'pg_catalog', 'public', 'pg_temp'")
     .replace(/BEGIN\n/i, `BEGIN\n  ${guard}\n`)
   if (!definition.includes(guard)) throw new Error(`Could not protect ${entry.function_name}`)
   return `${definition.trim()};\n\nREVOKE ALL ON FUNCTION public.${entry.function_name}(${entry.identity_arguments}) FROM PUBLIC, anon;\nGRANT EXECUTE ON FUNCTION public.${entry.function_name}(${entry.identity_arguments}) TO authenticated, service_role;`
@@ -468,6 +470,16 @@ const receivingFunctionOverridesSql = legacyFunctions.functions
   .filter((entry) => receivingFunctionNames.has(entry.function_name))
   .map(receivingFunctionSql)
   .join('\n\n')
+
+// The manual quantity wrappers delegate to the guarded v2/batch v1 functions
+// before reconciliation. They must be callable by the same authenticated RPC
+// client, while the reconciliation helper itself stays service-role-only.
+const receivingWrapperGrantsSql = `
+REVOKE ALL ON FUNCTION public.fn_receive_supply_order_schedule_v3(uuid, uuid, numeric, jsonb, numeric, numeric, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.fn_receive_supply_order_schedule_v3(uuid, uuid, numeric, jsonb, numeric, numeric, text) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION public.fn_receive_supply_order_schedule_batch_v2(jsonb, uuid, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.fn_receive_supply_order_schedule_batch_v2(jsonb, uuid, text) TO authenticated, service_role;
+`
 
 const scheduleReplacement = legacyFunctions.functions.find((entry) => entry.function_name === 'fn_replace_supply_order_delivery_schedules_v1')
 if (!scheduleReplacement) throw new Error('Legacy function snapshot is missing schedule replacement')
@@ -562,6 +574,8 @@ BEGIN
       'fn_submit_technologist_request_for_approval',
       'fn_receive_supply_order_schedule_batch_v1',
       'fn_receive_supply_order_schedule_v2',
+      'fn_receive_supply_order_schedule_v3',
+      'fn_receive_supply_order_schedule_batch_v2',
       'notify_production_managers_for_machine',
       'notify_users_by_role',
       'notify_users_by_role_in_factory',
@@ -585,6 +599,6 @@ $invariants$;
 COMMIT;
 `
 
-const generated = `${marker}\n\n${functionOverridesSql}\n\n${approvalFunctionOverridesSql}\n\n${commercialHelperOverridesSql}\n\n${receivingFunctionOverridesSql}\n\n${scheduleReplacementOverrideSql}\n\n${legacyHelperRevokesSql}\n${policiesSql}\n${invariants}`
+const generated = `${marker}\n\n${functionOverridesSql}\n\n${approvalFunctionOverridesSql}\n\n${commercialHelperOverridesSql}\n\n${receivingFunctionOverridesSql}\n\n${receivingWrapperGrantsSql}\n\n${scheduleReplacementOverrideSql}\n\n${legacyHelperRevokesSql}\n${policiesSql}\n${invariants}`
 writeFileSync(migrationPath, `${migration.slice(0, markerIndex)}${generated}`)
 console.log(`Generated ${snapshot.policies.length} policy definitions for ${tables.length} tables`)

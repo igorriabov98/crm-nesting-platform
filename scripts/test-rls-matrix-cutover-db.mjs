@@ -44,6 +44,10 @@ function assertCutoverState() {
       has_column_privilege('authenticated', 'public.machine_expenses', 'amount', 'SELECT'),
       has_column_privilege('authenticated', 'public.machines_with_totals', 'total_cost', 'SELECT'),
       has_table_privilege('authenticated', 'public.client_product_prices', 'SELECT'),
+      has_function_privilege('authenticated', 'public.fn_receive_supply_order_schedule_v3(uuid,uuid,numeric,jsonb,numeric,numeric,text)', 'EXECUTE'),
+      has_function_privilege('authenticated', 'public.fn_receive_supply_order_schedule_batch_v2(jsonb,uuid,text)', 'EXECUTE'),
+      has_function_privilege('anon', 'public.fn_receive_supply_order_schedule_v3(uuid,uuid,numeric,jsonb,numeric,numeric,text)', 'EXECUTE'),
+      has_function_privilege('anon', 'public.fn_receive_supply_order_schedule_batch_v2(jsonb,uuid,text)', 'EXECUTE'),
       EXISTS (
         SELECT 1 FROM pg_class relation
         JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
@@ -55,7 +59,7 @@ function assertCutoverState() {
       (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND policyname = 'department_access_permissions_select_authenticated')
     );
   `)
-  assert.equal(result, '0|t|f|f|f|f|f|f|t|1|0')
+  assert.equal(result, '0|t|f|f|f|f|f|f|t|t|f|f|t|1|0')
 }
 
 run(
@@ -88,10 +92,12 @@ const rollbackState = query(`
     to_regprocedure('private.crm_has_permission(text,text)') IS NULL,
     (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND policyname = 'department_access_permissions_select_authenticated'),
     (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND policyname = 'department_access_permissions_select_matrix'),
+    has_function_privilege('authenticated', 'public.fn_receive_supply_order_schedule_v3(uuid,uuid,numeric,jsonb,numeric,numeric,text)', 'EXECUTE'),
+    has_function_privilege('authenticated', 'public.fn_receive_supply_order_schedule_batch_v2(jsonb,uuid,text)', 'EXECUTE'),
     position('app_user.role = ANY' in pg_get_functiondef('public.inventory_transfer_role_allowed(public.user_role[])'::regprocedure)) > 0
   );
 `)
-assert.equal(rollbackState, 't|1|0|t')
+assert.equal(rollbackState, 't|1|0|f|f|t')
 
 const compatibilityScopeState = query(`
   WITH updated AS (

@@ -65,6 +65,7 @@ console.log('[supply-receiving-plan-fact] all assertions passed')
 async function testConcurrentBatchReceipt() {
   const fixture = {
     actor: randomUUID(),
+    department: randomUUID(),
     machine: randomUUID(),
     request: randomUUID(),
     supplier: randomUUID(),
@@ -81,6 +82,12 @@ async function testConcurrentBatchReceipt() {
       IF v_factory IS NULL THEN RAISE EXCEPTION 'Для теста не найден завод'; END IF;
       INSERT INTO public.users(id, email, full_name, role, factory_id, is_active)
       VALUES ('${fixture.actor}', 'material-batch-concurrency-${fixture.actor}@example.test', 'Конкурентная приёмка', 'supply_manager', v_factory, true);
+      INSERT INTO public.departments(id, name, factory_id, is_active, created_by)
+      VALUES ('${fixture.department}', 'Concurrent batch ${fixture.actor}', v_factory, true, '${fixture.actor}');
+      INSERT INTO public.department_members(user_id, department_id, is_department_head, created_by)
+      VALUES ('${fixture.actor}', '${fixture.department}', false, '${fixture.actor}');
+      INSERT INTO public.department_access_permissions(department_id, subject_scope, resource_key, can_view, can_manage, updated_by)
+      VALUES ('${fixture.department}', 'member', 'inventory_receiving', true, true, '${fixture.actor}');
       INSERT INTO public.suppliers(id, name) VALUES ('${fixture.supplier}', 'Concurrent supplier ${fixture.supplier}');
       INSERT INTO public.machines(id, factory_id, name, created_by)
       VALUES ('${fixture.machine}', v_factory, 'Конкурентная пакетная приёмка', '${fixture.actor}');
@@ -125,6 +132,7 @@ async function testConcurrentBatchReceipt() {
   const callSql = `SELECT public.fn_receive_supply_order_schedule_batch_v2('${receiptJson}'::jsonb, '${fixture.actor}', NULL);`
   const firstSql = `
     BEGIN;
+    SELECT set_config('request.jwt.claim.sub', '${fixture.actor}', true);
     SELECT id FROM public.supply_order_delivery_schedules
     WHERE id IN ('${fixture.firstSchedule}', '${fixture.secondSchedule}') ORDER BY id FOR UPDATE;
     SELECT pg_sleep(0.5);
@@ -136,7 +144,7 @@ async function testConcurrentBatchReceipt() {
   const first = runPsqlAsync(firstSql)
   await new Promise((resolve) => setTimeout(resolve, 150))
   const secondStartedAt = Date.now()
-  const second = runPsqlAsync(callSql)
+  const second = runPsqlAsync(`SELECT set_config('request.jwt.claim.sub', '${fixture.actor}', false); ${callSql}`)
   const [firstResult, secondResult] = await Promise.all([first, second])
   assert.equal(firstResult.status, 0, `First concurrent receipt failed: ${firstResult.stderr}`)
   assert.notEqual(secondResult.status, 0, 'Concurrent repeated receipt unexpectedly succeeded')
@@ -169,6 +177,7 @@ async function testConcurrentBatchReceipt() {
 async function testConcurrentManualQuantityReceipt() {
   const fixture = {
     actor: randomUUID(),
+    department: randomUUID(),
     machine: randomUUID(),
     request: randomUUID(),
     supplier: randomUUID(),
@@ -184,6 +193,12 @@ async function testConcurrentManualQuantityReceipt() {
       IF v_factory IS NULL THEN RAISE EXCEPTION 'Для теста не найден завод'; END IF;
       INSERT INTO public.users(id, email, full_name, role, factory_id, is_active)
       VALUES ('${fixture.actor}', 'manual-receipt-concurrency-${fixture.actor}@example.test', 'Конкурентная ручная приёмка', 'supply_manager', v_factory, true);
+      INSERT INTO public.departments(id, name, factory_id, is_active, created_by)
+      VALUES ('${fixture.department}', 'Concurrent manual ${fixture.actor}', v_factory, true, '${fixture.actor}');
+      INSERT INTO public.department_members(user_id, department_id, is_department_head, created_by)
+      VALUES ('${fixture.actor}', '${fixture.department}', false, '${fixture.actor}');
+      INSERT INTO public.department_access_permissions(department_id, subject_scope, resource_key, can_view, can_manage, updated_by)
+      VALUES ('${fixture.department}', 'member', 'inventory_receiving', true, true, '${fixture.actor}');
       INSERT INTO public.suppliers(id, name) VALUES ('${fixture.supplier}', 'Manual concurrent supplier ${fixture.supplier}');
       INSERT INTO public.machines(id, factory_id, name, created_by)
       VALUES ('${fixture.machine}', v_factory, 'Конкурентная ручная приёмка', '${fixture.actor}');
@@ -213,6 +228,7 @@ async function testConcurrentManualQuantityReceipt() {
   const callSql = `SELECT public.fn_receive_supply_order_schedule_v3('${fixture.schedule}', '${fixture.actor}', 5, '[]'::jsonb, NULL, NULL, NULL);`
   const firstSql = `
     BEGIN;
+    SELECT set_config('request.jwt.claim.sub', '${fixture.actor}', true);
     SELECT id FROM public.supply_order_delivery_schedules
     WHERE id = '${fixture.schedule}' FOR UPDATE;
     SELECT pg_sleep(0.5);
@@ -224,7 +240,7 @@ async function testConcurrentManualQuantityReceipt() {
   const first = runPsqlAsync(firstSql)
   await new Promise((resolve) => setTimeout(resolve, 150))
   const secondStartedAt = Date.now()
-  const second = runPsqlAsync(callSql)
+  const second = runPsqlAsync(`SELECT set_config('request.jwt.claim.sub', '${fixture.actor}', false); ${callSql}`)
   const [firstResult, secondResult] = await Promise.all([first, second])
   assert.equal(firstResult.status, 0, `First concurrent manual receipt failed: ${firstResult.stderr}`)
   assert.notEqual(secondResult.status, 0, 'Concurrent repeated manual receipt unexpectedly succeeded')
