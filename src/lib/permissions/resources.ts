@@ -981,12 +981,11 @@ export function getPermissionRequirementForPath(pathname: string) {
 }
 
 export function getSidebarResources(
-  role: UserRole | null | undefined,
   permissions: PermissionMap,
   section: SidebarSection,
 ) {
   return (PERMISSION_RESOURCES as readonly PermissionResource[])
     .filter((resource) => resource.sidebar?.section === section && resource.defaultHref)
-    .filter((resource) => hasResourcePermission(role, permissions, resource.key, 'view'))
+    .filter((resource) => hasPermission(permissions, resource.key, 'view'))
     .sort((a, b) => (a.sidebar?.order || 0) - (b.sidebar?.order || 0))
 }

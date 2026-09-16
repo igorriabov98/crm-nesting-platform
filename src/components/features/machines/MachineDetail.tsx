@@ -152,7 +152,7 @@ export function MachineDetail({
 }: MachineDetailProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { isDirector, can } = useRole()
+  const { isAdminPosition, can } = useRole()
   
   const [isEditOpen, setIsEditOpen] = useState(false)
   const [isArchiveOpen, setIsArchiveOpen] = useState(false)
@@ -301,7 +301,7 @@ export function MachineDetail({
                   />
                 </>
               )}
-              {!machine.factory_id && isDirector && (
+              {!machine.factory_id && isAdminPosition && (
                 <Button
                   className="min-h-10 bg-white text-blue-950 hover:bg-blue-50"
                   onClick={() => setIsAssignOpen(true)}
@@ -544,7 +544,7 @@ export function MachineDetail({
           machine={machine}
           isOpen={isEditOpen}
           onClose={() => setIsEditOpen(false)}
-          isDirector={isDirector}
+          isDirector={isAdminPosition}
           factories={factories}
         />
       )}

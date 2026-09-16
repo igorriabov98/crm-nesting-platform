@@ -13,7 +13,7 @@ import { cacheProjectThreadAttachments } from '@/lib/mail/attachments'
 import { gmailLabelChanges, type MailMutation } from '@/lib/mail/model'
 import { hasPermission } from '@/lib/permissions/resources'
 import { deleteMailVaultSecret } from '@/lib/mail/vault'
-import { canManageDepartmentRequestTarget, type DepartmentRequestTarget } from '@/lib/department-requests'
+import type { DepartmentRequestTarget } from '@/lib/department-requests'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 
 const PAGE_SIZE = 50
@@ -21,7 +21,6 @@ const mailLinkSchema = z.object({
   kind: z.enum(['thread', 'message']),
   id: z.string().uuid(),
 })
-const DIRECTORS = ['financial_director', 'commercial_director', 'planning_director']
 
 async function requireMailAccount() {
   const context = await requirePermission('mail', 'view')
@@ -173,16 +172,9 @@ type RequestAccessRow = {
 function canAccessRequest(context: Awaited<ReturnType<typeof requireAnyPermission>>, request: RequestAccessRow) {
   if (request.created_by === context.userId) return true
   if (!hasPermission(context.permissions, 'department_requests', 'view')) return false
-  const departmentAllowed = canManageDepartmentRequestTarget({
-    target: request.target_department,
-    role: context.role,
-    memberships: context.permissionDetails.memberships.map((membership) => ({
-      departmentName: membership.departmentName,
-      positionName: membership.positionName,
-    })),
-  })
+  const departmentAllowed = hasPermission(context.permissions, 'department_requests', 'manage')
   const factoryAllowed = request.target_department !== 'production'
-    || DIRECTORS.includes(context.role)
+    || context.permissionDetails.isAdminPosition
     || !request.factory_id
     || request.factory_id === context.factoryId
   return departmentAllowed && factoryAllowed

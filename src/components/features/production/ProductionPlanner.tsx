@@ -1754,8 +1754,9 @@ export function ProductionPlanner({
   height = 'clamp(430px, 62dvh, 700px)',
 }: ProductionPlannerProps) {
   const router = useRouter()
-  const { isProductionManager, isDirector, can } = useRole()
+  const { can } = useRole()
   const canEdit = can('production', 'manage')
+  const canEditConfirmedPlan = can('production_reports', 'manage')
   const [plannerView, setPlannerView] = useState<PlannerView>('gantt')
   const [dayWidth, setDayWidth] = useState(38)
   const [rangeStart, setRangeStart] = useState<Date>(() => subDays(findEarliestDate(data), 30))
@@ -2008,19 +2009,18 @@ export function ProductionPlanner({
   const selectedMachineRequiresApproval = Boolean(
     selectedMachine &&
     !selectedMachine.is_outsourcing &&
-    isProductionManager &&
-    !isDirector &&
+    !canEditConfirmedPlan &&
     selectedMachinePlanStatus === 'confirmed'
   )
   const productionRowRequiresApproval = useCallback((row: ProductionRow | undefined) => {
-    if (!row || !isProductionManager || isDirector || !row.machine.factory_id) return false
+    if (!row || canEditConfirmedPlan || !row.machine.factory_id) return false
     const month = normalizeProductionMonthValue(row.machine.production_month)
     return Boolean(month && monthPlans.some((plan) => (
       plan.factory_id === row.machine.factory_id
       && plan.production_month === month
       && plan.status === 'confirmed'
     )))
-  }, [isDirector, isProductionManager, monthPlans])
+  }, [canEditConfirmedPlan, monthPlans])
   const selectedDateChanges = useMemo(
     () => Object.values(dateChangeDrafts).filter((change) => change.machineId === selectedMachineId),
     [dateChangeDrafts, selectedMachineId],

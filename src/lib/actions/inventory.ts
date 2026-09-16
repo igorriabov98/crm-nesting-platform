@@ -21,7 +21,7 @@ import { requirePermission } from '@/lib/permissions/server'
 import { assertFactoryAccess, type FactoryScopedPermissionContext } from '@/lib/permissions/factory-scope'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
-import { DIRECTOR_ACCESS_ROLES, type PermissionOperation } from '@/lib/permissions/resources'
+import { type PermissionOperation } from '@/lib/permissions/resources'
 import {
   assertManualSupplyRequestReservationAllowed,
   getReservationStockSourceForStatus,
@@ -297,10 +297,7 @@ async function assertActiveRequestReservationAccess(
         : 'На этом этапе можно бронировать только обычный склад')
     }
   }
-  if (request.created_by === permission.userId || (DIRECTOR_ACCESS_ROLES as readonly string[]).includes(permission.role)) return
-  if (permission.role !== 'technologist') {
-    throw new Error('Бронировать склад может автор, назначенный технолог или руководитель')
-  }
+  if (request.created_by === permission.userId || permission.permissionDetails.isAdminPosition) return
   const { data: taskData, error: taskError } = await db
     .from('tasks')
     .select('id')

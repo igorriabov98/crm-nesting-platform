@@ -99,7 +99,3 @@ function stableValue(value: unknown): string {
   if (value && typeof value === 'object') return JSON.stringify(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, stableValue(item)]))
   return JSON.stringify(value) ?? ''
 }
-
-export function isFinancialApprovalReviewer(role: string, isAdminPosition: boolean) {
-  return role === 'financial_director' || isAdminPosition
-}

@@ -5,11 +5,11 @@ import { z } from 'zod'
 
 import { getRequestForBusinessScrap, type SupplyRequestPayload, type SupplyStockItem } from '@/lib/actions/supply-request'
 import { ROUTES } from '@/lib/constants/routes'
-import { DIRECTOR_ACCESS_ROLES } from '@/lib/permissions/resources'
+import { hasPermission } from '@/lib/permissions/resources'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
-import type { RequestStatus, TaskStatus, UserRole } from '@/lib/types'
+import type { RequestStatus, TaskStatus } from '@/lib/types'
 
 type DbResult = { data: unknown; error: { message?: string } | null }
 type LooseQuery = PromiseLike<DbResult> & {
@@ -225,9 +225,6 @@ function relationOne<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) return value[0] || null
   return value || null
 }
-function isDirector(role: UserRole) {
-  return (DIRECTOR_ACCESS_ROLES as readonly UserRole[]).includes(role)
-}
 function itemKey(table: string, id: string) {
   return table + ':' + id
 }
@@ -287,8 +284,8 @@ function revalidateBusinessScrap(machineId: string, requestId: string) {
   revalidatePath(ROUTES.NOTIFICATIONS)
   revalidatePath(ROUTES.SALES_PLAN + '/' + machineId)
 }
-async function assertAssignedTechnologist(db: LooseDb, userId: string, role: UserRole, machineId: string) {
-  if (isDirector(role)) return
+async function assertAssignedTechnologist(db: LooseDb, userId: string, canViewAll: boolean, machineId: string) {
+  if (canViewAll) return
   const { data, error } = await db.from('tasks').select('id')
     .eq('machine_id', machineId)
     .eq('task_type', 'technologist_request')
@@ -348,9 +345,10 @@ export async function getBusinessScrapReservationQueue(): Promise<{
   error: string | null
 }> {
   try {
-    const { supabase, userId, role } = await requirePermission('business_scrap_reservations', 'view')
+    const context = await requirePermission('business_scrap_reservations', 'view')
+    const { supabase, userId } = context
     const db = dbFrom(supabase)
-    const canViewAll = isDirector(role)
+    const canViewAll = hasPermission(context.permissions, 'business_scrap_reservations', 'manage')
     let taskQuery = db.from('tasks').select('machine_id, assigned_to, status, deadline, created_at')
       .eq('task_type', 'technologist_request')
       .neq('status', 'cancelled')
@@ -517,13 +515,19 @@ export async function getBusinessScrapMachineEntry(machineId: string): Promise<{
   error: string | null
 }> {
   try {
-    const { supabase, userId, role } = await requirePermission('business_scrap_reservations', 'view')
+    const context = await requirePermission('business_scrap_reservations', 'view')
+    const { supabase, userId } = context
     const db = dbFrom(supabase)
     const { data: machineData, error: machineError } = await db.from('machines')
       .select('id, name, production_month, is_archived, factories(name)')
       .eq('id', machineId).eq('is_archived', false).maybeSingle()
     if (machineError || !machineData) throw new Error(machineError?.message || 'Машина не найдена')
-    await assertAssignedTechnologist(db, userId, role, machineId)
+    await assertAssignedTechnologist(
+      db,
+      userId,
+      hasPermission(context.permissions, 'business_scrap_reservations', 'manage'),
+      machineId,
+    )
     const { data: requestData, error: requestError } = await db.from('technologist_requests')
       .select('id, status').eq('machine_id', machineId)
       .order('created_at', { ascending: false }).limit(1).maybeSingle()
@@ -560,12 +564,13 @@ export async function getBusinessScrapMachineEntry(machineId: string): Promise<{
 export async function submitBusinessScrapCorrection(input: z.infer<typeof correctionSchema>) {
   try {
     const parsed = correctionSchema.parse(input)
-    const { supabase, userId, role } = await requirePermission('business_scrap_reservations', 'manage')
+    const context = await requirePermission('business_scrap_reservations', 'manage')
+    const { supabase, userId } = context
     const userDb = dbFrom(supabase)
     const workspaceResult = await getBusinessScrapWorkspace(parsed.requestId)
     if (!workspaceResult.data || workspaceResult.error) throw new Error(workspaceResult.error || 'Заявка не найдена')
     const workspace = workspaceResult.data
-    await assertAssignedTechnologist(userDb, userId, role, workspace.machine.id)
+    await assertAssignedTechnologist(userDb, userId, context.permissionDetails.isAdminPosition, workspace.machine.id)
     if (workspace.request.status !== 'submitted_to_supply' && workspace.request.status !== 'completed') {
       throw new Error('Корректировка доступна только после передачи заявки снабжению')
     }
@@ -638,7 +643,8 @@ export async function getBusinessScrapCorrectionApproval(taskId: string): Promis
   error: string | null
 }> {
   try {
-    const { supabase, userId, role } = await requirePermission('tasks', 'view')
+    const context = await requirePermission('tasks', 'view')
+    const { supabase, userId } = context
     const db = dbFrom(supabase)
     const { data: taskData, error: taskError } = await db.from('tasks')
       .select('id, assigned_to, task_type').eq('id', taskId).maybeSingle()
@@ -647,7 +653,7 @@ export async function getBusinessScrapCorrectionApproval(taskId: string): Promis
     if (task.task_type !== 'business_scrap_correction_approval') {
       throw new Error('Это не задача согласования делового остатка')
     }
-    if (task.assigned_to !== userId && !isDirector(role)) throw new Error('Недостаточно прав')
+    if (task.assigned_to !== userId && !hasPermission(context.permissions, 'tasks', 'manage')) throw new Error('Недостаточно прав')
     const { data: requestData, error: requestError } = await db.from('business_scrap_correction_requests')
       .select('id, status, reason, decision_comment, requested_by, machine_id, created_at')
       .eq('task_id', taskId).maybeSingle()
@@ -724,7 +730,8 @@ export async function getBusinessScrapCorrectionApproval(taskId: string): Promis
 export async function decideBusinessScrapCorrection(input: z.infer<typeof decisionSchema>) {
   try {
     const parsed = decisionSchema.parse(input)
-    const { supabase, userId, role } = await requirePermission('tasks', 'manage')
+    const context = await requirePermission('tasks', 'manage')
+    const { supabase, userId } = context
     const userDb = dbFrom(supabase)
     const { data: requestData, error: requestError } = await userDb.from('business_scrap_correction_requests')
       .select('id, approver_id, requested_by, machine_id, technologist_request_id, status')
@@ -738,7 +745,9 @@ export async function decideBusinessScrapCorrection(input: z.infer<typeof decisi
       technologist_request_id: string
       status: string
     }
-    if (request.approver_id !== userId && !isDirector(role)) throw new Error('Недостаточно прав')
+    if (request.approver_id !== userId && !context.permissionDetails.isAdminPosition) {
+      throw new Error('Недостаточно прав')
+    }
     if (request.status !== 'pending') throw new Error('Запрос уже обработан')
     if (parsed.decision === 'rejected' && (parsed.comment || '').trim().length < 3) {
       throw new Error('Укажите причину отклонения')

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
-import { canManageDepartmentRequestTarget, type DepartmentRequestTarget } from '@/lib/department-requests'
+import type { DepartmentRequestTarget } from '@/lib/department-requests'
 import {
   departmentRequestUploadPrefix,
   validateDepartmentRequestFile,
@@ -25,13 +25,6 @@ const cleanupSchema = z.object({
   objectPaths: z.array(z.string().min(1)).min(1).max(10),
 })
 
-function memberships(permissionDetails: Awaited<ReturnType<typeof requirePermission>>['permissionDetails']) {
-  return permissionDetails.memberships.map((membership) => ({
-    departmentName: membership.departmentName,
-    positionName: membership.positionName,
-  }))
-}
-
 async function assertResolutionAccess(
   requestId: string,
   context: Awaited<ReturnType<typeof requirePermission>>,
@@ -49,16 +42,7 @@ async function assertResolutionAccess(
   }
   if (request.status !== 'in_progress') throw new Error('Сначала возьмите запрос в работу')
 
-  const allowed = canManageDepartmentRequestTarget({
-    target: request.target_department,
-    role: context.role,
-    memberships: memberships(context.permissionDetails),
-  })
-  const factoryAllowed = request.target_department !== 'production'
-    || ['financial_director', 'commercial_director', 'planning_director'].includes(context.role)
-    || !request.factory_id
-    || request.factory_id === context.factoryId
-  if (!allowed || !factoryAllowed) throw new Error('Недостаточно прав')
+  if (!context.permissions.department_requests?.canManage) throw new Error('Недостаточно прав')
 }
 
 export async function POST(request: NextRequest) {

@@ -1,8 +1,4 @@
-import {
-  DIRECTOR_ACCESS_ROLES,
-  type PermissionOperation,
-  type ResourceKey,
-} from '@/lib/permissions/resources'
+import { type PermissionOperation, type ResourceKey } from '@/lib/permissions/resources'
 import type { FactoryAccessOperationScopes } from '@/lib/permissions/resolve'
 
 export type FactoryScopedPermissionContext = {
@@ -29,7 +25,6 @@ export function canAccessAllFactories(
   operation: PermissionOperation,
 ) {
   return canAccessAllFactoriesFromMatrixOrAdmin(permission, resourceKey, operation)
-    || (DIRECTOR_ACCESS_ROLES as readonly string[]).includes(permission.role)
 }
 
 export function canAccessFactory(

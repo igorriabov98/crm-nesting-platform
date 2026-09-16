@@ -7,7 +7,7 @@ import {
   filterReservationsByStockScope,
 } from '@/lib/inventory/reservation-stock-scope'
 import { requirePermission } from '@/lib/permissions/server'
-import { DIRECTOR_ACCESS_ROLES, type PermissionOperation } from '@/lib/permissions/resources'
+import { hasPermission, type PermissionMap, type PermissionOperation } from '@/lib/permissions/resources'
 import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
@@ -33,7 +33,6 @@ import type {
   RequestRoundTube,
   RequestSheetMetal,
   TechnologistRequest,
-  UserRole,
   MaterialVariant,
 } from '@/lib/types'
 import type { SupplyPositionRevisionSummary } from '@/lib/supply-orders/position-revisions'
@@ -99,7 +98,8 @@ export type SupplyRequestSectionSummary = {
 }
 
 export type SupplyRequestPayload = {
-  current_role: UserRole
+  can_reserve: boolean
+  can_manage_detailing: boolean
   request: RequestWithRelations
   positionRevision?: SupplyPositionRevisionSummary | null
   factories: Array<{
@@ -179,8 +179,8 @@ const REQUEST_TABLES: RequestItemTable[] = [
 ]
 
 async function requireAccess(operation: PermissionOperation = 'view') {
-  const { supabase, userId, role } = await requirePermission('supply', operation)
-  return { db: supabase as unknown as LooseDb, userId, role }
+  const permission = await requirePermission('supply', operation)
+  return { ...permission, db: permission.supabase as unknown as LooseDb }
 }
 
 function reservationKey(table: string, id: string) {
@@ -507,12 +507,14 @@ async function getRequestMeta(db: LooseDb, requestId: string) {
   } satisfies RequestWithRelations
 }
 
-function assertSupplyRequestVisibleForRole(request: TechnologistRequest, role: UserRole) {
+function assertSupplyRequestVisibleForPermissions(request: TechnologistRequest, permissions: PermissionMap) {
   const visibleStatuses = ['pending_stock_check', 'stock_checked', 'submitted_to_supply', 'completed']
   if (!visibleStatuses.includes(request.status)) {
     throw new Error('Заявка ещё не передана на проверку склада')
   }
-  if ((role === 'supply_manager' || role === 'procurement_head') && request.status !== 'submitted_to_supply' && request.status !== 'completed') {
+  const isSupplyOnly = hasPermission(permissions, 'supply_material_requests', 'view')
+    && !hasPermission(permissions, 'technologist_requests', 'manage')
+  if (isSupplyOnly && request.status !== 'submitted_to_supply' && request.status !== 'completed') {
     throw new Error('Заявка ещё не передана в снабжение')
   }
 }
@@ -521,13 +523,12 @@ async function assertActiveReservationActor(
   db: LooseDb,
   request: RequestWithRelations,
   userId: string,
-  role: UserRole,
+  isAdminPosition: boolean,
 ) {
   if (!isActiveWarehouseReservationStatus(request.status)) {
     throw new Error('Эта заявка доступна только для ознакомления')
   }
-  if (request.created_by === userId || (DIRECTOR_ACCESS_ROLES as readonly UserRole[]).includes(role)) return
-  if (role !== 'technologist') throw new Error('Бронировать склад может автор, назначенный технолог или руководитель')
+  if (request.created_by === userId || isAdminPosition) return
 
   const { data, error } = await db
     .from('tasks')
@@ -723,13 +724,13 @@ function revalidateSupplyRequest(requestId: string, machineId?: string) {
 
 async function loadRequestForStockSource(
   db: LooseDb,
-  role: UserRole,
+  permissions: PermissionMap,
   requestId: string,
   stockSourceOverride?: ReservationStockSource,
 ): Promise<{ data: SupplyRequestPayload | null; error: string | null }> {
   try {
     const request = await getRequestMeta(db, requestId)
-    assertSupplyRequestVisibleForRole(request, role)
+    assertSupplyRequestVisibleForPermissions(request, permissions)
     const [sheetMetal, roundTube, circles, pipes, knives, components, paint, meshItems, chainCords, revision] = await Promise.all([
       loadRows<RequestSheetMetal>(db, 'request_sheet_metal', requestId),
       // @deprecated — round_tube excluded from new UI
@@ -863,7 +864,8 @@ async function loadRequestForStockSource(
 
     return {
       data: {
-        current_role: role,
+        can_reserve: hasPermission(permissions, 'supply', 'manage'),
+        can_manage_detailing: hasPermission(permissions, 'inventory_detailing', 'manage'),
         request,
         positionRevision: ((revision.data || []) as SupplyPositionRevisionSummary[])[0] || null,
         factories,
@@ -890,12 +892,12 @@ async function loadRequestForStockSource(
 
 export async function getRequestForSupply(requestId: string): Promise<{ data: SupplyRequestPayload | null; error: string | null }> {
   try {
-    const { db, role, userId } = await requireAccess()
+    const { db, permissions, userId, permissionDetails } = await requireAccess()
     const request = await getRequestMeta(db, requestId)
     if (!['submitted_to_supply', 'completed'].includes(request.status)) {
-      await assertActiveReservationActor(db, request, userId, role)
+      await assertActiveReservationActor(db, request, userId, permissionDetails.isAdminPosition)
     }
-    return await loadRequestForStockSource(db, role, requestId)
+    return await loadRequestForStockSource(db, permissions, requestId)
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить заявку' }
   }
@@ -903,10 +905,11 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
 
 export async function getRequestForBusinessScrap(requestId: string): Promise<{ data: SupplyRequestPayload | null; error: string | null }> {
   try {
-    const { supabase, userId, role } = await requirePermission('business_scrap_reservations', 'view')
+    const permission = await requirePermission('business_scrap_reservations', 'view')
+    const { supabase, userId, permissions, permissionDetails } = permission
     const db = supabase as unknown as LooseDb
     const request = await getRequestMeta(db, requestId)
-    if (!(DIRECTOR_ACCESS_ROLES as readonly UserRole[]).includes(role)) {
+    if (!permissionDetails.isAdminPosition) {
       const { data: taskData, error: taskError } = await db
         .from('tasks')
         .select('id')
@@ -918,7 +921,7 @@ export async function getRequestForBusinessScrap(requestId: string): Promise<{ d
       if (taskError) throw new Error(taskError.message || 'Не удалось проверить назначение машины')
       if (!Array.isArray(taskData) || taskData.length === 0) throw new Error('Машина не назначена текущему технологу')
     }
-    return await loadRequestForStockSource(db, role, requestId, 'business_scrap')
+    return await loadRequestForStockSource(db, permissions, requestId, 'business_scrap')
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить деловой остаток' }
   }
@@ -936,11 +939,11 @@ export async function reserveItemFromStock(data: {
   quantity: number
 }) {
   try {
-    const { db, userId, role } = await requireAccess('manage')
+    const { db, userId, permissionDetails } = await requireAccess('manage')
     if (!REQUEST_TABLES.includes(data.request_item_table)) throw new Error('ÐÐµÐºÐ¾Ñ€Ñ€ÐµÐºÑ‚Ð½Ð°Ñ Ñ‚Ð°Ð±Ð»Ð¸Ñ†Ð° Ð¿Ð¾Ð·Ð¸Ñ†Ð¸Ð¸')
     const requestId = await getRequestIdForItem(db, data.request_item_table, data.request_item_id)
     const request = await getRequestMeta(db, requestId)
-    await assertActiveReservationActor(db, request, userId, role)
+    await assertActiveReservationActor(db, request, userId, permissionDetails.isAdminPosition)
     const reservationSource = assertReservationAllowedForRequest(request)
     const { data: rowData, error } = await db.from(data.request_item_table).select('*').eq('id', data.request_item_id).single()
     if (error || !rowData) throw new Error(error?.message || 'ÐŸÐ¾Ð·Ð¸Ñ†Ð¸Ñ Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½Ð°')
@@ -1030,11 +1033,11 @@ export async function reserveItemFromStock(data: {
 
 export async function unreserveItem(data: { request_item_table: RequestItemTable; request_item_id: string }) {
   try {
-    const { db, userId, role } = await requireAccess('manage')
+    const { db, userId, permissionDetails } = await requireAccess('manage')
     if (!REQUEST_TABLES.includes(data.request_item_table)) throw new Error('ÐÐµÐºÐ¾Ñ€Ñ€ÐµÐºÑ‚Ð½Ð°Ñ Ñ‚Ð°Ð±Ð»Ð¸Ñ†Ð° Ð¿Ð¾Ð·Ð¸Ñ†Ð¸Ð¸')
     const requestId = await getRequestIdForItem(db, data.request_item_table, data.request_item_id)
     const request = await getRequestMeta(db, requestId)
-    await assertActiveReservationActor(db, request, userId, role)
+    await assertActiveReservationActor(db, request, userId, permissionDetails.isAdminPosition)
     const reservationSource = assertReservationAllowedForRequest(request)
     const { data: rowData, error: rowError } = await db.from(data.request_item_table).select('*').eq('id', data.request_item_id).single()
     if (rowError || !rowData) throw new Error(rowError?.message || 'Позиция заявки не найдена')
@@ -1060,10 +1063,10 @@ export async function unreserveItem(data: { request_item_table: RequestItemTable
 
 export async function reserveAllAvailable(requestId: string, factoryId: string) {
   try {
-    const { db, userId, role } = await requireAccess('manage')
+    const { db, userId, permissionDetails } = await requireAccess('manage')
     const { data, error } = await getRequestForSupply(requestId)
     if (error || !data) throw new Error(error || 'Ð—Ð°ÑÐ²ÐºÐ° Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½Ð°')
-    await assertActiveReservationActor(db, data.request, userId, role)
+    await assertActiveReservationActor(db, data.request, userId, permissionDetails.isAdminPosition)
     if (!data.factories.some((factory) => factory.id === factoryId)) throw new Error('Выбранный завод не найден')
 
     let reservedCount = 0
@@ -1139,8 +1142,10 @@ export async function reserveAllAvailable(requestId: string, factoryId: string) 
 
 export async function getSupplyRequestCards() {
   try {
-    const { db, role } = await requireAccess()
-    const statuses = role === 'supply_manager' || role === 'procurement_head'
+    const { db, permissions } = await requireAccess()
+    const isSupplyOnly = hasPermission(permissions, 'supply_material_requests', 'view')
+      && !hasPermission(permissions, 'technologist_requests', 'manage')
+    const statuses = isSupplyOnly
       ? ['submitted_to_supply']
       : ['pending_stock_check', 'stock_checked', 'submitted_to_supply']
     const { data: requestsData, error } = await db

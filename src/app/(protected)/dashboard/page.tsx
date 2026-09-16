@@ -4,7 +4,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { requirePermission } from '@/lib/permissions/server'
 import { hasPermission } from '@/lib/permissions/resources'
 import { ROUTES } from '@/lib/constants/routes'
-import { DIRECTOR_ROLES, ROLES } from '@/lib/constants/roles'
+import { ROLES } from '@/lib/constants/roles'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { ClipboardList, Factory as FactoryIcon, Package, Receipt, Bell, Calendar, Hammer, Truck } from 'lucide-react'
 import { NOTIFICATION_TYPES, DEFAULT_NOTIFICATION_ICON, NotificationType } from '@/lib/constants/notifications'
@@ -167,9 +167,8 @@ function formatMonthLabel(monthValue: string) {
   return start.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric', timeZone: 'UTC' })
 }
 
-function applyMonthlyFactoryFilter<T>(query: T, factoryFilter: string | null, role: string): T {
+function applyMonthlyFactoryFilter<T>(query: T, factoryFilter: string | null): T {
   const scopedQuery = query as FactoryFilterableQuery<T>
-  if (role === 'production_manager') return query
   if (factoryFilter === 'no_factory') return scopedQuery.is('factory_id', null)
   if (factoryFilter && factoryFilter !== 'all') return scopedQuery.eq('factory_id', factoryFilter)
   return query
@@ -203,7 +202,7 @@ function TonnageDetails({ items }: { items: MonthlyTonnageDetail[] }) {
   )
 }
 
-async function getMonthlyDirectorTonnage(factoryFilter: string | null, role: string, monthValue: string): Promise<MonthlyTonnage> {
+async function getMonthlyDirectorTonnage(factoryFilter: string | null, monthValue: string): Promise<MonthlyTonnage> {
   const supabase = await createServerSupabaseClient()
   const { start: monthStart, end: monthEnd } = monthBounds(monthValue)
   const query = applyMonthlyFactoryFilter(
@@ -215,7 +214,6 @@ async function getMonthlyDirectorTonnage(factoryFilter: string | null, role: str
       `)
       .eq('is_archived', false),
     factoryFilter,
-    role
   )
 
   const { data, error } = await query
@@ -314,7 +312,6 @@ async function getMonthlyDirectorTonnage(factoryFilter: string | null, role: str
 
 async function getDashboardData(
   factoryFilter: string | null,
-  role: string,
   userId: string,
   showInvoices: boolean,
   invoiceCompanyScope: 'own' | 'all',
@@ -325,10 +322,7 @@ async function getDashboardData(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const applyFactoryFilter = (query: any, isMachineTable = false) => {
     const colBase = isMachineTable ? '' : 'machines.'
-    if (role === 'production_manager') {
-      // RLS limits production managers to their factory plus unassigned machines.
-      return query
-    } else if (factoryFilter === 'no_factory') {
+    if (factoryFilter === 'no_factory') {
       return query.is(`${colBase}factory_id`, null)
     } else if (factoryFilter && factoryFilter !== 'all') {
       return query.eq(`${colBase}factory_id`, factoryFilter)
@@ -459,11 +453,11 @@ export default async function DashboardPage({
   }
   const factoryFilter = resolvedSearchParams?.factory || 'all'
   const monthFilter = normalizeMonthValue(resolvedSearchParams?.month)
-  const isDirector = DIRECTOR_ROLES.includes(currentUser.role)
+  const canViewProductionReports = hasPermission(permissions, 'production_reports', 'view')
 
   const [stats, monthlyTonnage] = await Promise.all([
-    getDashboardData(factoryFilter, currentUser.role, currentUser.id, showInvoices, invoiceCompanyScope),
-    isDirector ? getMonthlyDirectorTonnage(factoryFilter, currentUser.role, monthFilter) : Promise.resolve(null),
+    getDashboardData(factoryFilter, currentUser.id, showInvoices, invoiceCompanyScope),
+    canViewProductionReports ? getMonthlyDirectorTonnage(factoryFilter, monthFilter) : Promise.resolve(null),
   ])
 
   return (

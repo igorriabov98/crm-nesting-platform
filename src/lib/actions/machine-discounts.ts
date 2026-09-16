@@ -43,11 +43,9 @@ async function requireMachinePriceManagement(machineId: string) {
   return context
 }
 
-async function requireDiscountDecisionAccess() {
+async function requireDiscountDecisionAccess(clientId: string) {
   const context = await getCommercialPermissionContext()
-  if (context.role !== 'financial_director' && !context.permissionDetails.isAdminPosition) {
-    throw new Error('Решение по скидке доступно финансовому директору или администратору CRM')
-  }
+  await requireOrderPriceManagement(clientId, context)
   return context
 }
 
@@ -62,7 +60,7 @@ export async function submitMachineDiscountRequest(input: unknown) {
   try {
     const parsed = submitSchema.parse(input)
     const context = await requireMachinePriceManagement(parsed.machineId)
-    const { data, error } = await adminDb().rpc('fn_submit_machine_discount_request', {
+    const { data, error } = await (context.supabase as unknown as LooseDb).rpc('fn_submit_machine_discount_request', {
       p_machine_id: parsed.machineId,
       p_discount_percent: parsed.discountPercent,
       p_reason: parsed.reason,
@@ -101,7 +99,7 @@ export type MachineDiscountApprovalPayload = {
 export async function getMachineDiscountApproval(requestId: string) {
   try {
     const parsed = requestSchema.parse(requestId)
-    await requireDiscountDecisionAccess()
+    const context = await getCommercialPermissionContext()
     const { data, error } = await adminDb().from('machine_discount_requests').select(`
       id, machine_id, revision_number, status, discount_percent, reason,
       items_total_before_discount, discount_amount, discounted_items_total,
@@ -117,6 +115,7 @@ export async function getMachineDiscountApproval(requestId: string) {
     }
     const machine = Array.isArray(raw.machine) ? raw.machine[0] : raw.machine
     const client = Array.isArray(machine.client) ? machine.client[0] : machine.client
+    await requireOrderPriceManagement(client.id, context)
     const submitter = Array.isArray(raw.submitted_by_user) ? raw.submitted_by_user[0] : raw.submitted_by_user
     return {
       data: { request: {
@@ -142,10 +141,10 @@ export async function getMachineDiscountApproval(requestId: string) {
 export async function approveMachineDiscountRequest(requestId: string) {
   try {
     const parsed = requestSchema.parse(requestId)
-    const context = await requireDiscountDecisionAccess()
     const details = await getMachineDiscountApproval(parsed)
     if (!details.data) throw new Error(details.error || 'Заявка на скидку не найдена')
-    const { data, error } = await adminDb().rpc('fn_approve_machine_discount_request', {
+    const context = await requireDiscountDecisionAccess(details.data.request.client.id)
+    const { data, error } = await (context.supabase as unknown as LooseDb).rpc('fn_approve_machine_discount_request', {
       p_request_id: parsed,
       p_actor: context.userId,
     })
@@ -164,10 +163,10 @@ export async function approveMachineDiscountRequest(requestId: string) {
 export async function rejectMachineDiscountRequest(input: unknown) {
   try {
     const parsed = rejectSchema.parse(input)
-    const context = await requireDiscountDecisionAccess()
     const details = await getMachineDiscountApproval(parsed.requestId)
     if (!details.data) throw new Error(details.error || 'Заявка на скидку не найдена')
-    const { error } = await adminDb().rpc('fn_reject_machine_discount_request', {
+    const context = await requireDiscountDecisionAccess(details.data.request.client.id)
+    const { error } = await (context.supabase as unknown as LooseDb).rpc('fn_reject_machine_discount_request', {
       p_request_id: parsed.requestId,
       p_actor: context.userId,
       p_comment: parsed.comment,

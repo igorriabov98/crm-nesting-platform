@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
-import { canManageDepartmentRequestTarget, type DepartmentRequestTarget } from '@/lib/department-requests'
+import type { DepartmentRequestTarget } from '@/lib/department-requests'
+import { hasPermission } from '@/lib/permissions/resources'
 import { resolveFileResponse } from '@/lib/file-archive/resolver'
 import { requireClientCommercialDocumentVisibility } from '@/lib/permissions/commercial-visibility'
 
@@ -46,20 +47,8 @@ export async function GET(
 
     const attachment = data as unknown as AttachmentRow
     const request = attachment.request
-    const departmentAllowed = request && canManageDepartmentRequestTarget({
-      target: request.target_department,
-      role: context.role,
-      memberships: context.permissionDetails.memberships.map((membership) => ({
-        departmentName: membership.departmentName,
-        positionName: membership.positionName,
-      })),
-    })
-    const factoryAllowed = !request
-      || request.target_department !== 'production'
-      || ['financial_director', 'commercial_director', 'planning_director'].includes(context.role)
-      || !request.factory_id
-      || request.factory_id === context.factoryId
-    if (!request || (request.created_by !== context.userId && (!departmentAllowed || !factoryAllowed))) {
+    const canManage = hasPermission(context.permissions, 'department_requests', 'manage')
+    if (!request || (request.created_by !== context.userId && !canManage)) {
       return NextResponse.json({ error: 'Недостаточно прав' }, { status: 403 })
     }
     const machine = Array.isArray(request.machine) ? request.machine[0] : request.machine

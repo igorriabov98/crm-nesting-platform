@@ -1,18 +1,16 @@
 import 'server-only'
 
 import { NextResponse } from 'next/server'
-import { DIRECTOR_ROLES } from '@/lib/constants/roles'
 import { getProject } from '@/lib/nesting/api'
 import { requirePermission } from '@/lib/permissions/server'
 import type { NestingProxyContext } from '@/lib/nesting/proxy-auth'
 import type { PermissionOperation } from '@/lib/permissions/resources'
-import type { UserRole } from '@/lib/types'
 
 type AccessContext = {
   supabase: unknown
   userId: string
-  role?: UserRole | null
-  isDirector?: boolean
+  permissionDetails?: { isAdminPosition: boolean }
+  isAdminPosition?: boolean
 }
 
 type LooseResult = {
@@ -66,7 +64,7 @@ async function hasServiceProjectOwner(context: AccessContext, projectId: string)
 }
 
 export async function canAccessNestingProject(context: AccessContext, projectId: string) {
-  if (context.isDirector || (context.role && DIRECTOR_ROLES.includes(context.role))) return true
+  if (context.isAdminPosition || context.permissionDetails?.isAdminPosition) return true
   if (await hasCrmProjectLink(context, projectId)) return true
   return hasServiceProjectOwner(context, projectId)
 }

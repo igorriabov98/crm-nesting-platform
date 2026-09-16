@@ -3,7 +3,6 @@ import 'server-only'
 import { cache } from 'react'
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { INVOICE_VISIBLE_ROLES } from '@/lib/constants/roles'
 import { ROUTES } from '@/lib/constants/routes'
 import type { CurrentUser, Factory, User, UserDepartmentMembershipSummary } from '@/lib/types'
 
@@ -35,7 +34,6 @@ export type CurrentUserContext = {
   role: CurrentUser['role']
   factoryId: string | null
   factory: CurrentUser['factory'] | null
-  canViewInvoices: boolean
 }
 
 export const getCurrentUserContext = cache(async (): Promise<CurrentUserContext> => {
@@ -92,7 +90,6 @@ export const getCurrentUserContext = cache(async (): Promise<CurrentUserContext>
     role: currentUser.role,
     factoryId: currentUser.factory_id,
     factory: currentUser.factory ?? null,
-    canViewInvoices: INVOICE_VISIBLE_ROLES.includes(currentUser.role),
   }
 })
 

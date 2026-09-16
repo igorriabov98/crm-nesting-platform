@@ -137,6 +137,16 @@ if (process.env.INVENTORY_TRANSFER_TEST_DATABASE_URL) {
     INSERT INTO public.departments(id, name, head_user_id, factory_id, is_active, sort_order, created_by)
     SELECT '${fixture.department}', 'Снабжение', '${fixture.supply}', id, true, -2000, '${fixture.actor}'
     FROM public.factories WHERE name = 'Берегово' LIMIT 1;
+    INSERT INTO public.department_members(user_id, department_id, is_department_head, created_by)
+    VALUES
+      ('${fixture.supply}', '${fixture.department}', true, '${fixture.actor}'),
+      ('${fixture.actor}', '${fixture.department}', false, '${fixture.actor}');
+    INSERT INTO public.department_access_permissions(
+      department_id, subject_scope, resource_key, can_view, can_manage, updated_by
+    ) VALUES
+      ('${fixture.department}', 'head', 'supply_transport', true, true, '${fixture.actor}'),
+      ('${fixture.department}', 'member', 'inventory', true, true, '${fixture.actor}'),
+      ('${fixture.department}', 'member', 'inventory_detailing_receiving', true, true, '${fixture.actor}');
     INSERT INTO public.materials(id, name, category, created_by)
     VALUES ('${fixture.material}', 'Concurrency transfer material', 'components', '${fixture.actor}');
     INSERT INTO public.machines(id, factory_id, name, created_by)

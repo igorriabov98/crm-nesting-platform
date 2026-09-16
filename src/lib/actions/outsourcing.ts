@@ -8,17 +8,17 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { ACTIVE_OUTSOURCING_NEED_STATUSES, isMachineWorkVisible } from '@/lib/machine-work-visibility'
 import { requirePermission } from '@/lib/permissions/server'
 import { hasPermission } from '@/lib/permissions/resources'
+import { assertFactoryAccess } from '@/lib/permissions/factory-scope'
 import { ROUTES } from '@/lib/constants/routes'
 import { isZincCoating } from '@/lib/constants/coatings'
 import { STAGE_ORDER } from '@/lib/constants/stages'
-import { isDirector } from '@/lib/utils/permissions'
 import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import { formatCompanyLocation } from '@/lib/transport/company-location'
 import { createSystemMachineChatMessage } from '@/lib/actions/machine-activity'
 import { ensureVrbApprovalTasksForMachine } from '@/lib/actions/vrb-outsourcing'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
-import type { CoatingType, ProductionMonthPlanStatus, StageType, UserRole } from '@/lib/types'
+import type { CoatingType, ProductionMonthPlanStatus, StageType } from '@/lib/types'
 
 type DbResult = { data: unknown; error: { message?: string; code?: string } | null }
 type LooseQuery = PromiseLike<DbResult> & {
@@ -421,20 +421,10 @@ function relationOne<T>(value: T | T[] | null | undefined): T | null {
   return value || null
 }
 
-function isProductionManagerScoped(role: UserRole, userFactoryId: string | null, factoryId: string | null) {
-  return role !== 'production_manager' || Boolean(factoryId && userFactoryId === factoryId)
-}
-
 function canManageSource(
-  role: UserRole,
-  userFactoryId: string | null,
-  factoryId: string | null,
-  isAdminPosition = false,
+  permissions: Awaited<ReturnType<typeof requirePermission>>['permissions'],
 ) {
-  return isAdminPosition
-    || isDirector(role)
-    || role === 'sales_manager'
-    || Boolean(factoryId && userFactoryId === factoryId)
+  return hasPermission(permissions, 'production', 'manage')
 }
 
 async function getMachineOrThrow(db: LooseDb, machineId: string) {
@@ -471,12 +461,9 @@ async function requireMachineOutsourcingAccess(machineId: string, manage = false
   const machine = await getMachineOrThrow(db, machineId)
   const planStatus = await getProductionPlanStatus(db, machine)
   const canManage = hasPermission(context.permissions, 'production', 'manage')
-    && canManageSource(context.role, context.factoryId, machine.factory_id, context.permissionDetails.isAdminPosition)
+    && canManageSource(context.permissions)
 
   if (manage && !canManage) throw new Error('Недостаточно прав для управления аутсорсингом')
-  if (!canManage && context.role === 'production_manager' && !isProductionManagerScoped(context.role, context.factoryId, machine.factory_id)) {
-    throw new Error('Доступ запрещён')
-  }
 
   return { db, context, machine, planStatus, canManage }
 }
@@ -494,9 +481,7 @@ async function requireExecutorFactoryAccess(operationId: string) {
   const operation = data as { id: string; executor_type: ExecutorType; executor_factory_id: string | null; machine_id: string; archived_at: string | null }
   if (operation.archived_at) throw new Error('Операция архивирована')
   if (operation.executor_type !== 'factory' || !operation.executor_factory_id) throw new Error('Это не внутренняя работа завода')
-  if (!canManageSource(context.role, context.factoryId, operation.executor_factory_id, context.permissionDetails.isAdminPosition)) {
-    throw new Error('Недостаточно прав для управления входящей работой')
-  }
+  assertFactoryAccess(context, 'production_fact', 'manage', operation.executor_factory_id)
 
   return { db, context, operation }
 }
@@ -1287,7 +1272,7 @@ export async function getMachineOutsourcingData(machineId: string): Promise<{ da
         machine,
         planStatus,
         canManage,
-        canManageDatesDirectly: planStatus !== 'confirmed' || isDirector(context.role) || context.role === 'sales_manager',
+        canManageDatesDirectly: planStatus !== 'confirmed' || hasPermission(context.permissions, 'sales_plan', 'manage'),
         workTypes: workTypes.filter((workType) => workType.code !== 'vrb_mesh'),
         suppliers: suppliers.filter((supplier) => supplier.can_outsource || supplier.can_transport),
         transportSuppliers: suppliers.filter((supplier) => supplier.can_transport),
@@ -1325,7 +1310,7 @@ export async function getMachineOutsourcingCreateData(
         machine,
         planStatus,
         canManage,
-        canManageDatesDirectly: planStatus !== 'confirmed' || isDirector(context.role) || context.role === 'sales_manager',
+        canManageDatesDirectly: planStatus !== 'confirmed' || hasPermission(context.permissions, 'sales_plan', 'manage'),
         workTypes,
         suppliers: suppliers.filter((supplier) => supplier.can_outsource || supplier.can_transport),
         factories,
@@ -1378,7 +1363,7 @@ export async function saveOutsourcingOperation(input: z.infer<typeof operationSc
       if (!current) throw new Error('Операция аутсорсинга не найдена')
     }
 
-    if (current && context.role === 'production_manager' && planStatus === 'confirmed') {
+    if (current && !hasPermission(context.permissions, 'sales_plan', 'manage') && planStatus === 'confirmed') {
       if (
         (dateOnly(current.planned_send_date) !== dateOnly(parsed.plannedSendDate) ||
           dateOnly(current.planned_return_date) !== dateOnly(parsed.plannedReturnDate))
@@ -1518,9 +1503,6 @@ export async function upsertZincOutsourcingDefault(input: z.infer<typeof zincDef
   try {
     const parsed = zincDefaultSchema.parse(input)
     const context = await requirePermission('production', 'manage')
-    if (!canManageSource(context.role, context.factoryId, parsed.factoryId, context.permissionDetails.isAdminPosition)) {
-      throw new Error('Недостаточно прав для настройки цинка')
-    }
     if (parsed.executorType === 'supplier' && !parsed.supplierId) throw new Error('Выберите поставщика для цинка')
     if (parsed.executorType === 'factory' && !parsed.executorFactoryId) throw new Error('Выберите завод-исполнитель для цинка')
 
@@ -1641,8 +1623,7 @@ export async function syncZincOutsourcingForMachine(machineId: string) {
 
 export async function getProductionOutsourcingSummary(factoryId: string): Promise<{ data: ProductionOutsourcingSummary; error: string | null }> {
   try {
-    const context = await requirePermission('production', 'view')
-    if (!isProductionManagerScoped(context.role, context.factoryId, factoryId)) throw new Error('Доступ запрещён')
+    await requirePermission('production', 'view')
     const db = dbFrom(createAdminClient())
     const [{ data: outgoingMachinesData, error: outgoingMachinesError }, { data: incomingData, error: incomingError }] = await Promise.all([
       db.from('machines').select('id, name, factory_id').eq('factory_id', factoryId).eq('is_archived', false),

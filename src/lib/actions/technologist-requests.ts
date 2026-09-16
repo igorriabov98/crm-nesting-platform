@@ -2,14 +2,13 @@
 
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { DIRECTOR_ROLES } from '@/lib/constants/roles'
 import { ROUTES } from '@/lib/constants/routes'
 import { parseKnifeBevelCount } from '@/lib/materials/knife-bevel'
 import { roundPipeOuterDiameterMm, validatePipeProfileGeometry } from '@/lib/materials/pipe-profile'
 import { recordMaterialUsage } from '@/lib/actions/materials'
 import { repairImportedSheetMetalMaterials } from '@/lib/actions/request-sheet-metal-materials'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
-import { requirePermission } from '@/lib/permissions/server'
+import { requireAnyPermission, requirePermission } from '@/lib/permissions/server'
 import { assertFactoryAccess } from '@/lib/permissions/factory-scope'
 import { assertMachineCanUseTechnologistRequest } from '@/lib/actions/machine-progress'
 import { unreserveInventoryReservation } from '@/lib/inventory/secure-rpc'
@@ -29,7 +28,7 @@ export type {
   WithMaterialName,
 } from '@/lib/technologist-requests/request-payload'
 export type { RequestLifecycleStatus } from '@/lib/technologist-request-lifecycle'
-import type { PermissionOperation } from '@/lib/permissions/resources'
+import { hasPermission, type PermissionMap, type PermissionOperation } from '@/lib/permissions/resources'
 import {
   availabilitySchema,
   chainCordSchema,
@@ -168,14 +167,6 @@ async function assertMachineNotArchived(db: LooseDb, machineId: string) {
   return data as { factory_id: string | null }
 }
 
-function isDirector(role: UserRole) {
-  return DIRECTOR_ROLES.includes(role)
-}
-
-function assertRole(role: UserRole, allowed: UserRole[], message = 'Недостаточно прав') {
-  if (!allowed.includes(role)) throw new Error(message)
-}
-
 function requestPath(machineId: string) {
   return `${ROUTES.SALES_PLAN}/${machineId}/request`
 }
@@ -218,12 +209,14 @@ function pickActiveRequest(requests: TechnologistRequest[]) {
     .at(0) || null
 }
 
-function isRequestVisibleForRequestRole(request: TechnologistRequest, role: UserRole) {
-  if (role !== 'supply_manager') return true
+function isRequestVisibleForPermissions(request: TechnologistRequest, permissions: PermissionMap) {
+  const isSupplyOnly = hasPermission(permissions, 'supply_material_requests', 'view')
+    && !hasPermission(permissions, 'technologist_requests', 'manage')
+  if (!isSupplyOnly) return true
   return request.status === 'submitted_to_supply' || request.status === 'completed'
 }
 
-async function loadMachineRequests(db: LooseDb, machineId: string, role: UserRole) {
+async function loadMachineRequests(db: LooseDb, machineId: string, permissions: PermissionMap) {
   const { data, error } = await db
     .from('technologist_requests')
     .select('*')
@@ -233,7 +226,7 @@ async function loadMachineRequests(db: LooseDb, machineId: string, role: UserRol
     .order('updated_at', { ascending: false })
 
   if (error) throw new Error(error.message || 'Не удалось загрузить заявки')
-  return ((data || []) as TechnologistRequest[]).filter((request) => isRequestVisibleForRequestRole(request, role))
+  return ((data || []) as TechnologistRequest[]).filter((request) => isRequestVisibleForPermissions(request, permissions))
 }
 
 async function loadRequestOrderStatuses(db: LooseDb, requestIds: string[]) {
@@ -433,8 +426,8 @@ async function notifyRole(
 
 export async function getRequest(machineId: string) {
   try {
-    const { db, role } = await requireRequestPermission('view')
-    const requests = await loadMachineRequests(db, machineId, role)
+    const { db, permissions } = await requireRequestPermission('view')
+    const requests = await loadMachineRequests(db, machineId, permissions)
     const request = pickActiveRequest(requests)
     if (!request) return { data: null, error: null }
 
@@ -446,8 +439,8 @@ export async function getRequest(machineId: string) {
 
 export async function getRequestsForMachine(machineId: string) {
   try {
-    const { db, role } = await requireRequestPermission('view')
-    const requests = await loadMachineRequests(db, machineId, role)
+    const { db, permissions } = await requireRequestPermission('view')
+    const requests = await loadMachineRequests(db, machineId, permissions)
     const statusesByRequest = await loadRequestOrderStatuses(db, requests.map((request) => request.id))
     const data: TechnologistRequestListItem[] = requests.map((request) => {
       const lifecycleStatus = deriveRequestLifecycleStatus(request, statusesByRequest.get(request.id) || [])
@@ -471,7 +464,7 @@ export async function getRequestsForMachine(machineId: string) {
 
 export async function getRequestById(machineId: string, requestId: string) {
   try {
-    const { db, role } = await requireRequestPermission('view')
+    const { db, permissions } = await requireRequestPermission('view')
 
     const { data: requestData, error } = await db
       .from('technologist_requests')
@@ -485,7 +478,7 @@ export async function getRequestById(machineId: string, requestId: string) {
     const request = requestData as TechnologistRequest
     if (request.is_recalculation_staging) return { data: null, error: 'Заявка ещё не утверждена' }
     if (request.machine_id !== machineId) return { data: null, error: 'Заявка не относится к этой машине' }
-    if (!isRequestVisibleForRequestRole(request, role) && !isDirector(role)) {
+    if (!isRequestVisibleForPermissions(request, permissions)) {
       return { data: null, error: 'Заявка ещё не отправлена в снабжение' }
     }
 
@@ -1203,8 +1196,11 @@ export async function deleteChainCord(id: string): Promise<ActionResult> {
 
 export async function updateKnifeStock(id: string, stock_remainder_mm: number): Promise<ActionResult> {
   try {
-    const { db, role } = await requireRequestPermission('manage')
-    assertRole(role, ['procurement_head', ...DIRECTOR_ROLES])
+    const permission = await requireAnyPermission([
+      { resourceKey: 'technologist_requests', operation: 'manage' },
+      { resourceKey: 'supply_material_requests', operation: 'manage' },
+    ])
+    const db = permission.supabase as unknown as LooseDb
     const meta = await getRequestIdAndMachineByItem(db, 'request_knives', id)
     assertTechnologistRequestEditable(meta.status)
     const { error } = await db.from('request_knives').update({ stock_remainder_mm }).eq('id', id)
@@ -1218,8 +1214,11 @@ export async function updateKnifeStock(id: string, stock_remainder_mm: number): 
 
 export async function updateComponentStock(id: string, data: { stock_remainder: number; availability: AvailabilityInput }): Promise<ActionResult> {
   try {
-    const { db, role } = await requireRequestPermission('manage')
-    assertRole(role, ['procurement_head', ...DIRECTOR_ROLES])
+    const permission = await requireAnyPermission([
+      { resourceKey: 'technologist_requests', operation: 'manage' },
+      { resourceKey: 'supply_material_requests', operation: 'manage' },
+    ])
+    const db = permission.supabase as unknown as LooseDb
     const parsed = {
       stock_remainder: Number(data.stock_remainder),
       availability: availabilitySchema.parse(data.availability),
@@ -1237,8 +1236,11 @@ export async function updateComponentStock(id: string, data: { stock_remainder: 
 
 export async function updatePaintStock(id: string, stock_remainder_kg: number): Promise<ActionResult> {
   try {
-    const { db, role } = await requireRequestPermission('manage')
-    assertRole(role, ['painting_head', ...DIRECTOR_ROLES])
+    const permission = await requireAnyPermission([
+      { resourceKey: 'technologist_requests', operation: 'manage' },
+      { resourceKey: 'supply_material_requests', operation: 'manage' },
+    ])
+    const db = permission.supabase as unknown as LooseDb
     const meta = await getRequestIdAndMachineByItem(db, 'request_paint', id)
     assertTechnologistRequestEditable(meta.status)
     const { error } = await db.from('request_paint').update({ stock_remainder_kg }).eq('id', id)

@@ -130,6 +130,6 @@ assert(hasPermission(getFullPermissionMap(), 'production_reports', 'manage'))
 assert.equal(getPermissionRequirementForPath('/reports/production')?.resourceKey, 'production_reports')
 assert.equal(getPermissionRequirementForPath('/reports/production')?.operation, 'view')
 assert.equal(getPermissionRequirementForPath('/reports/production/settings')?.operation, 'manage')
-assert(getSidebarResources('planning_director', getFullPermissionMap(), 'reports').some((resource) => resource.key === 'production_reports'))
+assert(getSidebarResources(getFullPermissionMap(), 'reports').some((resource) => resource.key === 'production_reports'))
 
 console.log('Production analytics contracts: OK')

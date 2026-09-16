@@ -28,7 +28,6 @@ import {
   todayDateOnly,
 } from '@/lib/invoices/payment-schedule'
 import { paymentTermsLabel } from '@/lib/payments/terms'
-import { useRole } from '@/lib/hooks/useRole'
 import type { Invoice, MachineDetails } from '@/lib/types'
 
 interface InvoiceTabProps {
@@ -53,7 +52,6 @@ function invoiceStatusBadge(status: ReturnType<typeof invoiceDisplayStatus>) {
 
 export function InvoiceTab({ machine, canManage }: InvoiceTabProps) {
   const router = useRouter()
-  const { isDirector, isAdminPosition } = useRole()
   const today = todayDateOnly()
   const invoices = useMemo(() => {
     const value = Array.isArray(machine.invoice) ? machine.invoice : machine.invoice ? [machine.invoice] : []
@@ -226,7 +224,7 @@ export function InvoiceTab({ machine, canManage }: InvoiceTabProps) {
               {isDownloading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
               PDF инвойса
             </Button>
-            {canManage && (isDirector || isAdminPosition) && (
+            {canManage && (
               <Button type="button" variant="outline" onClick={() => setCancelOpen(true)} className="min-h-10 border-red-200 bg-white text-red-700 hover:bg-red-50">
                 <RotateCcw className="mr-2 h-4 w-4" aria-hidden="true" />
                 Аннулировать

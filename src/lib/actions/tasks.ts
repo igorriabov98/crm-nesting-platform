@@ -9,7 +9,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { TASKS_LIST_LIMIT } from '@/lib/constants/performance-limits'
 import { ACTIVE_TASK_STATUSES, isMachineWorkVisible } from '@/lib/machine-work-visibility'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
-import type { ProductProject, ProductProjectFile, ProductProjectVersion, Task, TaskDelegation, TaskDelegationStatus, TaskStatus, TaskType, UserRole } from '@/lib/types'
+import type { ProductProject, ProductProjectFile, ProductProjectVersion, Task, TaskDelegation, TaskDelegationStatus, TaskStatus, TaskType } from '@/lib/types'
 
 type DbResult = {
   data: unknown
@@ -119,11 +119,6 @@ export type CuttingRollbackPreview = {
   }
 }
 
-const DIRECTOR_ROLES: UserRole[] = [
-  'financial_director',
-  'commercial_director',
-  'planning_director',
-]
 const CUTTING_ROLLBACK_TASK_TYPE = 'production_cutting_rollback_review' as const
 const PRODUCTION_PLAN_DATE_CHANGE_TASK_TYPE = 'production_plan_date_change_approval' as const
 const MATERIAL_TYPE_SELECTION_TASK_TYPE = 'material_type_selection' as const
@@ -131,8 +126,8 @@ const MACHINE_LAYOUT_TASK_TYPE = 'machine_layout' as const
 const SALES_ORDER_CONFIRMATION_TASK_TYPE = 'sales_order_confirmation' as const
 
 async function getCurrentUser(operation: PermissionOperation = 'view') {
-  const { supabase, userId, user, role, factoryId, permissionDetails } = await requirePermission('tasks', operation)
-  return { supabase, userId, user, role, factoryId, permissionDetails }
+  const { supabase, userId, user, factoryId, permissionDetails } = await requirePermission('tasks', operation)
+  return { supabase, userId, user, factoryId, permissionDetails }
 }
 
 function getAdminTaskDb() {
@@ -154,7 +149,6 @@ function isOpenDelegationStatus(status: TaskDelegationStatus) {
 
 function filterVisibleMachineTasks(
   tasks: TaskWithRelations[],
-  role: UserRole,
   factoryId: string | null,
   customsFactoryScope: 'own' | 'all' = 'own',
 ) {
@@ -165,8 +159,7 @@ function filterVisibleMachineTasks(
     // concurrently-created work can never return to an active queue. Terminal
     // tasks remain visible as history.
     if (!isMachineWorkVisible(task.machine.is_archived, task.status, ACTIVE_TASK_STATUSES)) return false
-    if (task.task_type === 'customs_clearance' && customsFactoryScope === 'all') return true
-    if (role !== 'production_manager') return true
+    if (task.task_type !== 'customs_clearance' || customsFactoryScope === 'all') return true
     return task.machine.factory_id === null || task.machine.factory_id === factoryId
   })
 }
@@ -262,12 +255,11 @@ async function getPendingDelegationForTask(db: LooseSupabaseClient, taskId: stri
 async function enrichTasksWithDelegationState(
   tasks: TaskWithRelations[],
   userId: string,
-  role: UserRole,
   factoryId: string | null,
   customsFactoryScope: 'own' | 'all' = 'own',
 ) {
   tasks = tasks.map((task) => task.approval_machine ? { ...task, machine: task.approval_machine, machine_id: task.approval_machine.id } : task)
-  const visibleTasks = filterVisibleMachineTasks(tasks, role, factoryId, customsFactoryScope)
+  const visibleTasks = filterVisibleMachineTasks(tasks, factoryId, customsFactoryScope)
   if (visibleTasks.length === 0) return visibleTasks
 
   const adminDb = getAdminTaskDb()
@@ -367,7 +359,12 @@ function normalizeCuttingRollbackPreview(value: unknown): CuttingRollbackPreview
   }
 }
 
-async function getCuttingRollbackTaskForUser(db: LooseSupabaseClient, taskId: string, userId: string, role: UserRole, factoryId: string | null) {
+async function getCuttingRollbackTaskForUser(
+  db: LooseSupabaseClient,
+  taskId: string,
+  userId: string,
+  isAdminPosition: boolean,
+) {
   const { data: task, error } = await db
     .from('tasks')
     .select('id, assigned_to, machine_id, task_type, status, machine:machines(id, name, factory_id)')
@@ -387,14 +384,8 @@ async function getCuttingRollbackTaskForUser(db: LooseSupabaseClient, taskId: st
   if (taskRow.task_type !== CUTTING_ROLLBACK_TASK_TYPE) throw new Error('Это не задача отката заготовки')
   if (!taskRow.machine_id) throw new Error('Задача не привязана к машине')
 
-  const canUpdate = taskRow.assigned_to === userId || DIRECTOR_ROLES.includes(role)
+  const canUpdate = taskRow.assigned_to === userId || isAdminPosition
   if (!canUpdate) throw new Error('Недостаточно прав для изменения задачи')
-  if (
-    role === 'production_manager' &&
-    (!taskRow.machine || (taskRow.machine.factory_id !== null && taskRow.machine.factory_id !== factoryId))
-  ) {
-    throw new Error('Задача относится к машине другого завода')
-  }
 
   const pendingDelegation = await getPendingDelegationForTask(getAdminTaskDb(), taskId)
   if (pendingDelegation) {
@@ -568,7 +559,7 @@ async function createPlanningDirectorReasonTasks(
 
 export async function getTasks(filters: TaskFilters = {}) {
   if (filters.machine_id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(filters.machine_id)) return { data: null, error: 'Некорректный заказ' }
-  const { supabase, userId, role, factoryId, permissionDetails } = await getCurrentUser()
+  const { supabase, userId, factoryId, permissionDetails } = await getCurrentUser()
   const db = supabase as unknown as LooseSupabaseClient
 
   let query = db
@@ -599,7 +590,6 @@ export async function getTasks(filters: TaskFilters = {}) {
     data: sortTasksForDeadlineQueue(await enrichTasksWithDelegationState(
       (data || []) as unknown as TaskWithRelations[],
       userId,
-      role,
       factoryId,
       permissionDetails.factoryScopes.customs_clearance?.view,
     )),
@@ -608,7 +598,7 @@ export async function getTasks(filters: TaskFilters = {}) {
 }
 
 export async function getMyTasks() {
-  const { supabase, userId, role, factoryId, permissionDetails } = await getCurrentUser()
+  const { supabase, userId, factoryId, permissionDetails } = await getCurrentUser()
   const db = supabase as unknown as LooseSupabaseClient
 
   const { data, error } = await db
@@ -633,7 +623,6 @@ export async function getMyTasks() {
     data: sortTasksForDeadlineQueue(await enrichTasksWithDelegationState(
       (data || []) as unknown as TaskWithRelations[],
       userId,
-      role,
       factoryId,
       permissionDetails.factoryScopes.customs_clearance?.view,
     )),
@@ -849,7 +838,7 @@ export async function getTaskDelegationOverview(): Promise<{
   error: string | null
 }> {
   try {
-    const { userId, role, factoryId, permissionDetails } = await getCurrentUser()
+    const { userId, factoryId, permissionDetails } = await getCurrentUser()
     const db = getAdminTaskDb()
     const select = `
       *,
@@ -890,7 +879,6 @@ export async function getTaskDelegationOverview(): Promise<{
       if (!item.task) return false
       return filterVisibleMachineTasks(
         [item.task],
-        role,
         factoryId,
         permissionDetails.factoryScopes.customs_clearance?.view,
       ).length > 0
@@ -1096,7 +1084,7 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
   }
 
   try {
-    const { supabase, userId, role, factoryId, permissionDetails } = await getCurrentUser('manage')
+    const { supabase, userId, factoryId, permissionDetails } = await getCurrentUser('manage')
     const db = supabase as unknown as LooseSupabaseClient
 
     const { data: task, error: fetchError } = await db
@@ -1125,7 +1113,7 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
       product_project: { id: string; title: string; status: ProductProject['status']; created_by: string | null } | null
     }
 
-    const canUpdate = taskRow.assigned_to === userId || DIRECTOR_ROLES.includes(role)
+    const canUpdate = taskRow.assigned_to === userId || permissionDetails.isAdminPosition
     if (!canUpdate) throw new Error('Недостаточно прав для изменения задачи')
     if (taskRow.task_type === 'detailing_transfer' && (status === 'completed' || status === 'cancelled')) {
       throw new Error('Задача перемещения деталировки закрывается автоматически после полной приёмки или отмены перевозки')
@@ -1158,8 +1146,8 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
       throw new Error('Задача расстановки закрывается автоматически после загрузки PDF или закрытия связанной заявки')
     }
     if (
-      role === 'production_manager' &&
-      !(taskRow.task_type === 'customs_clearance' && permissionDetails.factoryScopes.customs_clearance?.manage === 'all') &&
+      taskRow.task_type === 'customs_clearance' &&
+      permissionDetails.factoryScopes.customs_clearance?.manage !== 'all' &&
       taskRow.machine_id &&
       (!taskRow.machine || (taskRow.machine.factory_id !== null && taskRow.machine.factory_id !== factoryId))
     ) {
@@ -1290,9 +1278,9 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
 
 export async function getProductionCuttingRollbackPreview(taskId: string) {
   try {
-    const { supabase, userId, role, factoryId } = await getCurrentUser('manage')
+    const { supabase, userId, permissionDetails } = await getCurrentUser('manage')
     const db = supabase as unknown as LooseSupabaseClient
-    const task = await getCuttingRollbackTaskForUser(db, taskId, userId, role, factoryId)
+    const task = await getCuttingRollbackTaskForUser(db, taskId, userId, permissionDetails.isAdminPosition)
 
     const previewRpcDb = getAdminTaskDb()
     const { data, error } = await previewRpcDb.rpc('fn_get_production_cutting_rollback_preview', {
@@ -1312,9 +1300,9 @@ export async function getProductionCuttingRollbackPreview(taskId: string) {
 
 export async function applyProductionCuttingRollbackTask(taskId: string, comment?: string | null) {
   try {
-    const { supabase, userId, role, factoryId } = await getCurrentUser('manage')
+    const { supabase, userId, permissionDetails } = await getCurrentUser('manage')
     const db = supabase as unknown as LooseSupabaseClient
-    const task = await getCuttingRollbackTaskForUser(db, taskId, userId, role, factoryId)
+    const task = await getCuttingRollbackTaskForUser(db, taskId, userId, permissionDetails.isAdminPosition)
 
     const rollbackRpcDb = getAdminTaskDb()
     const { error } = await rollbackRpcDb.rpc('fn_apply_production_cutting_rollback', {
@@ -1337,9 +1325,9 @@ export async function applyProductionCuttingRollbackTask(taskId: string, comment
 
 export async function keepProductionCuttingRollbackTask(taskId: string, comment?: string | null) {
   try {
-    const { supabase, userId, role, factoryId } = await getCurrentUser('manage')
+    const { supabase, userId, permissionDetails } = await getCurrentUser('manage')
     const db = supabase as unknown as LooseSupabaseClient
-    const task = await getCuttingRollbackTaskForUser(db, taskId, userId, role, factoryId)
+    const task = await getCuttingRollbackTaskForUser(db, taskId, userId, permissionDetails.isAdminPosition)
 
     const keepRpcDb = getAdminTaskDb()
     const { error } = await keepRpcDb.rpc('fn_keep_production_cutting_rollback', {
@@ -1367,7 +1355,7 @@ export async function completeTechnologistTaskWithoutRequest(taskId: string, rea
   }
 
   try {
-    const { supabase, userId, role, factoryId } = await getCurrentUser('manage')
+    const { supabase, userId, permissionDetails } = await getCurrentUser('manage')
     const db = supabase as unknown as LooseSupabaseClient
 
     const { data: task, error: fetchError } = await db
@@ -1390,14 +1378,8 @@ export async function completeTechnologistTaskWithoutRequest(taskId: string, rea
     if (!taskRow.machine_id) throw new Error('Задача не привязана к машине')
     if (taskRow.status === 'completed') throw new Error('Задача уже завершена')
 
-    const canUpdate = taskRow.assigned_to === userId || DIRECTOR_ROLES.includes(role)
+    const canUpdate = taskRow.assigned_to === userId || permissionDetails.isAdminPosition
     if (!canUpdate) throw new Error('Недостаточно прав для изменения задачи')
-    if (
-      role === 'production_manager' &&
-      (!taskRow.machine || (taskRow.machine.factory_id !== null && taskRow.machine.factory_id !== factoryId))
-    ) {
-      throw new Error('Задача относится к машине другого завода')
-    }
 
     const pendingDelegation = await getPendingDelegationForTask(getAdminTaskDb(), taskId)
     if (pendingDelegation) {
