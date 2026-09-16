@@ -77,6 +77,8 @@ assert.match(migration, /REVOKE SELECT, INSERT, UPDATE ON public\.products FROM 
 assert.match(migration, /column_name <> 'base_price_eur'/)
 assert.match(migration, /CREATE OR REPLACE FUNCTION public\.fn_get_product_base_prices/)
 assert.match(migration, /CREATE OR REPLACE FUNCTION public\.fn_set_product_base_price/)
+assert.match(migration, /fn_user_can_manage_client_prices[\s\S]*FROM public\.users actor[\s\S]*price_permission\.company_manage_scope = 'all'/)
+assert.doesNotMatch(migration, /fn_user_can_manage_client_prices[\s\S]{0,500}p_actor = auth\.uid\(\)/)
 assert.match(migration, /CREATE OR REPLACE FUNCTION public\.fn_save_department_access_permissions/)
 assert.match(migration, /INSERT INTO public\.department_access_audit_log/)
 assert.match(migration, /Expected 64 matrix resources/)

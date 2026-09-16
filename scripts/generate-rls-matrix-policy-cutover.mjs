@@ -353,9 +353,49 @@ LANGUAGE sql
 STABLE SECURITY DEFINER
 SET search_path = ''
 AS $function$
-  SELECT p_actor = auth.uid()
-     AND private.crm_has_permission('sales_plan', 'manage')
-     AND private.crm_has_company_permission('client_prices', 'manage', p_client_id);
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.users actor
+    JOIN public.clients client ON client.id = p_client_id
+    WHERE actor.id = p_actor
+      AND actor.is_active IS TRUE
+      AND (
+        EXISTS (
+          SELECT 1
+          FROM public.department_members admin_member
+          JOIN public.positions admin_position ON admin_position.id = admin_member.position_id
+          WHERE admin_member.user_id = actor.id
+            AND admin_position.is_active IS TRUE
+            AND admin_position.name = 'Администратор CRM'
+        )
+        OR (
+          EXISTS (
+            SELECT 1
+            FROM public.department_members sales_member
+            JOIN public.department_access_permissions sales_permission
+              ON sales_permission.department_id = sales_member.department_id
+             AND sales_permission.subject_scope = CASE WHEN sales_member.is_department_head THEN 'head' ELSE 'member' END
+            WHERE sales_member.user_id = actor.id
+              AND sales_permission.resource_key = 'sales_plan'
+              AND sales_permission.can_manage
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM public.department_members price_member
+            JOIN public.department_access_permissions price_permission
+              ON price_permission.department_id = price_member.department_id
+             AND price_permission.subject_scope = CASE WHEN price_member.is_department_head THEN 'head' ELSE 'member' END
+            WHERE price_member.user_id = actor.id
+              AND price_permission.resource_key = 'client_prices'
+              AND price_permission.can_manage
+              AND (
+                price_permission.company_manage_scope = 'all'
+                OR client.responsible_user_id = actor.id
+              )
+          )
+        )
+      )
+  );
 $function$;
 
 CREATE OR REPLACE FUNCTION public.fn_user_can_decide_machine_discount(p_actor uuid)
@@ -364,26 +404,45 @@ LANGUAGE sql
 STABLE SECURITY DEFINER
 SET search_path = ''
 AS $function$
-  SELECT p_actor = auth.uid()
-     AND private.crm_has_permission('sales_plan', 'manage')
-     AND EXISTS (
-       SELECT 1
-       FROM public.department_members member
-       JOIN public.department_access_permissions permission
-         ON permission.department_id = member.department_id
-        AND permission.subject_scope = CASE WHEN member.is_department_head THEN 'head' ELSE 'member' END
-       WHERE member.user_id = auth.uid()
-         AND permission.resource_key = 'client_prices'
-         AND permission.can_manage
-         AND permission.company_manage_scope = 'all'
-       UNION ALL
-       SELECT 1
-       FROM public.department_members member
-       JOIN public.positions position ON position.id = member.position_id
-       WHERE member.user_id = auth.uid()
-         AND position.is_active
-         AND position.name = 'Администратор CRM'
-     );
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.users actor
+    WHERE actor.id = p_actor
+      AND actor.is_active IS TRUE
+      AND (
+        EXISTS (
+          SELECT 1
+          FROM public.department_members admin_member
+          JOIN public.positions admin_position ON admin_position.id = admin_member.position_id
+          WHERE admin_member.user_id = actor.id
+            AND admin_position.is_active IS TRUE
+            AND admin_position.name = 'Администратор CRM'
+        )
+        OR (
+          EXISTS (
+            SELECT 1
+            FROM public.department_members sales_member
+            JOIN public.department_access_permissions sales_permission
+              ON sales_permission.department_id = sales_member.department_id
+             AND sales_permission.subject_scope = CASE WHEN sales_member.is_department_head THEN 'head' ELSE 'member' END
+            WHERE sales_member.user_id = actor.id
+              AND sales_permission.resource_key = 'sales_plan'
+              AND sales_permission.can_manage
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM public.department_members price_member
+            JOIN public.department_access_permissions price_permission
+              ON price_permission.department_id = price_member.department_id
+             AND price_permission.subject_scope = CASE WHEN price_member.is_department_head THEN 'head' ELSE 'member' END
+            WHERE price_member.user_id = actor.id
+              AND price_permission.resource_key = 'client_prices'
+              AND price_permission.can_manage
+              AND price_permission.company_manage_scope = 'all'
+          )
+        )
+      )
+  );
 $function$;
 
 REVOKE ALL ON FUNCTION public.fn_user_can_manage_client_prices(uuid, uuid) FROM PUBLIC, anon, authenticated;
