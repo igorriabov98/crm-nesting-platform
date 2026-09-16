@@ -32,9 +32,14 @@ const factoryScopeCompatibilityPath = join(
   root,
   'supabase/migrations/20260916083000_expand_department_access_factory_scope.sql',
 )
+const draftVisibilityFixPath = join(
+  root,
+  'supabase/migrations/20260916103000_fix_technologist_request_draft_visibility.sql',
+)
 const migration = readFileSync(migrationPath, 'utf8')
 const rollback = readFileSync(rollbackPath, 'utf8')
 const factoryScopeCompatibility = readFileSync(factoryScopeCompatibilityPath, 'utf8')
+const draftVisibilityFix = readFileSync(draftVisibilityFixPath, 'utf8')
 const policySnapshotPath = join(root, 'supabase/reports/rls_dependency_affected_tables_policy_snapshot.json')
 const functionSnapshotPath = join(root, 'supabase/reports/rls_legacy_function_snapshot.json')
 
@@ -178,7 +183,21 @@ assert.doesNotMatch(factoryScopeCompatibility, /'supply'/,
 const migrationFiles = readdirSync(join(root, 'supabase/migrations'))
   .filter((file) => /^\d{14}_.+\.sql$/.test(file))
   .sort()
-assert.equal(migrationFiles.at(-1), '20260916090000_department_rls_matrix_cutover.sql', 'Cutover должен выполняться после всех legacy-миграций')
+assert.deepEqual(
+  migrationFiles.slice(-2),
+  [
+    '20260916090000_department_rls_matrix_cutover.sql',
+    '20260916103000_fix_technologist_request_draft_visibility.sql',
+  ],
+  'После cutover разрешена только проверенная follow-up миграция видимости черновиков',
+)
+assert.match(draftVisibilityFix, /request\.created_by = auth\.uid\(\)/)
+assert.match(draftVisibilityFix, /crm_has_permission\('technologist_requests', 'manage'\)/)
+assert.doesNotMatch(
+  draftVisibilityFix,
+  /NOT private\.crm_has_permission\('supply_material_requests', 'view'\)/,
+  'Снабженческое право не должно отменять собственный технологический доступ пользователя',
+)
 
 const serverPermissions = readFileSync(join(root, 'src/lib/permissions/server.ts'), 'utf8')
 const resolver = readFileSync(join(root, 'src/lib/permissions/resolve.ts'), 'utf8')

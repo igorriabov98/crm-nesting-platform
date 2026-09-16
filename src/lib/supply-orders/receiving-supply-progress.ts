@@ -9,6 +9,7 @@ export type SupplyProgressSchedule = {
   received_piece_count?: number | string | null
   planned_piece_length_mm?: number | string | null
   receipt_parent_schedule_id?: string | null
+  excess_quantity?: number | string | null
 }
 
 export type SupplyReceiptProgress = {
@@ -29,21 +30,44 @@ export function deliveredSupplyQuantity(schedule: SupplyProgressSchedule) {
   const pieceLength = positiveNumber(
     schedule.received_piece_length_mm ?? schedule.planned_piece_length_mm,
   )
+  const isAllocationChild = Boolean(schedule.receipt_parent_schedule_id)
   if (pieceLength > 0) {
-    const physicalQuantity = schedule.allocated_physical_quantity
-      ?? schedule.received_quantity
-      ?? (schedule.allocated_piece_count === null || schedule.allocated_piece_count === undefined
-        ? null
-        : Number(schedule.allocated_piece_count) * pieceLength)
-      ?? (schedule.received_piece_count === null || schedule.received_piece_count === undefined
-        ? null
-        : Number(schedule.received_piece_count) * pieceLength)
+    const allocatedByPieces = schedule.allocated_piece_count === null || schedule.allocated_piece_count === undefined
+      ? null
+      : Number(schedule.allocated_piece_count) * pieceLength
+    const receivedByPieces = schedule.received_piece_count === null || schedule.received_piece_count === undefined
+      ? null
+      : Number(schedule.received_piece_count) * pieceLength
+    const physicalQuantity = isAllocationChild
+      ? schedule.allocated_physical_quantity ?? schedule.received_quantity ?? allocatedByPieces
+      : schedule.received_quantity ?? receivedByPieces ?? schedule.allocated_physical_quantity ?? allocatedByPieces
     return nonNegativeNumber(physicalQuantity)
   }
 
   return nonNegativeNumber(
-    schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity,
+    isAllocationChild
+      ? schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity
+      : schedule.received_quantity ?? schedule.quantity ?? schedule.allocated_quantity,
   )
+}
+
+export function reservedSupplyQuantity(schedule: SupplyProgressSchedule) {
+  const pieceLength = positiveNumber(
+    schedule.received_piece_length_mm ?? schedule.planned_piece_length_mm,
+  )
+  return nonNegativeNumber(pieceLength > 0
+    ? schedule.allocated_physical_quantity
+      ?? (schedule.allocated_piece_count === null || schedule.allocated_piece_count === undefined
+        ? null
+        : Number(schedule.allocated_piece_count) * pieceLength)
+    : schedule.allocated_quantity)
+}
+
+export function freeStockSupplyQuantity(schedule: SupplyProgressSchedule) {
+  if (schedule.receipt_parent_schedule_id) return 0
+  const physical = deliveredSupplyQuantity(schedule)
+  const explicitExcess = nonNegativeNumber(schedule.excess_quantity)
+  return Math.max(explicitExcess, physical - reservedSupplyQuantity(schedule), 0)
 }
 
 /**

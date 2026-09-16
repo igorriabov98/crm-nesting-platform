@@ -39,6 +39,7 @@ export type CuttingAreaMaterialItem = Record<string, unknown> & {
   material_id?: string | null
   material_variant_id?: string | null
   custom_delivery_date?: string | null
+  steel_types?: { name?: string | null } | null
 }
 
 export type CuttingAreaMaterialSchedule = {
@@ -101,10 +102,12 @@ function value(value: unknown) {
 }
 
 function materialIdentity(item: CuttingAreaMaterialItem) {
+  const steelType = item.steel_types?.name?.trim()
   if (item.table === 'request_sheet_metal') return {
     label: String(item.material_name || 'Листовой металл'),
     description: compact([
       item.material_grade,
+      steelType ? `Тип стали: ${steelType}` : null,
       item.sheet_size,
       value(item.thickness_mm) ? `толщина ${value(item.thickness_mm)} мм` : null,
     ]),
@@ -116,6 +119,7 @@ function materialIdentity(item: CuttingAreaMaterialItem) {
   if (item.table === 'request_circle') return {
     label: String(item.steel_grade || 'Круг'),
     description: compact([
+      steelType ? `Тип стали: ${steelType}` : null,
       value(item.diameter_mm) ? `Ø ${value(item.diameter_mm)} мм` : null,
       item.is_calibrated ? 'калиброванный' : null,
     ]),
@@ -123,6 +127,7 @@ function materialIdentity(item: CuttingAreaMaterialItem) {
   if (item.table === 'request_pipe') return {
     label: PIPE_SUBTYPE_LABELS[String(item.pipe_type)] || String(item.pipe_type || 'Труба'),
     description: compact([
+      steelType ? `Тип стали: ${steelType}` : null,
       item.size,
       value(item.diameter_mm) ? `Ø ${value(item.diameter_mm)} мм` : null,
       value(item.wall_thickness_mm) ? `стенка ${value(item.wall_thickness_mm)} мм` : null,
@@ -132,6 +137,7 @@ function materialIdentity(item: CuttingAreaMaterialItem) {
     label: String(item.knife_type || 'Нож'),
     description: compact([
       item.steel_grade,
+      steelType ? `Тип стали: ${steelType}` : null,
       value(item.length_mm) ? `длина ${value(item.length_mm)} мм` : null,
       value(item.width_mm) && value(item.height_mm) ? `${value(item.width_mm)}×${value(item.height_mm)} мм` : null,
     ]),

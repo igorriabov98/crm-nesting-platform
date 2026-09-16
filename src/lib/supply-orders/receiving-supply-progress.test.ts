@@ -4,6 +4,8 @@ import {
   calculateSupplyReceiptProgress,
   deliveredSupplyPieceCount,
   deliveredSupplyQuantity,
+  freeStockSupplyQuantity,
+  reservedSupplyQuantity,
 } from './receiving-supply-progress'
 
 test('whole-bar progress uses the physical purchase plan instead of the cutting need', () => {
@@ -99,4 +101,40 @@ test('overdelivery remains visible while outstanding supply is clamped at zero',
 
   assert.equal(progress.deliveredQuantity, 12)
   assert.equal(progress.outstandingQuantity, 0)
+})
+
+test('a receipt left in free warehouse stock is still a completed supplier receipt', () => {
+  const receipt = {
+    status: 'delivered',
+    quantity: 2,
+    received_quantity: 2,
+    allocated_quantity: 0,
+    allocated_physical_quantity: 0,
+    excess_quantity: 2,
+    receipt_parent_schedule_id: null,
+  }
+
+  assert.equal(deliveredSupplyQuantity(receipt), 2)
+  assert.equal(reservedSupplyQuantity(receipt), 0)
+  assert.equal(freeStockSupplyQuantity(receipt), 2)
+  assert.equal(calculateSupplyReceiptProgress({
+    requestedQuantity: 2,
+    requestedPieceCount: null,
+    schedules: [receipt],
+  }).outstandingQuantity, 0)
+})
+
+test('allocation child reports only the quantity reserved for its target request', () => {
+  const allocation = {
+    status: 'delivered',
+    quantity: 2,
+    received_quantity: 0,
+    allocated_quantity: 2,
+    allocated_physical_quantity: 2,
+    receipt_parent_schedule_id: 'receipt-parent',
+  }
+
+  assert.equal(deliveredSupplyQuantity(allocation), 2)
+  assert.equal(reservedSupplyQuantity(allocation), 2)
+  assert.equal(freeStockSupplyQuantity(allocation), 0)
 })

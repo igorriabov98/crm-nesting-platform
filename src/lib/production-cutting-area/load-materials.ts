@@ -20,11 +20,11 @@ type Query = PromiseLike<DbResult> & {
 type Db = { from: (table: string) => Query }
 
 const ITEM_COLUMNS: Record<CuttingAreaMaterialTable, string> = {
-  request_sheet_metal: 'material_name,material_grade,sheet_size,thickness_mm,remainder_qty,to_order_kg,reserved_from_stock_kg',
+  request_sheet_metal: 'material_name,material_grade,sheet_size,thickness_mm,remainder_qty,to_order_kg,reserved_from_stock_kg,steel_types(name)',
   request_round_tube: 'material_name,piece_count,order_kg,reserved_from_stock_kg',
-  request_circle: 'steel_grade,diameter_mm,is_calibrated,remainder_mm,reserved_from_stock_mm',
-  request_pipe: 'pipe_type,size,diameter_mm,wall_thickness_mm,remainder_kg,remainder_length_mm,reserved_from_stock_kg,reserved_from_stock_length_mm',
-  request_knives: 'knife_type,steel_grade,length_mm,width_mm,height_mm,remainder_meters,to_order_mm,reserved_from_stock_mm',
+  request_circle: 'steel_grade,diameter_mm,is_calibrated,remainder_mm,reserved_from_stock_mm,steel_types(name)',
+  request_pipe: 'pipe_type,size,diameter_mm,wall_thickness_mm,remainder_kg,remainder_length_mm,reserved_from_stock_kg,reserved_from_stock_length_mm,steel_types(name)',
+  request_knives: 'knife_type,steel_grade,length_mm,width_mm,height_mm,remainder_meters,to_order_mm,reserved_from_stock_mm,steel_types(name)',
   request_components: 'component_name,specification,diameter_mm,quantity_needed,stock_remainder,reserved_from_stock',
   request_paint: 'paint_type,ral_code,finish,remainder_kg,to_order_kg,reserved_from_stock_kg',
   request_mesh: 'description,length_mm,width_mm,remainder_qty,reserved_from_stock_qty',
