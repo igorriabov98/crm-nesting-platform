@@ -12,7 +12,6 @@ as $$
 declare
   v_request public.technologist_requests%rowtype;
   v_machine_id uuid;
-  v_has_department_permissions boolean;
   v_can_manage boolean;
 begin
   select *
@@ -32,15 +31,6 @@ begin
     raise exception 'Пользователь недоступен';
   end if;
 
-  select exists (
-    select 1
-    from public.department_members member
-    join public.department_access_permissions permission
-      on permission.department_id = member.department_id
-     and permission.subject_scope = case when member.is_department_head then 'head' else 'member' end
-    where member.user_id = p_actor
-  ) into v_has_department_permissions;
-
   select public.crm_user_is_admin(p_actor)
     or exists (
       select 1
@@ -51,18 +41,6 @@ begin
       where member.user_id = p_actor
         and permission.resource_key = 'technologist_requests'
         and permission.can_manage
-    )
-    or (
-      not v_has_department_permissions
-      and exists (
-        select 1
-        from public.users app_user
-        join public.role_permissions permission
-          on permission.role = app_user.role
-         and permission.resource_key = 'technologist_requests'
-         and permission.can_manage
-        where app_user.id = p_actor
-      )
     )
   into v_can_manage;
 

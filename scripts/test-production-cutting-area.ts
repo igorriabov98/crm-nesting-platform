@@ -18,7 +18,7 @@ const read = (path: string) => readFileSync(join(root, path), 'utf8')
 const migration = read('supabase/migrations/20260809120000_production_cutting_area.sql')
 const factoryScopeMigration = read('supabase/migrations/20260811120000_production_cutting_area_factory_scope.sql')
 const cancelledRequestMigration = read('supabase/migrations/20260909173000_ignore_cancelled_cutting_area_requests.sql')
-const draftRequestMigration = read('supabase/migrations/20260916135715_draft_request_deletion_and_cutting_exclusion.sql')
+const draftRequestMigration = read('supabase/migrations/20260916084500_draft_request_deletion_and_cutting_exclusion.sql')
 
 for (const table of ['production_cutting_cycles', 'production_cutting_cycle_requests', 'production_cutting_cycle_events']) {
   assert(migration.includes(`create table public.${table}`), `Нет таблицы ${table}`)
@@ -61,6 +61,7 @@ assert.match(draftRequestMigration, /fn_delete_technologist_request_draft_v1/)
 assert.match(draftRequestMigration, /v_request\.status <> 'draft'::public\.request_status/)
 assert.match(draftRequestMigration, /grant execute on function public\.fn_delete_technologist_request_draft_v1\(uuid, uuid\)[\s\S]*to service_role/)
 assert.doesNotMatch(draftRequestMigration, /grant execute on function public\.fn_delete_technologist_request_draft_v1\(uuid, uuid\)[\s\S]*to authenticated/)
+assert.doesNotMatch(draftRequestMigration, /role_permissions/, 'Новый RPC не должен сохранять legacy-fallback после cutover')
 
 const resource = PERMISSION_RESOURCES.find((candidate) => candidate.key === 'production_cutting_area')
 assert(resource)

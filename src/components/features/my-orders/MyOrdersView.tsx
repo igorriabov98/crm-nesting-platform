@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { CalendarClock, CalendarDays, ClipboardList, PackageCheck, Rows3 } from 'lucide-react'
+import { CalendarClock, CalendarDays, ClipboardList, Factory, PackageCheck, Rows3 } from 'lucide-react'
 
 import { MachineProgressBadge } from '@/components/features/machines/MachineStatusBadge'
 import { Progress } from '@/components/ui/progress'
@@ -85,6 +85,10 @@ function MobileOrderCard({ order }: { order: MyOrderSummary }) {
     <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="min-w-0">
         <OrderName order={order} />
+        <p className="mt-2 flex items-center gap-1.5 break-words text-sm font-medium text-blue-900">
+          <Factory className="h-4 w-4 shrink-0" aria-hidden="true" />
+          {order.factoryName || 'Площадка не указана'}
+        </p>
         <p className="mt-1 break-words text-sm text-slate-500">{order.clientName || 'Клиент не указан'}</p>
         <div className="mt-3"><OrderStatus order={order} /></div>
       </div>
@@ -162,18 +166,20 @@ export function MyOrdersView({ orders }: { orders: MyOrderSummary[] }) {
             <Table className="w-full table-fixed">
               <TableHeader>
                 <TableRow className="bg-white">
-                  <TableHead className="w-[19%] whitespace-normal leading-4 text-slate-600">Заказ</TableHead>
-                  <TableHead className="w-[15%] whitespace-normal leading-4 text-slate-600">Клиент</TableHead>
-                  <TableHead className="w-[15%] whitespace-normal leading-4 text-slate-600">Дедлайн подтверждения</TableHead>
-                  <TableHead className="w-[19%] whitespace-normal leading-4 text-slate-600">Статус</TableHead>
-                  <TableHead className="w-[20%] whitespace-normal leading-4 text-slate-600">Прогресс</TableHead>
-                  <TableHead className="w-[12%] whitespace-normal text-right leading-4 text-slate-600">Плановая отгрузка</TableHead>
+                  <TableHead className="w-[17%] whitespace-normal leading-4 text-slate-600">Заказ</TableHead>
+                  <TableHead className="w-[10%] whitespace-normal leading-4 text-slate-600">Площадка</TableHead>
+                  <TableHead className="w-[13%] whitespace-normal leading-4 text-slate-600">Клиент</TableHead>
+                  <TableHead className="w-[14%] whitespace-normal leading-4 text-slate-600">Дедлайн подтверждения</TableHead>
+                  <TableHead className="w-[17%] whitespace-normal leading-4 text-slate-600">Статус</TableHead>
+                  <TableHead className="w-[18%] whitespace-normal leading-4 text-slate-600">Прогресс</TableHead>
+                  <TableHead className="w-[11%] whitespace-normal text-right leading-4 text-slate-600">Плановая отгрузка</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {orders.map((order) => (
                   <TableRow key={order.id} className="align-middle hover:bg-slate-50/80">
                     <TableCell className="whitespace-normal break-words py-3"><OrderName order={order} /></TableCell>
+                    <TableCell className="whitespace-normal break-words py-3 font-medium text-blue-900">{order.factoryName || 'Не указана'}</TableCell>
                     <TableCell className="whitespace-normal break-words py-3 text-slate-600">{order.clientName || 'Не указан'}</TableCell>
                     <TableCell className="whitespace-normal py-3 font-medium tabular-nums text-slate-900">
                       {dateLabel(order.confirmationDeadline)}

@@ -142,6 +142,7 @@ assert.match(serviceSource, /loadAllUndeliveredMachineIds/u, 'Для облас�
 assert.match(serviceSource, /\.eq\('is_archived', false\)/u, 'Архивные заказы должны отсеиваться серверно')
 assert.match(serviceSource, /\.is\('delivery_to_client_date', null\)/u, 'Заказы с датой получения должны отсеиваться серверно')
 assert.match(serviceSource, /loadMachineProgressContexts/u, 'Статус должен строиться через существующий MachineProgress')
+assert.match(serviceSource, /factory:factories\(id, name\)/u, 'Сервис должен загружать площадку заказа')
 assert.match(pageSource, /loadMyOrdersPageData/u, 'Страница должна загружать данные на сервере')
 assert.match(pageSource, /force-dynamic/u, 'Личные данные нельзя кэшировать как статическую страницу')
 assert.match(viewSource, /md:hidden/u, 'На мобильных должны использоваться карточки')
@@ -151,6 +152,7 @@ assert.match(viewSource, /order\.canOpenDetails/u, 'Ссылка на заказ
 assert.match(viewSource, /Нет заказов без даты получения клиентом/u, 'Должно быть явное пустое состояние')
 assert.match(viewSource, /Нет точных данных/u, 'Legacy-факт должен иметь явное состояние')
 assert.match(viewSource, /Не указана/u, 'Отсутствующая плановая дата должна иметь явную подпись')
+assert.match(viewSource, />Площадка</u, 'Площадка должна отображаться отдельной колонкой перед клиентом')
 assert.match(loadingSource, /MyOrdersLoadingState/u, 'Маршрут должен иметь skeleton загрузки')
 assert.match(errorSource, /MyOrdersErrorState/u, 'Маршрут должен иметь ошибку с повтором')
 assert(!serviceSource.includes(".is('actual_shipping_date'"), 'Отгруженный заказ должен оставаться до даты получения клиентом')
@@ -166,6 +168,7 @@ const renderedOrders = renderToStaticMarkup(createElement(MyOrdersView, {
     {
       id: 'order-1',
       name: 'Заказ 1',
+      factoryName: 'Берегово',
       clientName: 'Клиент 1',
       confirmationDeadline: '2026-09-18',
       desiredShippingDate: '2026-09-20',
@@ -176,6 +179,7 @@ const renderedOrders = renderToStaticMarkup(createElement(MyOrdersView, {
     {
       id: 'order-2',
       name: 'Заказ 2',
+      factoryName: 'Ужгород',
       clientName: null,
       confirmationDeadline: null,
       desiredShippingDate: null,
@@ -191,6 +195,8 @@ assert.match(renderedOrders, /aria-valuetext="45%, 180 из 400 кг"/u, 'SSR д
 assert.match(renderedOrders, /20\.09\.2026/u, 'Плановая дата должна форматироваться по-русски')
 assert.match(renderedOrders, /18\.09\.2026/u, 'Дедлайн подтверждения должен форматироваться по-русски')
 assert.match(renderedOrders, /Дедлайн подтверждения/u, 'Таблица и мобильная карточка должны показывать дедлайн подтверждения')
+assert.match(renderedOrders, /Берегово/u, 'SSR должен показывать площадку Берегово')
+assert.match(renderedOrders, /Ужгород/u, 'SSR должен показывать площадку Ужгород')
 assert.match(renderedOrders, /Не указана/u, 'SSR должен показывать отсутствие плановой даты')
 assert.doesNotMatch(renderedOrders, /В архиве/u, 'Страница не должна предлагать архивное состояние заказа')
 

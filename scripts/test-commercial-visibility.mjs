@@ -46,9 +46,9 @@ assert.match(cutover, /REVOKE SELECT, INSERT, UPDATE ON public\.products FROM au
 assert.match(cutover, /column_name <> 'base_price_eur'/)
 assert.match(cutover, /private\.crm_has_permission\('client_prices', 'view'\)/)
 assert.match(cutover, /private\.crm_has_permission\('client_prices', 'manage'\)/)
-assert.match(productList, /can\('client_prices', 'view'\)[\s\S]*canViewPrices && <th[^>]*>Цена<\/th>/)
-assert.match(productForm, /can\('client_prices', 'view'\)[\s\S]*canViewPrices && \([\s\S]*label="Базовая цена"/)
-assert.match(productDetails, /canViewProductPrices[\s\S]*canViewProductPrices && \([\s\S]*label="Базовая цена"/)
+assert.doesNotMatch(productList, />Цена<\/th>/, 'Базовая цена не должна отображаться в списке изделий')
+assert.doesNotMatch(productForm, /label="Базовая цена"|htmlFor="base_price_eur"/, 'Базовая цена не должна отображаться или редактироваться в карточке изделия')
+assert.doesNotMatch(productDetails, /Базовая цена|canViewProductPrices/, 'Базовая цена не должна отображаться в сводке изделия')
 for (const route of protectedFileRoutes) {
   assert.match(route, /requireClientCommercialDocumentVisibility/)
   assert.match(route, /PermissionDeniedError[\s\S]*403/)

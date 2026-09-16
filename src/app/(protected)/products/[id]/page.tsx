@@ -5,7 +5,6 @@ import {
   Barcode,
   CheckCircle2,
   CircleAlert,
-  Euro,
   FileText,
   Package2,
   Scale,
@@ -46,7 +45,6 @@ const statusClasses = {
 } as const
 
 const numberFormatter = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 })
-const moneyFormatter = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
 
 function SummaryMetric({ icon, label, value }: { icon: React.ReactNode; label: string; value: React.ReactNode }) {
   return (
@@ -95,7 +93,6 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     'product_production_drawings',
     'manage',
   )
-  const canViewProductPrices = hasPermission(permissionDetails.permissions, 'client_prices', 'view')
   const versions = versionsData || []
   const currentVersion = versions.find((version) => version.status === 'current') || null
   const documentState = versionDocumentState(currentVersion?.product_files || [])
@@ -172,9 +169,6 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
               <SummaryMetric icon={<FileText className="h-4 w-4" />} label="Чертёж" value={data.drawing_number} />
               <SummaryMetric icon={<Barcode className="h-4 w-4" />} label="УКТЗЕД" value={data.uktzed} />
               <SummaryMetric icon={<Scale className="h-4 w-4" />} label="Вес" value={`${numberFormatter.format(Number(data.unit_weight_kg || 0))} кг`} />
-              {canViewProductPrices && (
-                <SummaryMetric icon={<Euro className="h-4 w-4" />} label="Базовая цена" value={`${moneyFormatter.format(Number(data.base_price_eur || 0))} EUR`} />
-              )}
             </div>
           </div>
         </div>

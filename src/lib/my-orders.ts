@@ -25,6 +25,7 @@ type CoatingType = Database['public']['Enums']['coating_type']
 type QueryError = { message?: string } | null
 type IdRow = { id: string }
 type ClientRow = { id: string; name: string }
+type FactoryRow = { id: string; name: string }
 type ItemRow = {
   id: string
   quantity: number
@@ -51,6 +52,7 @@ type MachineRow = {
   is_archived: boolean
   created_at: string
   client: ClientRow | ClientRow[] | null
+  factory: FactoryRow | FactoryRow[] | null
   machine_items: ItemRow[] | null
   production_stages: StageRow[] | null
 }
@@ -85,6 +87,7 @@ export type MyOrderSummary = {
   id: string
   name: string
   clientName: string | null
+  factoryName: string | null
   confirmationDeadline: string | null
   desiredShippingDate: string | null
   status: MachineProgress
@@ -180,6 +183,7 @@ async function loadMachines(admin: ReturnType<typeof createAdminClient>, machine
           id, name, created_by, client_id, is_confirmed, desired_shipping_date,
           actual_shipping_date, delivery_to_client_date, is_archived, created_at,
           client:clients(id, name),
+          factory:factories(id, name),
           machine_items(id, quantity, weight, coating, is_sample),
           production_stages(id, stage_type, date_start, date_end, is_skipped)
         `)
@@ -410,6 +414,7 @@ async function buildMyOrderSummaries(
       id: machine.id,
       name: machine.name,
       clientName: firstRelation(machine.client)?.name || null,
+      factoryName: firstRelation(machine.factory)?.name || null,
       confirmationDeadline: confirmationDeadlines.get(machine.id) || null,
       desiredShippingDate: machine.desired_shipping_date,
       status: resolveMachineProgressWithContext({
