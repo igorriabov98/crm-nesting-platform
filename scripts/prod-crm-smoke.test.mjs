@@ -47,8 +47,9 @@ test('unavailable or non-rendered login page fails verification', async () => {
   }
 });
 
-test('workflow chooses the read-only smoke exclusively when Railway is disabled', () => {
+test('workflow chooses non-mutating smoke when Railway is disabled or read-only mode is requested', () => {
   const workflow = readFileSync(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8');
-  assert.match(workflow, /- name: Run read-only CRM smoke\n\s+if: \$\{\{ inputs\.deploy_railway == false \}\}[\s\S]*?run: node scripts\/prod-crm-smoke\.mjs/);
-  assert.match(workflow, /- name: Run full production smoke\n\s+if: \$\{\{ inputs\.deploy_railway == true \}\}\n\s+run: npm run smoke:prod/);
+  assert.match(workflow, /- name: Run read-only CRM smoke\n\s+if: \$\{\{ inputs\.deploy_railway == false \|\| inputs\.read_only_smoke == true \}\}[\s\S]*?run: node scripts\/prod-crm-smoke\.mjs/);
+  assert.match(workflow, /- name: Run read-only Railway health smoke\n\s+if: \$\{\{ inputs\.deploy_railway == true && inputs\.read_only_smoke == true \}\}\n\s+run: curl --fail --silent --show-error/);
+  assert.match(workflow, /- name: Run full production smoke\n\s+if: \$\{\{ inputs\.deploy_railway == true && inputs\.read_only_smoke == false \}\}\n\s+run: npm run smoke:prod/);
 });
