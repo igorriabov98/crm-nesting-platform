@@ -17,9 +17,11 @@ import {
   groupSupplyOrderAggregatesBySupplyDate,
   groupSupplyOrderItems,
   isSupplyOrderBarMaterial,
+  isSupplyOrderFactoryClosed,
   isSupplyOrderRedeliveryItem,
   partitionSupplyOrderAggregatesByRedelivery,
   summarizeSupplyOrderMachineRoutes,
+  summarizeSupplyOrderItemSchedules,
   summarizeSupplyOrderQuantities,
   summarizeSupplyOrderRedeliveryMachineRoutes,
   summarizeSupplyOrderRequestAttention,
@@ -27,7 +29,7 @@ import {
   sortSupplyOrderItems,
   type OrderFiltersState,
 } from '@/components/features/supply-orders/supply-order-view'
-import { getRequestItemSelect, withPipeSteelGrade } from '@/lib/supply-orders/pipe-steel-grade'
+import { getRequestItemSelect, withRequestSteelType } from '@/lib/supply-orders/pipe-steel-grade'
 import { formatSupplyOrderCharacteristicValue } from '@/lib/supply-orders/characteristic-labels'
 import {
   deliveryScheduleBelongsToScope,
@@ -183,11 +185,11 @@ assert.equal(
 )
 assert.equal(
   getRequestItemSelect('request_knives'),
-  '*, materials(id, name)',
-  'the steel type relation must only be added to pipe order queries'
+  '*, materials(id, name), steel_types(name)',
+  'all steel-bearing order rows must load the human-readable steel type'
 )
 assert.deepEqual(
-  withPipeSteelGrade(
+  withRequestSteelType(
     'request_pipe',
     { steel_types: { name: 'S355' } },
     [
@@ -198,11 +200,23 @@ assert.deepEqual(
   ),
   [
     { label: 'Тип трубы', value: 'square' },
-    { label: 'Марка', value: 'S355' },
+    { label: 'Тип стали', value: 'S355' },
     { label: 'Размер', value: '40x40' },
     { label: 'Стенка', value: '10' },
   ],
-  'pipe cards must show the steel grade selected in the request'
+  'pipe cards must show the steel type selected in the request'
+)
+assert.deepEqual(
+  withRequestSteelType(
+    'request_sheet_metal',
+    { steel_types: { name: '09Г2С' } },
+    [{ label: 'Толщина', value: '20' }],
+  ),
+  [
+    { label: 'Тип стали', value: '09Г2С' },
+    { label: 'Толщина', value: '20' },
+  ],
+  'sheet-metal cards must show the selected steel type',
 )
 
 assert.equal(formatSupplyOrderCharacteristicValue('request_pipe', 'pipe_type', 'square'), 'Квадратная')
@@ -659,6 +673,21 @@ assert.match(
   summaryPageSource,
   /Заказано частично[\s\S]*progress\.orderedQuantity[\s\S]*progress\.totalQuantity/u,
   'the machine status must clearly show partial order coverage and its quantities',
+)
+assert.match(
+  summaryPageSource,
+  /Мат\.план производства: \{formatDate\(route\.plannedMaterialDate\)\}/u,
+  'each machine row must show the original production material-plan date',
+)
+assert.match(
+  summaryPageSource,
+  /receivedDates\.length > 0[\s\S]*Фактически принято/u,
+  'supply material-plan date must fall back to the physical receipt date',
+)
+assert.match(
+  summaryPageSource,
+  /Принято на свободный склад/u,
+  'a receipt without reservation must have an explicit free-warehouse status',
 )
 assert.match(
   supplyOrdersAction,
@@ -1143,6 +1172,68 @@ assert.deepEqual(machineRoutes, [
   { requestId: 'request-a', machineId: 'machine-a', machineName: 'Машина А', quantity: 5, weightKg: 50, itemCount: 2, pendingCount: 1, orderedCount: 1 },
   { requestId: 'request-b', machineId: 'machine-b', machineName: 'Машина Б', quantity: 4, weightKg: null, itemCount: 2, pendingCount: 0, orderedCount: 2 },
 ], 'material card must show every destination machine and avoid displaying partial weight as a full machine total')
+
+assert.deepEqual(
+  summarizeSupplyOrderMachineRoutes([
+    makeAggregateSourceItem({
+      request_id: 'request-with-date',
+      planned_material_date: '2026-10-04',
+    }),
+  ])[0].plannedMaterialDate,
+  '2026-10-04',
+  'each machine route must expose the original production material-plan date',
+)
+
+const freeWarehouseSchedule = makeDeliverySchedule({
+  delivery_date: '2026-10-04',
+  quantity: 2,
+  status: 'delivered',
+  received_quantity: 2,
+  allocated_quantity: 0,
+  allocated_physical_quantity: 0,
+  excess_quantity: 2,
+})
+assert.deepEqual(
+  summarizeSupplyOrderItemSchedules([
+    makeDeliverySchedule({
+      delivery_date: '2026-10-04',
+      quantity: 0,
+      status: 'cancelled',
+      received_quantity: 0,
+      allocated_quantity: 0,
+    }),
+    freeWarehouseSchedule,
+  ]),
+  [{
+    date: '2026-10-04',
+    plannedQuantity: 0,
+    receivedQuantity: 2,
+    reservedQuantity: 0,
+    freeStockQuantity: 2,
+  }],
+  'same-day technical zero rows must disappear and physical receipt must remain one fact row',
+)
+
+const physicallyClosedFactory = {
+  ...makeAggregate().factories[0],
+  quantity: 2,
+  unscheduled_quantity: 0,
+  ordered_count: 1,
+  delivered_count: 0,
+  item_count: 1,
+  items: [makeAggregateSourceItem({
+    quantity: 2,
+    order_status: 'ordered',
+    unscheduled_quantity: 0,
+    delivered_schedule_quantity: 2,
+    delivery_schedules: [freeWarehouseSchedule],
+  })],
+}
+assert.equal(
+  isSupplyOrderFactoryClosed(physicallyClosedFactory),
+  true,
+  'a fully received supplier delivery closes even when the operator left it in free warehouse stock',
+)
 
 assert.deepEqual(
   summarizeSupplyOrderMachineRoutes([

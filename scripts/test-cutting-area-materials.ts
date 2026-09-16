@@ -38,6 +38,20 @@ assert.deepEqual(summarize().details.not_ordered, [{
   description: 'ГОСТ 8338-75',
   quantity: '10 шт',
 }], 'Агрегат «Не заказано» должен раскрывать конкретную позицию и количество')
+const sheetWithSteelType = summarize([{
+  ...item,
+  id: 'sheet-with-steel-type',
+  table: 'request_sheet_metal',
+  material_name: 'Листовой металл',
+  remainder_qty: 2,
+  reserved_from_stock_kg: 0,
+  material_grade: 'Листовой металл',
+  steel_types: { name: '09Г2С' },
+  sheet_size: '1200x300',
+  thickness_mm: 20,
+}]).details.not_ordered[0]
+assert.match(sheetWithSteelType.description || '', /Тип стали: 09Г2С/,
+  'Участок заготовки должен показывать тип стали листового металла')
 assert.equal(summarize([{ ...item, order_status: 'ordered' }]).counts.delivery, 1)
 assert.equal(summarize([{ ...item, order_status: 'delivered' }]).counts.received, 1)
 assert.deepEqual(summarize([{ ...item, order_status: 'cancelled' }], [schedule]), emptyCuttingAreaMaterialSummary())
@@ -169,6 +183,9 @@ async function main() {
   assert(ui.includes('hasUndatedDelivery') && ui.includes('Раздельная доставка'))
   assert(ui.includes('Конкретные позиции и количество потребности'), 'Статус материала должен раскрывать состав')
   assert(ui.includes('summary.details[state]'), 'В расшифровке должны использоваться конкретные позиции')
+  const loader = readFileSync('src/lib/production-cutting-area/load-materials.ts', 'utf8')
+  assert.match(loader, /request_sheet_metal:[^\n]*steel_types\(name\)/,
+    'Загрузка участка заготовки должна получать читаемый тип стали')
   console.log('cutting-area-materials: OK (statuses, dates, partial receipts, all categories, shared schedules, scope, pagination)')
 }
 

@@ -9,6 +9,11 @@ import type {
 } from '@/lib/actions/supply-orders'
 import type { MaterialCategory, OrderItemStatus } from '@/lib/types'
 import type { SupplyOrderDeliveryScheduleScope } from '@/lib/supply-orders/delivery-schedule-scope'
+import {
+  deliveredSupplyQuantity,
+  freeStockSupplyQuantity,
+  reservedSupplyQuantity,
+} from '@/lib/supply-orders/receiving-supply-progress'
 
 export type OrderPeriodFilter = 'this_week' | 'next_week' | 'all'
 export type OrderAttentionFilter = 'all' | 'needs_supplier' | 'needs_schedule' | 'stock_covered'
@@ -59,11 +64,50 @@ export type SupplyOrderMachineRoute = {
   requestId: string
   machineId: string
   machineName: string
+  plannedMaterialDate?: string | null
   quantity: number
   weightKg: number | null
   itemCount: number
   pendingCount: number
   orderedCount: number
+}
+
+export type SupplyOrderScheduleDateSummary = {
+  date: string
+  plannedQuantity: number
+  receivedQuantity: number
+  reservedQuantity: number
+  freeStockQuantity: number
+}
+
+export function summarizeSupplyOrderItemSchedules(
+  schedules: SupplyOrderDeliverySchedule[],
+): SupplyOrderScheduleDateSummary[] {
+  const dates = new Map<string, SupplyOrderScheduleDateSummary>()
+
+  for (const schedule of schedules) {
+    if (schedule.status === 'cancelled') continue
+    const receivedQuantity = schedule.status === 'delivered' ? deliveredSupplyQuantity(schedule) : 0
+    const plannedQuantity = schedule.status === 'planned' ? Math.max(Number(schedule.quantity || 0), 0) : 0
+    if (plannedQuantity <= 0 && receivedQuantity <= 0) continue
+
+    const current = dates.get(schedule.delivery_date) || {
+      date: schedule.delivery_date,
+      plannedQuantity: 0,
+      receivedQuantity: 0,
+      reservedQuantity: 0,
+      freeStockQuantity: 0,
+    }
+    current.plannedQuantity += plannedQuantity
+    current.receivedQuantity += receivedQuantity
+    if (schedule.status === 'delivered') {
+      current.reservedQuantity += reservedSupplyQuantity(schedule)
+      current.freeStockQuantity += freeStockSupplyQuantity(schedule)
+    }
+    dates.set(schedule.delivery_date, current)
+  }
+
+  return Array.from(dates.values()).sort((left, right) => left.date.localeCompare(right.date))
 }
 
 export type SupplyOrderItemOrderProgress = {
@@ -724,7 +768,26 @@ export function isSupplyOrderAggregateClosed(aggregate: SupplyOrderAggregate) {
   const items = aggregate.factories.flatMap((factory) => factory.items)
   if (items.some(isReturnedSupplyOrderSource)) return false
   if (items.length > 0 && items.every(isCancelledReturnedSupplyOrderSource)) return true
-  return aggregate.delivered_count === aggregate.item_count && aggregate.unscheduled_quantity <= 0
+  if (aggregate.delivered_count === aggregate.item_count && aggregate.unscheduled_quantity <= 0.000001) {
+    return true
+  }
+  return aggregate.factories.every(isSupplyOrderFactoryClosed)
+}
+
+export function isSupplyOrderFactoryClosed(factory: SupplyOrderAggregateFactory) {
+  const activeItems = factory.items.filter((item) => (
+    !isReturnedSupplyOrderSource(item) && !isCancelledReturnedSupplyOrderSource(item)
+  ))
+  if (activeItems.length === 0) return false
+  if (factory.delivered_count === factory.item_count && factory.unscheduled_quantity <= 0.000001) {
+    return true
+  }
+  return activeItems.every((item) => {
+    const received = summarizeSupplyOrderItemSchedules(item.delivery_schedules)
+      .reduce((sum, schedule) => sum + schedule.receivedQuantity, 0)
+    return item.unscheduled_quantity <= 0.000001
+      && received >= Math.max(Number(item.quantity || 0), 0) - 0.000001
+  })
 }
 
 export function groupSupplyOrderAggregates(aggregates: SupplyOrderAggregate[], sort: SupplyOrderAggregateSort) {
@@ -944,7 +1007,7 @@ function summarizeMachineRoutes(
   items: SupplyOrderAggregateSourceItem[],
   getQuantity: (item: SupplyOrderAggregateSourceItem) => number
 ): SupplyOrderMachineRoute[] {
-  const routes = new Map<string, SupplyOrderMachineRoute & { hasUnknownWeight: boolean }>()
+  const routes = new Map<string, SupplyOrderMachineRoute & { hasUnknownWeight: boolean; plannedMaterialDates: Set<string> }>()
 
   for (const item of items) {
     if (isReturnedSupplyOrderSource(item)) continue
@@ -964,22 +1027,30 @@ function summarizeMachineRoutes(
       pendingCount: 0,
       orderedCount: 0,
       hasUnknownWeight: false,
+      plannedMaterialDates: new Set<string>(),
     }
 
     current.quantity += quantity
     current.itemCount += 1
     current.pendingCount += item.order_status === 'pending' ? 1 : 0
     current.orderedCount += item.order_status === 'ordered' ? 1 : 0
+    if (item.planned_material_date) current.plannedMaterialDates.add(item.planned_material_date)
     if (item.weight_kg === null || item.quantity <= 0) current.hasUnknownWeight = true
     else current.weightKg = (current.weightKg || 0) + item.weight_kg * quantity / item.quantity
     routes.set(key, current)
   }
 
   return Array.from(routes.values())
-    .map(({ hasUnknownWeight, ...route }) => ({
-      ...route,
-      weightKg: hasUnknownWeight ? null : route.weightKg,
-    }))
+    .map(({ hasUnknownWeight, plannedMaterialDates, ...route }) => {
+      const plannedMaterialDate = plannedMaterialDates.size === 1
+        ? Array.from(plannedMaterialDates)[0]
+        : null
+      return {
+        ...route,
+        ...(plannedMaterialDate ? { plannedMaterialDate } : {}),
+        weightKg: hasUnknownWeight ? null : route.weightKg,
+      }
+    })
     .sort((left, right) => compareText(left.machineName, right.machineName))
 }
 

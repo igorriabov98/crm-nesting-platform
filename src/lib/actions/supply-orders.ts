@@ -14,7 +14,7 @@ import type { PermissionOperation } from '@/lib/permissions/resources'
 import type { MaterialCategory, OrderItemStatus } from '@/lib/types'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import { formatCompanyLocation } from '@/lib/transport/company-location'
-import { getRequestItemSelect, withPipeSteelGrade } from '@/lib/supply-orders/pipe-steel-grade'
+import { getRequestItemSelect, withRequestSteelType } from '@/lib/supply-orders/pipe-steel-grade'
 import { formatSupplyOrderCharacteristicValue } from '@/lib/supply-orders/characteristic-labels'
 import {
   deliveryScheduleBelongsToScope,
@@ -286,6 +286,7 @@ export type SupplyOrderAggregateSourceItem = {
   request_id: string
   machine_id: string
   machine_name: string
+  planned_material_date?: string | null
   quantity: number
   unit: string
   supplier_id: string | null
@@ -998,7 +999,7 @@ function getAggregateIdentityKey(table: string, row: RequestItemRow, item: RawOr
 }
 
 function getAggregateCharacteristics(table: string, row: RequestItemRow, item: RawOrderItem): SupplyOrderAggregateCharacteristic[] {
-  const characteristics = withPipeSteelGrade(table, row, getCharacteristicParts(table, row, true))
+  const characteristics = withRequestSteelType(table, row, getCharacteristicParts(table, row, true))
   return characteristics.length ? characteristics : [{ label: 'Позиция', value: item.item_name }]
 }
 
@@ -2376,6 +2377,7 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
         request_id: item.request_id,
         machine_id: item.machine_id,
         machine_name: item.machine_name,
+        planned_material_date: item.planned_material_date,
         quantity: item.to_order,
         unit: item.unit,
         supplier_id: item.supplier_id,

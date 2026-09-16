@@ -15,6 +15,7 @@ assert.match(databaseUrl.pathname.toLowerCase(), /test/)
 const connection = databaseUrl.toString()
 const migration = path.join(root, 'supabase/migrations/20260916090000_department_rls_matrix_cutover.sql')
 const rollback = path.join(root, 'supabase/rollback/20260916090000_department_rls_matrix_cutover.sql')
+const draftVisibilityFix = path.join(root, 'supabase/migrations/20260916103000_fix_technologist_request_draft_visibility.sql')
 
 function run(label, command, args, env = process.env) {
   const result = spawnSync(command, args, { cwd: root, env, encoding: 'utf8' })
@@ -85,6 +86,14 @@ run(
     '-f', path.join(root, 'supabase/tests/rls_supply_orders_inventory_visibility_test.sql'),
   ],
 )
+run(
+  'technologist request draft visibility scenarios',
+  'psql',
+  [
+    '-v', 'ON_ERROR_STOP=1', connection,
+    '-f', path.join(root, 'supabase/tests/rls_technologist_request_draft_visibility_test.sql'),
+  ],
+)
 
 run('rollback rehearsal', 'psql', ['-v', 'ON_ERROR_STOP=1', connection, '-f', rollback])
 const rollbackState = query(`
@@ -145,7 +154,16 @@ const compatibilityScopeState = query(`
 assert.equal(compatibilityScopeState, 'all|all|t|t|f')
 
 run('second forward rehearsal', 'psql', ['-v', 'ON_ERROR_STOP=1', connection, '-f', migration])
+run('draft visibility follow-up rehearsal', 'psql', ['-v', 'ON_ERROR_STOP=1', connection, '-f', draftVisibilityFix])
 assertCutoverState()
+run(
+  'post-reapply draft visibility scenarios',
+  'psql',
+  [
+    '-v', 'ON_ERROR_STOP=1', connection,
+    '-f', path.join(root, 'supabase/tests/rls_technologist_request_draft_visibility_test.sql'),
+  ],
+)
 run(
   'post-reapply inventory regression',
   process.execPath,

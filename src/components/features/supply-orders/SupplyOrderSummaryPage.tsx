@@ -64,9 +64,11 @@ import {
   groupSupplyOrderAggregatesBySupplyDate,
   hasSupplyOrderRedelivery,
   isSupplyOrderBarMaterial,
+  isSupplyOrderFactoryClosed,
   isCancelledReturnedSupplyOrderSource,
   isReturnedSupplyOrderSource,
   partitionSupplyOrderAggregatesByRedelivery,
+  summarizeSupplyOrderItemSchedules,
   summarizeSupplyOrderMachineRoutes,
   summarizeSupplyOrderQuantities,
   summarizeSupplyOrderRedeliveryMachineRoutes,
@@ -76,6 +78,11 @@ import {
   type SupplyOrderAggregateStatusFilter,
   type SupplyOrderDateSlice,
 } from './supply-order-view'
+import {
+  deliveredSupplyQuantity,
+  freeStockSupplyQuantity,
+  reservedSupplyQuantity,
+} from '@/lib/supply-orders/receiving-supply-progress'
 
 type SupplyOrderSummaryPageProps = {
   aggregates: SupplyOrderAggregate[]
@@ -93,6 +100,8 @@ type ScheduleGroup = {
   supplier_name: string | null
   quantity: number
   received_quantity: number
+  reserved_quantity: number
+  free_stock_quantity: number
   piece_length_mm: number | null
   piece_count: number | null
 }
@@ -494,6 +503,11 @@ function MaterialOrderCard({
                   >
                     <span className="min-w-0">
                       <span className="block break-words font-medium text-primary">{route.machineName}</span>
+                      {route.plannedMaterialDate && (
+                        <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+                          Мат.план производства: {formatDate(route.plannedMaterialDate)}
+                        </span>
+                      )}
                       {attentionKind === 'redelivery' && redeliveryDatesByRequest.get(route.requestId) && (
                         <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
                           Изначально ожидалось: {redeliveryDatesByRequest.get(route.requestId)!.map(formatDate).join(', ')}
@@ -839,8 +853,11 @@ function FactoryDeliveryEditorForm({
   const isCancelled = activeItems.length === 0 && hasCancelledPositionReturn && !hasOpenPositionReturn
   const isClosed = isCancelled || (
     !hasOpenPositionReturn
-    && factory.delivered_count === factory.item_count
-    && factory.unscheduled_quantity <= 0
+    && isSupplyOrderFactoryClosed(activeFactory)
+  )
+  const freeStockReceivedTotal = deliveredGroups.reduce(
+    (sum, group) => sum + group.free_stock_quantity,
+    0,
   )
   const missingFinanceSuppliers = activeItems.some((item) => (
     (item.order_status === 'pending' || item.order_status === 'ordered')
@@ -1005,9 +1022,15 @@ function FactoryDeliveryEditorForm({
           </div>
         </div>
         <div className="flex flex-wrap gap-1">
-          {factory.pending_count > 0 && <Badge variant="secondary">{factory.pending_count} не зак.</Badge>}
-          {factory.ordered_count > 0 && <Badge>{factory.ordered_count} зак.</Badge>}
-          {factory.delivered_count > 0 && <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">{factory.delivered_count} принято</Badge>}
+          {isClosed ? (
+            <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
+              {freeStockReceivedTotal > 0 ? 'Принято на свободный склад' : 'Поставка закрыта'}
+            </Badge>
+          ) : <>
+            {factory.pending_count > 0 && <Badge variant="secondary">{factory.pending_count} не зак.</Badge>}
+            {factory.ordered_count > 0 && <Badge>{factory.ordered_count} зак.</Badge>}
+            {factory.delivered_count > 0 && <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">{factory.delivered_count} принято</Badge>}
+          </>}
         </div>
       </div>
 
@@ -1036,7 +1059,14 @@ function FactoryDeliveryEditorForm({
           <div className="mt-1 space-y-1">
             {deliveredGroups.map((group) => (
               <div key={group.key} className="flex flex-wrap justify-between gap-2">
-                <span>{formatDate(group.delivery_date)}{group.supplier_name ? ` · ${group.supplier_name}` : ''}</span>
+                <span>
+                  {group.free_stock_quantity >= group.received_quantity - 0.000001
+                    ? 'Принято на свободный склад'
+                    : group.free_stock_quantity > 0
+                      ? 'Принято частично на свободный склад'
+                      : 'Принято и зарезервировано под заказ'}
+                  {' · '}{formatDate(group.delivery_date)}{group.supplier_name ? ` · ${group.supplier_name}` : ''}
+                </span>
                 <span className="font-medium tabular-nums">{formatAmount(group.received_quantity || group.quantity)} {aggregate.unit}</span>
               </div>
             ))}
@@ -1084,7 +1114,11 @@ function FactoryDeliveryEditorForm({
           <PackageCheck className="h-4 w-4 text-primary" />
           <span className={isClosed ? 'font-semibold text-emerald-700' : undefined}>
             {isClosed
-              ? isCancelled ? 'Позиция отменена' : 'Поставка закрыта'
+              ? isCancelled
+                ? 'Позиция отменена'
+                : freeStockReceivedTotal > 0
+                  ? 'Поставка закрыта · Принято на свободный склад'
+                  : 'Поставка закрыта'
               : factory.unscheduled_quantity > 0
                 ? compact
                   ? `${formatAmount(factory.unscheduled_quantity)} ${aggregate.unit} нужно добавить в график`
@@ -1346,6 +1380,21 @@ function PurchasePlanSummary({
   )
 }
 
+function formatItemScheduleTimeline(item: SupplyOrderAggregateSourceItem) {
+  const summaries = summarizeSupplyOrderItemSchedules(item.delivery_schedules)
+  if (summaries.length === 0) {
+    return item.supply_delivery_date ? formatDate(item.supply_delivery_date) : 'По Мат.план'
+  }
+
+  return summaries.map((summary) => {
+    const values = [
+      summary.plannedQuantity > 0 ? `план ${formatAmount(summary.plannedQuantity)} ${item.unit}` : null,
+      summary.receivedQuantity > 0 ? `принято ${formatAmount(summary.receivedQuantity)} ${item.unit}` : null,
+    ].filter(Boolean)
+    return `${formatDate(summary.date)}: ${values.join(' / ')}`
+  }).join('; ')
+}
+
 function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; id: string }) {
   return (
     <div id={id} className="border-t border-border/60 bg-muted/25 p-4">
@@ -1377,9 +1426,7 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
               )}
               <div>{plan ? <PurchasePlanSummary plans={[plan]} compact /> : <span className="text-xs text-muted-foreground">Нет утверждённой карты</span>}</div>
               <span className="text-xs text-muted-foreground">
-                {item.delivery_schedules.length > 0
-                  ? item.delivery_schedules.map((schedule) => `${formatDate(schedule.delivery_date)}: ${formatAmount(schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity)} ${schedule.unit}`).join('; ')
-                  : (item.supply_delivery_date ? formatDate(item.supply_delivery_date) : 'По Мат.план')}
+                {formatItemScheduleTimeline(item)}
               </span>
               <div className="flex flex-wrap gap-1.5">
                 <Link
@@ -1430,7 +1477,7 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
               <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-3">
                 <div><dt className="text-muted-foreground">Количество</dt><dd className="mt-1 font-semibold tabular-nums text-foreground">{formatAmount(item.quantity)} {item.unit}</dd></div>
                 <div><dt className="text-muted-foreground">График</dt><dd className="mt-1 text-foreground">{formatAmount(item.planned_schedule_quantity)} план / {formatAmount(item.delivered_schedule_quantity)} факт</dd></div>
-                <div><dt className="text-muted-foreground">Поставки</dt><dd className="mt-1 text-foreground">{item.delivery_schedules.length > 0 ? item.delivery_schedules.map((schedule) => `${formatDate(schedule.delivery_date)}: ${formatAmount(schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity)} ${schedule.unit}`).join('; ') : (item.supply_delivery_date ? formatDate(item.supply_delivery_date) : 'По Мат.план')}</dd></div>
+                <div><dt className="text-muted-foreground">Поставки</dt><dd className="mt-1 text-foreground">{formatItemScheduleTimeline(item)}</dd></div>
               </dl>
               {plan && (
                 <div className="mt-3 rounded-lg bg-muted/50 p-2">
@@ -1517,14 +1564,22 @@ function InfoBox({ label, value, hint }: { label: string; value: string; hint?: 
 }
 
 function makeSupplyPlanDateInfo(factory: SupplyOrderAggregateFactory) {
-  const hasAnySchedule = factory.items.some((item) => item.delivery_schedules.length > 0)
   const scheduledDates = uniqueSortedDates(factory.items.flatMap((item) => (
     item.delivery_schedules
-      .filter((schedule) => schedule.status === 'planned')
+      .filter((schedule) => schedule.status === 'planned' && Number(schedule.quantity || 0) > 0)
       .map((schedule) => schedule.delivery_date)
   )))
-  const fallbackDates = hasAnySchedule ? [] : uniqueSortedDates(factory.items.map((item) => item.supply_delivery_date))
-  const dates = scheduledDates.length > 0 ? scheduledDates : fallbackDates
+  const receivedDates = uniqueSortedDates(factory.items.flatMap((item) => (
+    item.delivery_schedules
+      .filter((schedule) => schedule.status === 'delivered' && deliveredSupplyQuantity(schedule) > 0)
+      .map((schedule) => schedule.delivery_date)
+  )))
+  const fallbackDates = uniqueSortedDates(factory.items.map((item) => item.supply_delivery_date))
+  const dates = scheduledDates.length > 0
+    ? scheduledDates
+    : receivedDates.length > 0
+      ? receivedDates
+      : fallbackDates
 
   if (dates.length === 0) {
     return { value: 'Не указано', hint: null }
@@ -1536,6 +1591,8 @@ function makeSupplyPlanDateInfo(factory: SupplyOrderAggregateFactory) {
       value: formatDate(date),
       hint: scheduledDates.length > 0
         ? 'Из графика поставки'
+        : receivedDates.length > 0
+          ? 'Фактически принято'
         : factory.production_date === date
           ? 'По Мат.план производства'
           : 'Указано снабжением',
@@ -1565,9 +1622,11 @@ function dateCountLabel(count: number) {
 
 function makeDeliveredScheduleGroups(factory: SupplyOrderAggregateFactory, dateKey?: string) {
   const groups = new Map<string, ScheduleGroup>()
+  const scheduleIds = new Set(factory.items.flatMap((item) => item.delivery_schedules.map((schedule) => schedule.id)))
   for (const item of factory.items) {
     for (const schedule of item.delivery_schedules) {
       if (schedule.status !== 'delivered') continue
+      if (schedule.receipt_parent_schedule_id && scheduleIds.has(schedule.receipt_parent_schedule_id)) continue
       if (dateKey && schedule.delivery_date !== dateKey) continue
       const key = `${schedule.delivery_date}:${schedule.supplier_id || 'none'}`
       const current = groups.get(key) || {
@@ -1577,18 +1636,15 @@ function makeDeliveredScheduleGroups(factory: SupplyOrderAggregateFactory, dateK
         supplier_name: schedule.supplier_name,
         quantity: 0,
         received_quantity: 0,
+        reserved_quantity: 0,
+        free_stock_quantity: 0,
         piece_length_mm: schedule.received_piece_length_mm,
         piece_count: 0,
       }
       current.quantity += Number(schedule.quantity || 0)
-      const pieceLength = Number(schedule.received_piece_length_mm || schedule.planned_piece_length_mm || 0)
-      current.received_quantity += Number(pieceLength > 0
-        ? schedule.allocated_physical_quantity
-          ?? schedule.received_quantity
-          ?? (schedule.allocated_piece_count === null ? null : schedule.allocated_piece_count * pieceLength)
-          ?? (schedule.received_piece_count === null ? null : schedule.received_piece_count * pieceLength)
-          ?? schedule.quantity
-        : schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity ?? 0)
+      current.received_quantity += deliveredSupplyQuantity(schedule)
+      current.reserved_quantity += reservedSupplyQuantity(schedule)
+      current.free_stock_quantity += freeStockSupplyQuantity(schedule)
       current.piece_count = Number(current.piece_count || 0) + Number(
         schedule.allocated_piece_count ?? schedule.received_piece_count ?? 0,
       )

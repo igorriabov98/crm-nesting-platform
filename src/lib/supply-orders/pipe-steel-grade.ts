@@ -1,4 +1,4 @@
-type PipeRowWithSteelType = Record<string, unknown> & {
+type RowWithSteelType = Record<string, unknown> & {
   steel_types?: { name?: unknown } | null
 }
 
@@ -8,28 +8,42 @@ type SupplyOrderCharacteristic = {
 }
 
 export function getRequestItemSelect(table: string) {
-  return table === 'request_pipe'
+  return STEEL_TYPE_TABLES.has(table)
     ? '*, materials(id, name), steel_types(name)'
     : '*, materials(id, name)'
 }
 
-export function withPipeSteelGrade(
+const STEEL_TYPE_TABLES = new Set([
+  'request_sheet_metal',
+  'request_circle',
+  'request_pipe',
+  'request_knives',
+])
+
+export function withRequestSteelType(
   table: string,
-  row: PipeRowWithSteelType,
+  row: RowWithSteelType,
   characteristics: SupplyOrderCharacteristic[]
 ) {
-  if (table !== 'request_pipe') return characteristics
+  if (!STEEL_TYPE_TABLES.has(table)) return characteristics
 
-  const steelGrade = typeof row.steel_types?.name === 'string'
+  const steelType = typeof row.steel_types?.name === 'string'
     ? row.steel_types.name.trim()
     : ''
-  if (!steelGrade) return characteristics
+  if (!steelType) return characteristics
+  if (characteristics.some((part) => part.label === 'Тип стали' && part.value === steelType)) {
+    return characteristics
+  }
 
   const pipeTypeIndex = characteristics.findIndex((part) => part.label === 'Тип трубы')
-  const insertAt = pipeTypeIndex >= 0 ? pipeTypeIndex + 1 : 0
+  const gradeIndex = characteristics.findIndex((part) => part.label === 'Марка')
+  const insertAt = pipeTypeIndex >= 0 ? pipeTypeIndex + 1 : gradeIndex >= 0 ? gradeIndex + 1 : 0
   return [
     ...characteristics.slice(0, insertAt),
-    { label: 'Марка', value: steelGrade },
+    { label: 'Тип стали', value: steelType },
     ...characteristics.slice(insertAt),
   ]
 }
+
+/** @deprecated Use withRequestSteelType. */
+export const withPipeSteelGrade = withRequestSteelType
