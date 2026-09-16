@@ -78,7 +78,7 @@ const keepProductionCuttingRollbackTask = sourceSection(
 
 assert.match(
   saveProductionMachineFact,
-  /getContext\('production_fact', 'manage'\)[\s\S]*assertFactoryAccess[\s\S]*assertFactoryMachine[\s\S]*saveMachineFactAtomic\(admin,[\s\S]*userId\)/u,
+  /getContext\('production_fact', 'manage'\)[\s\S]*assertMatrixFactoryAccess\(permission, 'production_fact', 'manage', input\.factory_id\)[\s\S]*assertFactoryMachine[\s\S]*saveMachineFactAtomic\(admin,[\s\S]*userId\)/u,
   'the application must authorize cutting facts and pass the server user to the admin RPC path',
 )
 assert.match(
@@ -93,7 +93,7 @@ assert.match(
 )
 assert.match(
   getProductionFactCuttingReadiness,
-  /getContext\('production_fact', 'view'\)[\s\S]*assertFactoryAccess[\s\S]*loadProductionFactCuttingReadiness/u,
+  /getContext\('production_fact', 'view'\)[\s\S]*assertMatrixFactoryAccess\(permission, 'production_fact', 'view', input\.factory_id\)[\s\S]*loadProductionFactCuttingReadiness/u,
   'the client preflight must authorize production-fact viewing and factory access',
 )
 assert.match(
