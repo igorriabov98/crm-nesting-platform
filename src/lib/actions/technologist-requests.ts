@@ -212,7 +212,10 @@ function requestTimeRank(request: Pick<TechnologistRequest, 'created_at' | 'upda
 }
 
 function pickActiveRequest(requests: TechnologistRequest[]) {
-  return [...requests].sort((left, right) => requestTimeRank(right) - requestTimeRank(left)).at(0) || null
+  return requests
+    .filter((request) => request.status !== 'draft' && request.status !== 'cancelled')
+    .sort((left, right) => requestTimeRank(right) - requestTimeRank(left))
+    .at(0) || null
 }
 
 function isRequestVisibleForRequestRole(request: TechnologistRequest, role: UserRole) {
@@ -510,6 +513,33 @@ export async function createRequest(machineId: string): Promise<ActionResult<Tec
     return { success: true, data: request }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось создать заявку' }
+  }
+}
+
+export async function deleteDraftRequest(requestId: string): Promise<ActionResult<{ machineId: string }>> {
+  try {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) {
+      throw new Error('Некорректный идентификатор заявки')
+    }
+    const access = await requireRequestPermission('manage')
+    const request = await getRequestMachine(access.db, requestId)
+    const machine = await assertMachineNotArchived(access.db, request.machine_id)
+    assertFactoryAccess(access, 'technologist_requests', 'manage', machine.factory_id)
+    if (request.status !== 'draft') throw new Error('Удалить можно только заявку в статусе «Черновик»')
+
+    const adminDb = createAdminClient() as unknown as LooseDb
+    const { data, error } = await adminDb.rpc('fn_delete_technologist_request_draft_v1', {
+      p_request_id: requestId,
+      p_actor: access.userId,
+    })
+    if (error) throw new Error(error.message || 'Не удалось удалить черновик')
+
+    const machineId = typeof data === 'string' ? data : request.machine_id
+    revalidateRequest(machineId)
+    revalidatePath(ROUTES.PRODUCTION_CUTTING_AREA)
+    return { success: true, data: { machineId } }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Не удалось удалить черновик' }
   }
 }
 

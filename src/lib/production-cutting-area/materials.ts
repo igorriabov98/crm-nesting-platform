@@ -1,12 +1,23 @@
 import {
+  formatMaterialRequestStockQuantity,
   getMaterialRequestStockCoverage,
   type MaterialRequestItemTable,
 } from '@/lib/material-request-stock-coverage'
+import { CHAIN_CORD_SUBTYPE_LABELS, PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
 
 export type CuttingAreaMaterialTable = MaterialRequestItemTable | 'request_round_tube'
 export type CuttingAreaMaterialState = 'not_ordered' | 'delivery' | 'received' | 'stock'
+export type CuttingAreaMaterialDetail = {
+  id: string
+  requestId: string
+  category: string
+  label: string
+  description: string | null
+  quantity: string
+}
 export type CuttingAreaMaterialSummary = {
   counts: Record<CuttingAreaMaterialState, number>
+  details: Record<CuttingAreaMaterialState, CuttingAreaMaterialDetail[]>
   deliveryDates: string[]
   hasUndatedDelivery: boolean
   hasSharedSchedule: boolean
@@ -56,10 +67,96 @@ function dateOnly(value: string | null | undefined) {
 
 function coverage(item: CuttingAreaMaterialItem) {
   if (item.table === 'request_round_tube') {
-    return { needed: positive(item.order_kg), reserved: positive(item.reserved_from_stock_kg) }
+    return { needed: positive(item.order_kg), reserved: positive(item.reserved_from_stock_kg), unit: 'кг' }
   }
   const value = getMaterialRequestStockCoverage(item.table, item)
-  return { needed: positive(value.needed), reserved: positive(value.reserved) }
+  return { needed: positive(value.needed), reserved: positive(value.reserved), unit: value.unit }
+}
+
+const categoryLabels: Record<CuttingAreaMaterialTable, string> = {
+  request_sheet_metal: 'Листовой металл',
+  request_round_tube: 'Круг / труба',
+  request_circle: 'Круг',
+  request_pipe: 'Труба',
+  request_knives: 'Ножи',
+  request_components: 'Комплектация',
+  request_paint: 'Краска',
+  request_mesh: 'Сетка',
+  request_chain_cord: 'Цепь / шнур',
+}
+
+function compact(parts: unknown[]) {
+  return parts
+    .filter((part) => part !== null && part !== undefined && part !== '' && part !== false)
+    .map(String)
+    .join(' · ')
+}
+
+function value(value: unknown) {
+  if (value === null || value === undefined || value === '') return null
+  const number = Number(value)
+  return Number.isFinite(number)
+    ? new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(number)
+    : null
+}
+
+function materialIdentity(item: CuttingAreaMaterialItem) {
+  if (item.table === 'request_sheet_metal') return {
+    label: String(item.material_name || 'Листовой металл'),
+    description: compact([
+      item.material_grade,
+      item.sheet_size,
+      value(item.thickness_mm) ? `толщина ${value(item.thickness_mm)} мм` : null,
+    ]),
+  }
+  if (item.table === 'request_round_tube') return {
+    label: String(item.material_name || 'Круг / труба'),
+    description: compact([value(item.piece_count) ? `${value(item.piece_count)} шт` : null]),
+  }
+  if (item.table === 'request_circle') return {
+    label: String(item.steel_grade || 'Круг'),
+    description: compact([
+      value(item.diameter_mm) ? `Ø ${value(item.diameter_mm)} мм` : null,
+      item.is_calibrated ? 'калиброванный' : null,
+    ]),
+  }
+  if (item.table === 'request_pipe') return {
+    label: PIPE_SUBTYPE_LABELS[String(item.pipe_type)] || String(item.pipe_type || 'Труба'),
+    description: compact([
+      item.size,
+      value(item.diameter_mm) ? `Ø ${value(item.diameter_mm)} мм` : null,
+      value(item.wall_thickness_mm) ? `стенка ${value(item.wall_thickness_mm)} мм` : null,
+    ]),
+  }
+  if (item.table === 'request_knives') return {
+    label: String(item.knife_type || 'Нож'),
+    description: compact([
+      item.steel_grade,
+      value(item.length_mm) ? `длина ${value(item.length_mm)} мм` : null,
+      value(item.width_mm) && value(item.height_mm) ? `${value(item.width_mm)}×${value(item.height_mm)} мм` : null,
+    ]),
+  }
+  if (item.table === 'request_components') return {
+    label: String(item.component_name || 'Комплектующее'),
+    description: compact([
+      item.specification,
+      value(item.diameter_mm) ? `Ø ${value(item.diameter_mm)} мм` : null,
+    ]),
+  }
+  if (item.table === 'request_paint') return {
+    label: compact([item.paint_type || 'Краска', item.ral_code]) || 'Краска',
+    description: compact([item.finish]),
+  }
+  if (item.table === 'request_mesh') return {
+    label: String(item.description || 'Сетка'),
+    description: value(item.length_mm) && value(item.width_mm)
+      ? `${value(item.length_mm)}×${value(item.width_mm)} мм`
+      : '',
+  }
+  return {
+    label: CHAIN_CORD_SUBTYPE_LABELS[String(item.item_type)] || String(item.item_type || 'Цепь / шнур'),
+    description: compact([item.parameters]),
+  }
 }
 
 function itemKey(table: string, id: string) { return `${table}:${id}` }
@@ -77,6 +174,7 @@ function activeSchedule(schedule: CuttingAreaMaterialSchedule) {
 export function emptyCuttingAreaMaterialSummary(): CuttingAreaMaterialSummary {
   return {
     counts: { not_ordered: 0, delivery: 0, received: 0, stock: 0 },
+    details: { not_ordered: [], delivery: [], received: [], stock: [] },
     deliveryDates: [],
     hasUndatedDelivery: false,
     hasSharedSchedule: false,
@@ -89,6 +187,7 @@ export function mergeCuttingAreaMaterialSummaries(summaries: CuttingAreaMaterial
   for (const summary of summaries) {
     for (const state of Object.keys(result.counts) as CuttingAreaMaterialState[]) {
       result.counts[state] += summary.counts[state]
+      result.details[state].push(...summary.details[state])
     }
     for (const date of summary.deliveryDates) dates.add(date)
     result.hasUndatedDelivery ||= summary.hasUndatedDelivery
@@ -140,7 +239,7 @@ export function buildCuttingAreaMaterialSummaries(
   for (const item of items) {
     const summary = summaries.get(item.request_id)
     if (!summary || item.order_status === 'cancelled') continue
-    const { needed, reserved } = coverage(item)
+    const { needed, reserved, unit } = coverage(item)
     const required = Math.max(needed - reserved, 0)
     const own = schedulesByItem.get(itemKey(item.table, item.id)) || []
     const delivered = own.reduce((sum, schedule) => sum + receivedQuantity(schedule), 0)
@@ -152,6 +251,15 @@ export function buildCuttingAreaMaterialSummaries(
     else if (item.order_status === 'ordered' || item.order_status === 'delivered' || own.length > 0) state = 'delivery'
     else state = 'not_ordered'
     summary.counts[state] += 1
+    const identity = materialIdentity(item)
+    summary.details[state].push({
+      id: item.id,
+      requestId: item.request_id,
+      category: categoryLabels[item.table],
+      label: identity.label,
+      description: identity.description || null,
+      quantity: formatMaterialRequestStockQuantity(state === 'stock' ? needed : Math.max(needed - reserved, 0), unit),
+    })
     if (state === 'stock') continue
 
     const key = groupKey(item)

@@ -2,11 +2,21 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, ExternalLink, FileText, Plus } from 'lucide-react'
+import { ArrowLeft, ExternalLink, FileText, Loader2, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { createRequest, type RequestLifecycleStatus, type TechnologistRequestListItem } from '@/lib/actions/technologist-requests'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { createRequest, deleteDraftRequest, type RequestLifecycleStatus, type TechnologistRequestListItem } from '@/lib/actions/technologist-requests'
 import { ROUTES } from '@/lib/constants/routes'
 import { cn } from '@/lib/utils'
 
@@ -42,6 +52,8 @@ function formatDate(value: string | null) {
 export function RequestListPage({ machine, requests, canCreate }: Props) {
   const router = useRouter()
   const [isCreating, setIsCreating] = useState(false)
+  const [requestToDelete, setRequestToDelete] = useState<TechnologistRequestListItem | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const handleCreate = async () => {
     setIsCreating(true)
@@ -55,6 +67,22 @@ export function RequestListPage({ machine, requests, canCreate }: Props) {
       toast.error(error instanceof Error ? error.message : 'Не удалось создать заявку')
     } finally {
       setIsCreating(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!requestToDelete) return
+    setIsDeleting(true)
+    try {
+      const result = await deleteDraftRequest(requestToDelete.id)
+      if (!result.success) throw new Error(result.error || 'Не удалось удалить черновик')
+      toast.success('Черновик удалён')
+      setRequestToDelete(null)
+      router.refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось удалить черновик')
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -114,15 +142,51 @@ export function RequestListPage({ machine, requests, canCreate }: Props) {
                 <div className="text-sm text-slate-500 sm:text-right">
                   Обновлена: <time dateTime={request.updated_at}>{formatDate(request.updated_at)}</time>
                 </div>
-                <Button type="button" variant="outline" className="min-h-11 border-slate-200" onClick={() => router.push(`${ROUTES.SALES_PLAN}/${machine.id}/request/${request.id}`)}>
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  Открыть
-                </Button>
+                <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                  <Button type="button" variant="outline" className="min-h-11 border-slate-200" onClick={() => router.push(`${ROUTES.SALES_PLAN}/${machine.id}/request/${request.id}`)}>
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    Открыть
+                  </Button>
+                  {canCreate && request.status === 'draft' && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11 border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
+                      onClick={() => setRequestToDelete(request)}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" aria-hidden="true" />
+                      Удалить
+                    </Button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
         )}
       </section>
+
+      <AlertDialog open={Boolean(requestToDelete)} onOpenChange={(open) => { if (!open && !isDeleting) setRequestToDelete(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить черновик заявки?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Черновик и заполненные в нём позиции будут удалены. Рабочие заявки и производственные показатели не изменятся.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              type="button"
+              disabled={isDeleting}
+              className="bg-red-700 text-white hover:bg-red-800"
+              onClick={() => void handleDelete()}
+            >
+              {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" /> : <Trash2 className="mr-2 h-4 w-4" aria-hidden="true" />}
+              {isDeleting ? 'Удаляем…' : 'Удалить черновик'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

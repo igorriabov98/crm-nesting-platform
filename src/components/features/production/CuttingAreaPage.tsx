@@ -25,7 +25,7 @@ import {
   type CuttingAreaWorkspace,
 } from '@/lib/actions/production-cutting-area'
 import { formatProductionMonth } from '@/lib/utils/production-months'
-import { getCuttingAreaRequestStatusLabel } from '@/lib/production-cutting-area/request-status'
+import { getCuttingAreaOrderStatusLabel, getCuttingAreaRequestStatusLabel } from '@/lib/production-cutting-area/request-status'
 import { ROUTES } from '@/lib/constants/routes'
 import { cn } from '@/lib/utils'
 import { CuttingAreaMaterialStatus, CuttingAreaRequestDelivery } from './CuttingAreaMaterials'
@@ -202,7 +202,7 @@ export function CuttingAreaPage({ workspace }: { workspace: CuttingAreaWorkspace
             <div className="min-w-0 flex-1">
               <button type="button" className="flex min-h-11 w-full min-w-0 items-start gap-3 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-blue-500" aria-expanded={isExpanded} aria-controls={`cutting-details-${order.machineId}`} onClick={() => void toggleDetails(order)}>
                 <ChevronDown className={cn('mt-1 h-5 w-5 shrink-0 text-slate-500 transition-transform', isExpanded && 'rotate-180')} aria-hidden="true" />
-                <span className="min-w-0"><span className="block break-words text-lg font-semibold text-slate-950">{order.name}</span><span className="mt-2 flex flex-wrap gap-2"><Badge variant="outline" className={statusStyles[order.queueStatus]}>{statusLabels[order.queueStatus]}</Badge><DueBadge order={order} today={workspace.today} />{workspace.canViewAllFactories && <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-800">{order.factoryName}</Badge>}<Badge variant="outline" className="border-slate-200 bg-white text-slate-700">{order.productionMonth ? formatProductionMonth(order.productionMonth) : 'Без месяца'}</Badge>{order.cycleNumber && <Badge variant="outline">Цикл №{order.cycleNumber}</Badge>}</span></span>
+                <span className="min-w-0"><span className="block break-words text-lg font-semibold text-slate-950">{order.name}</span><span className="mt-2 flex flex-wrap gap-2"><Badge variant="outline" className={statusStyles[order.queueStatus]}>{getCuttingAreaOrderStatusLabel(order.queueStatus, order.startBlocker, order.canStart)}</Badge><DueBadge order={order} today={workspace.today} />{workspace.canViewAllFactories && <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-800">{order.factoryName}</Badge>}<Badge variant="outline" className="border-slate-200 bg-white text-slate-700">{order.productionMonth ? formatProductionMonth(order.productionMonth) : 'Без месяца'}</Badge>{order.cycleNumber && <Badge variant="outline">Цикл №{order.cycleNumber}</Badge>}</span></span>
               </button>
               <div className="mt-2 pl-8"><CuttingAreaMaterialStatus summary={order.materials} /></div>
             </div>
