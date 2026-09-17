@@ -255,7 +255,9 @@ function normalizeMembership(row: MembershipRow): DepartmentPermissionMembership
     positionId: row.position_id ?? position?.id ?? null,
     positionName: position?.name ?? null,
     positionLevel: typeof position?.level === 'number' ? position.level : null,
-    isDepartmentHead: Boolean(row.is_department_head || department?.head_user_id === row.user_id),
+    isDepartmentHead: Boolean(row.is_department_head || (
+      department?.head_user_id && department.head_user_id === row.user_id
+    )),
   }
 }
 
