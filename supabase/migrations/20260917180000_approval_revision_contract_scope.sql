@@ -285,6 +285,9 @@ do $$ declare v_definition text; v_updated text; begin
     'fn_technologist_approval_department_head(''technologist'')',
     'fn_technologist_approval_department_head(''Технический отдел'')');
   if v_updated = v_definition then raise exception 'Revision routing contract changed'; end if;
+  v_updated := replace(v_updated,
+    'Не назначен действующий начальник отдела технологов',
+    'Не назначен действующий начальник Технического отдела');
   execute v_updated;
 end $$;
 
@@ -300,4 +303,3 @@ do $$ declare v_name text; v_definition text; v_updated text; begin
     execute v_updated;
   end loop;
 end $$;
-
