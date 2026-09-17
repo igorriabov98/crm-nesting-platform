@@ -70,6 +70,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   supply_start: 'Снабжение',
   technologist_request: 'Заявка технолога',
   technologist_request_approval: 'Согласование заявки',
+  technologist_request_revision: 'Доработка заявки',
   order_discount_approval: 'Согласование скидки',
   engineer_confirm: 'Чертежи',
   sales_order_confirmation: 'Подтверждение заказа',
@@ -221,11 +222,11 @@ function formatTaskDeadline(value: string | null | undefined) {
 }
 
 function getTaskTarget(task: TaskWithRelations) {
-  if (task.task_type === 'technologist_request_approval' && task.approval_version?.request_id) {
+  if ((task.task_type === 'technologist_request_approval' || task.task_type === 'technologist_request_revision') && task.approval_version?.request_id) {
     return {
       href: `${ROUTES.TECHNOLOGIST_REQUEST_RESULTS}/${task.approval_version.request_id}`,
-      label: 'Проверить итог заявки',
-      kind: 'Согласование',
+      label: task.task_type === 'technologist_request_revision' ? 'Доработать заявку' : 'Проверить итог заявки',
+      kind: task.task_type === 'technologist_request_revision' ? 'Доработка' : 'Согласование',
     }
   }
   if (task.task_type === 'supply_schedule_reconciliation_review' && task.machine?.factory_id) {
@@ -854,6 +855,14 @@ export function TaskCards({
           Проверить и одобрить
         </Link>
       </div>
+    }
+
+    if (task.task_type === 'technologist_request_revision' && task.approval_version?.request_id) {
+      if (task.status === 'completed' || task.status === 'cancelled') return null
+      return <div className={groupClass}><Link
+        href={`${ROUTES.TECHNOLOGIST_REQUEST_RESULTS}/${task.approval_version.request_id}`}
+        className={cn(buttonClass, 'inline-flex items-center justify-center rounded-md bg-amber-700 px-4 text-sm font-medium text-white hover:bg-amber-800')}
+      >Открыть доработку</Link></div>
     }
 
     if (task.task_type === 'order_discount_approval' && task.machine_discount_request_id) {

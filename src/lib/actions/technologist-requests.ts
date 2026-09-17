@@ -442,8 +442,18 @@ export async function getRequestsForMachine(machineId: string) {
     const { db, permissions } = await requireRequestPermission('view')
     const requests = await loadMachineRequests(db, machineId, permissions)
     const statusesByRequest = await loadRequestOrderStatuses(db, requests.map((request) => request.id))
+    const approvalVersions = requests.length ? await createAdminClient()
+      .from('technologist_request_approval_versions')
+      .select('request_id,revision_number,state')
+      .in('request_id', requests.map((request) => request.id))
+      .order('revision_number', { ascending: false }) : { data: [], error: null }
+    if (approvalVersions.error) throw new Error(approvalVersions.error.message)
+    const latestApprovalState = new Map<string, string>()
+    for (const version of (approvalVersions.data || []) as Array<{ request_id: string; state: string }>) {
+      if (!latestApprovalState.has(version.request_id)) latestApprovalState.set(version.request_id, version.state)
+    }
     const data: TechnologistRequestListItem[] = requests.map((request) => {
-      const lifecycleStatus = deriveRequestLifecycleStatus(request, statusesByRequest.get(request.id) || [])
+      const lifecycleStatus = deriveRequestLifecycleStatus(request, statusesByRequest.get(request.id) || [], latestApprovalState.get(request.id))
       return {
         id: request.id,
         machine_id: request.machine_id,

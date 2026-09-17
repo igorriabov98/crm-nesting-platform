@@ -86,7 +86,7 @@ declare
   v_submit jsonb;
   v_repeat_submit jsonb;
   v_revision_id uuid;
-  v_finance uuid := gen_random_uuid();
+  v_finance uuid;
   v_technology_department uuid := gen_random_uuid();
   v_finance_department uuid := gen_random_uuid();
   v_approval uuid;
@@ -260,20 +260,27 @@ begin
     get stacked diagnostics v_error = message_text;
     if v_error not like '[FINANCIAL_APPROVAL_REQUIRED]%' then raise; end if;
   end;
-  insert into public.users(id,email,full_name,role,factory_id,is_active)
-  values (v_finance,v_finance || '@revision.test','Финансовый директор','financial_director',v_factory,true);
-  insert into public.departments(id, name, factory_id) values
-    (v_technology_department, 'REVISION TECHNOLOGY ' || v_technology_department, v_factory),
-    (v_finance_department, 'REVISION FINANCE ' || v_finance_department, v_factory);
-  insert into public.department_members(user_id, department_id, is_department_head) values
-    (v_technologist, v_technology_department, false),
-    (v_finance, v_finance_department, false);
+  v_finance := public.fn_technologist_approval_department_head('Финансовый отдел');
+  if v_finance is null then
+    v_finance := gen_random_uuid();
+    insert into public.users(id,email,full_name,role,factory_id,is_active)
+      values (v_finance,v_finance || '@revision.test','Начальник Финансового отдела','financial_director',v_factory,true);
+    insert into public.departments(id, name, factory_id, head_user_id)
+      values (v_finance_department, 'Финансовый отдел', v_factory, v_finance);
+    insert into public.department_members(user_id, department_id, is_department_head)
+      values (v_finance, v_finance_department, true);
+    insert into public.department_access_permissions(department_id,subject_scope,resource_key,can_view,can_manage)
+      values (v_finance_department,'head','technologist_request_results',true,true);
+  end if;
+  insert into public.departments(id, name, factory_id)
+    values (v_technology_department, 'REVISION TECHNOLOGY ' || v_technology_department, v_factory);
+  insert into public.department_members(user_id, department_id, is_department_head)
+    values (v_technologist, v_technology_department, false);
   insert into public.department_access_permissions(
     department_id, subject_scope, resource_key, can_view, can_manage
   ) values
     (v_technology_department, 'member', 'technologist_requests', true, true),
-    (v_technology_department, 'member', 'inventory_detailing', true, true),
-    (v_finance_department, 'member', 'technologist_request_results', true, true);
+    (v_technology_department, 'member', 'inventory_detailing', true, true);
   if p_table in ('request_sheet_metal','request_pipe') then
     if p_table = 'request_sheet_metal' then
       update public.request_sheet_metal set thickness_mm = 10, sheet_size = '1000x1000', remainder_qty = 2 where id = v_replacement_item_id;

@@ -32,6 +32,8 @@ type Props = {
 const lifecycleClasses: Record<RequestLifecycleStatus, string> = {
   draft: 'border-slate-200 bg-slate-100 text-slate-700',
   stock_check: 'border-amber-200 bg-amber-50 text-amber-700',
+  financial_approval: 'border-violet-200 bg-violet-50 text-violet-700',
+  returned: 'border-red-200 bg-red-50 text-red-700',
   submitted_to_supply: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   delivery: 'border-blue-200 bg-blue-50 text-blue-700',
   received: 'border-green-300 bg-green-100 text-green-800',

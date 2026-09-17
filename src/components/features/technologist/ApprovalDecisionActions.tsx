@@ -35,7 +35,7 @@ export function ApprovalDecisionActions({
     startTransition(async () => {
       const result = await beginTechnologistRequestRevision(requestId)
       if (!result.success) { toast.error(result.error || 'Не удалось открыть редактирование'); return }
-      toast.success('Текущая версия сохранена в истории')
+      toast.success('Черновик новой редакции открыт')
       router.push(result.href!)
     })
   }
@@ -83,7 +83,7 @@ export function ApprovalDecisionActions({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Вернуть заявку на доработку?</DialogTitle>
-          <DialogDescription>Причина будет сохранена в истории версии и отправлена автору заявки.</DialogDescription>
+          <DialogDescription>Причина будет сохранена в истории версии и отправлена ответственному технологу.</DialogDescription>
         </DialogHeader>
         <Textarea
           autoFocus

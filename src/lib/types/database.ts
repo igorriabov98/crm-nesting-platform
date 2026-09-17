@@ -3534,7 +3534,8 @@ export type Database = {
       department_requests: {
         Row: {
           id: string
-          request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'supply_position_revision' | 'transport_trip_date_approval'
+          request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'supply_position_revision' | 'transport_trip_date_approval' | 'technologist_approval' | 'technologist_revision'
+          technologist_approval_version_id: string | null
           target_department: string
           title: string
           description: string
@@ -3562,7 +3563,8 @@ export type Database = {
         }
         Insert: {
           id?: string
-          request_kind?: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'supply_position_revision' | 'transport_trip_date_approval'
+          request_kind?: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'supply_position_revision' | 'transport_trip_date_approval' | 'technologist_approval' | 'technologist_revision'
+          technologist_approval_version_id?: string | null
           target_department: string
           title: string
           description: string
@@ -4880,6 +4882,11 @@ export type Database = {
         Insert: Pick<Database['public']['Tables']['technologist_request_approval_versions']['Row'], 'request_id' | 'revision_number' | 'state' | 'completion_payload' | 'summary_snapshot'> & Partial<Database['public']['Tables']['technologist_request_approval_versions']['Row']>
         Update: Partial<Database['public']['Tables']['technologist_request_approval_versions']['Row']>
       }
+      technologist_request_revision_drafts: {
+        Row: { request_id: string; revision_number: number; editor_id: string; created_at: string }
+        Insert: { request_id: string; revision_number: number; editor_id: string; created_at?: string }
+        Update: { request_id?: string; revision_number?: number; editor_id?: string; created_at?: string }
+      }
       technologist_request_approval_archives: {
         Row: {
           id: string
@@ -5797,7 +5804,7 @@ export type Database = {
       inventory_transfer_status: InventoryTransferStatus
       detailing_movement_type: DetailingMovementType
       employee_assignment_status: EmployeeAssignmentStatus
-      task_type: 'supply_start' | 'technologist_request' | 'technologist_request_approval' | 'order_discount_approval' | 'engineer_confirm' | 'sales_order_confirmation' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'shipping_documents' | 'customs_clearance' | 'client_delivery_date' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'supply_schedule_reconciliation_review' | 'production_cutting_rollback_review' | 'long_stock_cutting_recalculation' | 'long_stock_cutting_supply_shortage' | 'production_plan_date_change_approval' | 'transport_trip_date_approval' | 'business_scrap_correction_approval' | 'production_plan_preparation' | 'outsourcing_transport' | 'vrb_outsourcing_approval' | 'product_version_incomplete' | 'detailing_transfer' | 'inventory_transfer' | 'department_request'
+      task_type: 'supply_start' | 'technologist_request' | 'technologist_request_approval' | 'technologist_request_revision' | 'order_discount_approval' | 'engineer_confirm' | 'sales_order_confirmation' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'shipping_documents' | 'customs_clearance' | 'client_delivery_date' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'supply_schedule_reconciliation_review' | 'production_cutting_rollback_review' | 'long_stock_cutting_recalculation' | 'long_stock_cutting_supply_shortage' | 'production_plan_date_change_approval' | 'transport_trip_date_approval' | 'business_scrap_correction_approval' | 'production_plan_preparation' | 'outsourcing_transport' | 'vrb_outsourcing_approval' | 'product_version_incomplete' | 'detailing_transfer' | 'inventory_transfer' | 'department_request'
       task_status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       consumable_request_priority: 'standard' | 'high'
       consumable_request_status: 'draft' | 'new' | 'invoice_taken' | 'delivery' | 'received' | 'received_partial' | 'cancelled'

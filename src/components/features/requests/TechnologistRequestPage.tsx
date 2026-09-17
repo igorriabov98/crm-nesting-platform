@@ -34,6 +34,9 @@ type Props = {
   backHref?: string
   backLabel?: string
   readOnlyMessage?: string
+  revisionNumber?: number | null
+  requestNumber?: number
+  approvalState?: string | null
 }
 
 type PaintRows = TechnologistRequestPayload['paint']
@@ -42,7 +45,7 @@ type MeshRows = TechnologistRequestPayload['meshItems']
 type ChainCordRows = TechnologistRequestPayload['chainCords']
 type PipeRows = TechnologistRequestPayload['pipes']
 
-export function TechnologistRequestPage({ machine, data, suppliers, canManage, steelTypes, backHref, backLabel, readOnlyMessage }: Props) {
+export function TechnologistRequestPage({ machine, data, suppliers, canManage, steelTypes, backHref, backLabel, readOnlyMessage, revisionNumber, requestNumber, approvalState }: Props) {
   const router = useRouter()
   const [status, setStatus] = useState<RequestStatus>(data.request.status)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -124,13 +127,14 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
             <h1 className="text-2xl font-bold text-[#1B3A6B]">
               {revision ? 'Исправленная позиция' : 'Заявка на материалы'}: {machine.name}
             </h1>
+            {revisionNumber && <p className="mt-1 font-semibold text-amber-800">Черновик заявки №{requestNumber || '—'}.{revisionNumber}</p>}
             <p className="mt-1 text-sm text-slate-500">
               {revision
                 ? 'Измените материал, характеристики или количество. Категория и состав заявки зафиксированы.'
                 : 'Состав материалов, деловой отход и позиции к заказу.'}
             </p>
           </div>
-          <RequestStatusBadge status={status} />
+          <RequestStatusBadge status={status} approvalState={approvalState} />
         </div>
       </div>
 

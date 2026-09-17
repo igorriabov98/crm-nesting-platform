@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { getTechnologistApprovalHistoryVersion } from '@/lib/actions/technologist-request-approvals'
 import { formatApprovalVersion, type ApprovalSummarySnapshot, type ApprovalVersionDiff } from '@/lib/technologist-request-approval'
+import { approvalBadgeClass } from '@/lib/technologist-approval-badge'
 import { ApprovalSummary, ApprovalDiff } from './ApprovalSummary'
 
 type Version = { id: string; revision_number: number; state: string; is_legacy: boolean }
@@ -36,7 +37,7 @@ function HistoryEntry({ requestId, version }: { requestId: string; version: Vers
   }}>
     <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
       <span className="font-medium">Версия {formatApprovalVersion(version.revision_number)}</span>
-      <span className="flex flex-wrap items-center justify-end gap-2"><Badge variant="outline">{version.is_legacy ? 'Одобрена до согласования' : labels[version.state]}</Badge><span className="text-sm text-blue-700">Подробнее</span></span>
+      <span className="flex flex-wrap items-center justify-end gap-2"><Badge variant="outline" className={approvalBadgeClass(version.state)}>{version.is_legacy ? 'Одобрена до согласования' : labels[version.state]}</Badge><span className="text-sm text-blue-700">Подробнее</span></span>
     </summary>
     <div className="space-y-4 border-t p-4" aria-busy={loading}>
       {loading && <p role="status" className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Загрузка версии…</p>}

@@ -25,6 +25,12 @@ export const DEPARTMENT_REQUEST_TARGETS = {
     description: 'Системные согласования плановых дат и маршрутов',
     route: ROUTES.REQUESTS,
   },
+  finance: {
+    label: 'Финансовый отдел',
+    recipientLabel: 'начальнику Финансового отдела',
+    description: 'Личное согласование заявки технолога',
+    route: ROUTES.REQUESTS,
+  },
 } as const
 
 export type DepartmentRequestTarget = keyof typeof DEPARTMENT_REQUEST_TARGETS

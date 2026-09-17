@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
 const migration = await readFile(new URL('../supabase/migrations/20260914120000_technologist_request_financial_approval.sql', import.meta.url), 'utf8')
+const workflowMigration = await readFile(new URL('../supabase/migrations/20260917120000_technologist_approval_personal_workflow.sql', import.meta.url), 'utf8')
 const requestCompletion = await readFile(new URL('../src/lib/actions/request-completion.ts', import.meta.url), 'utf8')
 const supplyRequest = await readFile(new URL('../src/lib/actions/supply-request.ts', import.meta.url), 'utf8')
 
@@ -20,6 +21,20 @@ for (const expected of [
   'for update',
   "from authenticated",
 ]) assert.ok(migration.toLowerCase().includes(expected.toLowerCase()), `migration contract is missing: ${expected}`)
+
+for (const expected of [
+  "'technologist_request_revision'",
+  "'finance'",
+  'technologist_approval_version_id',
+  'technologist_request_revision_drafts',
+  "fn_technologist_approval_department_head('Финансовый отдел')",
+  "fn_technologist_approval_work_item(",
+  "(now() at time zone 'Europe/Kyiv')::date",
+  "request_kind = 'technologist_revision'",
+  "task_type = 'technologist_request_revision'",
+  'Задача завершается после повторной отправки заявки',
+  'Restore work items for versions that were already returned',
+]) assert.ok(workflowMigration.toLowerCase().includes(expected.toLowerCase()), `personal workflow migration contract is missing: ${expected}`)
 
 assert.ok(requestCompletion.includes("rpc('fn_submit_technologist_request_for_approval'"), 'wizard must submit approval version')
 assert.match(

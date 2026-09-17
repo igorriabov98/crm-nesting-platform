@@ -20,6 +20,7 @@ const EMPTY_COUNTS: SidebarWorkQueueCounts = {
     supply: 0,
     production: 0,
     planning: 0,
+    finance: 0,
     total: 0,
   },
   transport: 0,
@@ -27,7 +28,7 @@ const EMPTY_COUNTS: SidebarWorkQueueCounts = {
   materialRequests: 0,
 }
 
-const TARGETS: DepartmentRequestTarget[] = ['technologist', 'supply', 'production', 'planning']
+const TARGETS: DepartmentRequestTarget[] = ['technologist', 'supply', 'production', 'planning', 'finance']
 async function loadDepartmentRequestCounts(context: Awaited<ReturnType<typeof requirePermission>>) {
   const manageableTargets = context.permissionDetails.permissions.department_requests?.canManage
     ? TARGETS

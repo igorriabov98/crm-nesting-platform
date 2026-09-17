@@ -8,7 +8,7 @@ create or replace function pg_temp.complete_request_with_approval(
   p_request uuid, p_actor uuid, p_decision text, p_minutes integer, p_waste jsonb, p_future jsonb
 ) returns uuid language plpgsql as $$
 declare
-  v_reviewer uuid := gen_random_uuid();
+  v_reviewer uuid;
   v_technology_department uuid := gen_random_uuid();
   v_finance_department uuid := gen_random_uuid();
   v_factory uuid;
@@ -16,18 +16,25 @@ declare
   v_completion uuid;
 begin
   select m.factory_id into v_factory from public.technologist_requests r join public.machines m on m.id = r.machine_id where r.id = p_request;
-  insert into public.users(id,email,full_name,role,factory_id,is_active)
-    values (v_reviewer,v_reviewer || '@approval.test','Финансовый директор теста раскроя','financial_director',v_factory,true);
-  insert into public.departments(id,name,factory_id) values
-    (v_technology_department, 'CUTTING APPROVAL TECHNOLOGY ' || v_technology_department, v_factory),
-    (v_finance_department, 'CUTTING APPROVAL FINANCE ' || v_finance_department, v_factory);
-  insert into public.department_members(user_id,department_id,is_department_head) values
-    (p_actor,v_technology_department,false),
-    (v_reviewer,v_finance_department,false);
+  v_reviewer := public.fn_technologist_approval_department_head('Финансовый отдел');
+  if v_reviewer is null then
+    v_reviewer := gen_random_uuid();
+    insert into public.users(id,email,full_name,role,factory_id,is_active)
+      values (v_reviewer,v_reviewer || '@approval.test','Начальник финансового отдела теста раскроя','financial_director',v_factory,true);
+    insert into public.departments(id,name,factory_id,head_user_id)
+      values (v_finance_department, 'Финансовый отдел', v_factory, v_reviewer);
+    insert into public.department_members(user_id,department_id,is_department_head)
+      values (v_reviewer,v_finance_department,true);
+    insert into public.department_access_permissions(department_id,subject_scope,resource_key,can_view,can_manage)
+      values (v_finance_department,'head','technologist_request_results',true,true);
+  end if;
+  insert into public.departments(id,name,factory_id)
+    values (v_technology_department, 'CUTTING APPROVAL TECHNOLOGY ' || v_technology_department, v_factory);
+  insert into public.department_members(user_id,department_id,is_department_head)
+    values (p_actor,v_technology_department,false);
   insert into public.department_access_permissions(department_id,subject_scope,resource_key,can_view,can_manage) values
     (v_technology_department,'member','technologist_requests',true,true),
-    (v_technology_department,'member','inventory_detailing',true,true),
-    (v_finance_department,'member','technologist_request_results',true,true);
+    (v_technology_department,'member','inventory_detailing',true,true);
   perform set_config('request.jwt.claim.sub', p_actor::text, true);
   v_version := public.fn_submit_technologist_request_for_approval(p_request,p_actor,
     jsonb_build_object('decision',p_decision,'enteredPlasmaMinutes',p_minutes,'wasteItems',p_waste,'futureItems',p_future,'archives','[]'::jsonb),

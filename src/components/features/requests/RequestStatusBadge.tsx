@@ -22,10 +22,11 @@ const STATUS_CLASSES: Record<RequestStatus, string> = {
   cancelled: 'border-slate-300 bg-slate-100 text-slate-700',
 }
 
-export function RequestStatusBadge({ status, className }: { status: RequestStatus; className?: string }) {
+export function RequestStatusBadge({ status, className, approvalState }: { status: RequestStatus; className?: string; approvalState?: string | null }) {
+  const returned = approvalState === 'returned' && (status === 'pending_stock_check' || status === 'stock_checked')
   return (
-    <Badge variant="outline" className={cn(STATUS_CLASSES[status], className)}>
-      {STATUS_LABELS[status]}
+    <Badge variant="outline" className={cn(returned ? 'border-red-200 bg-red-50 text-red-700' : STATUS_CLASSES[status], className)}>
+      {returned ? 'Возвращена на доработку' : STATUS_LABELS[status]}
     </Badge>
   )
 }
