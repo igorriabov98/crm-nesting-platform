@@ -144,18 +144,18 @@ begin
   -- Receiving fixtures must pass the same financial handoff as real requests.
   insert into public.users(id, email, full_name, role, factory_id, is_active)
   values (v_reviewer, v_reviewer || '@approval.test', 'Финансовый директор теста', 'financial_director', v_factory, true);
-  insert into public.departments(id, name, factory_id) values
-    (v_technology_department, 'CUTTING RACE TECHNOLOGY', v_factory),
-    (v_finance_department, 'CUTTING RACE FINANCE', v_factory);
+  insert into public.departments(id, name, factory_id, head_user_id) values
+    (v_technology_department, 'CUTTING RACE TECHNOLOGY', v_factory, null),
+    (v_finance_department, 'Финансовый отдел', v_factory, v_reviewer);
   insert into public.department_members(user_id, department_id, is_department_head) values
     (v_actor, v_technology_department, false),
-    (v_reviewer, v_finance_department, false);
+    (v_reviewer, v_finance_department, true);
   insert into public.department_access_permissions(
     department_id, subject_scope, resource_key, can_view, can_manage
   ) values
     (v_technology_department, 'member', 'technologist_requests', true, true),
     (v_technology_department, 'member', 'inventory_detailing', true, true),
-    (v_finance_department, 'member', 'technologist_request_results', true, true);
+    (v_finance_department, 'head', 'technologist_request_results', true, true);
   perform set_config('request.jwt.claim.sub', v_actor::text, true);
   update public.technologist_requests set status = 'stock_checked' where id = v_request;
   v_approval := public.fn_submit_technologist_request_for_approval(v_request, v_actor,
