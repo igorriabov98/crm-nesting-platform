@@ -36,10 +36,15 @@ const draftVisibilityFixPath = join(
   root,
   'supabase/migrations/20260916103000_fix_technologist_request_draft_visibility.sql',
 )
+const usersSelfVisibilityFixPath = join(
+  root,
+  'supabase/migrations/20260917050000_fix_users_self_visibility.sql',
+)
 const migration = readFileSync(migrationPath, 'utf8')
 const rollback = readFileSync(rollbackPath, 'utf8')
 const factoryScopeCompatibility = readFileSync(factoryScopeCompatibilityPath, 'utf8')
 const draftVisibilityFix = readFileSync(draftVisibilityFixPath, 'utf8')
+const usersSelfVisibilityFix = readFileSync(usersSelfVisibilityFixPath, 'utf8')
 const policySnapshotPath = join(root, 'supabase/reports/rls_dependency_affected_tables_policy_snapshot.json')
 const functionSnapshotPath = join(root, 'supabase/reports/rls_legacy_function_snapshot.json')
 
@@ -184,12 +189,13 @@ const migrationFiles = readdirSync(join(root, 'supabase/migrations'))
   .filter((file) => /^\d{14}_.+\.sql$/.test(file))
   .sort()
 assert.deepEqual(
-  migrationFiles.slice(-2),
+  migrationFiles.slice(-3),
   [
     '20260916090000_department_rls_matrix_cutover.sql',
     '20260916103000_fix_technologist_request_draft_visibility.sql',
+    '20260917050000_fix_users_self_visibility.sql',
   ],
-  'После cutover разрешена только проверенная follow-up миграция видимости черновиков',
+  'После cutover разрешены только проверенные follow-up миграции',
 )
 assert.match(draftVisibilityFix, /request\.created_by = auth\.uid\(\)/)
 assert.match(draftVisibilityFix, /crm_has_permission\('technologist_requests', 'manage'\)/)
@@ -198,6 +204,11 @@ assert.doesNotMatch(
   /NOT private\.crm_has_permission\('supply_material_requests', 'view'\)/,
   'Снабженческое право не должно отменять собственный технологический доступ пользователя',
 )
+assert.match(usersSelfVisibilityFix, /OR id = auth\.uid\(\)/,
+  'users_select должен сохранять независимый self-read путь')
+assert.match(usersSelfVisibilityFix, /crm_has_permission\('departments', 'view'\)/)
+assert.match(usersSelfVisibilityFix, /crm_has_permission\('admin_users', 'view'\)/)
+assert.match(usersSelfVisibilityFix, /factory_id = public\.get_user_factory_id\(\)/)
 
 const serverPermissions = readFileSync(join(root, 'src/lib/permissions/server.ts'), 'utf8')
 const resolver = readFileSync(join(root, 'src/lib/permissions/resolve.ts'), 'utf8')
