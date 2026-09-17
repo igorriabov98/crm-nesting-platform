@@ -3,8 +3,11 @@ import { readFile } from 'node:fs/promises'
 
 const migration = await readFile(new URL('../supabase/migrations/20260914120000_technologist_request_financial_approval.sql', import.meta.url), 'utf8')
 const workflowMigration = await readFile(new URL('../supabase/migrations/20260917120000_technologist_approval_personal_workflow.sql', import.meta.url), 'utf8')
+const followupMigration = await readFile(new URL('../supabase/migrations/20260917180000_approval_revision_contract_scope.sql', import.meta.url), 'utf8')
 const requestCompletion = await readFile(new URL('../src/lib/actions/request-completion.ts', import.meta.url), 'utf8')
 const supplyRequest = await readFile(new URL('../src/lib/actions/supply-request.ts', import.meta.url), 'utf8')
+const approvalActions = await readFile(new URL('../src/lib/actions/technologist-request-approvals.ts', import.meta.url), 'utf8')
+const requestActions = await readFile(new URL('../src/lib/actions/technologist-requests.ts', import.meta.url), 'utf8')
 
 for (const expected of [
   "'pending_financial_approval'",
@@ -35,6 +38,22 @@ for (const expected of [
   'Задача завершается после повторной отправки заявки',
   'Restore work items for versions that were already returned',
 ]) assert.ok(workflowMigration.toLowerCase().includes(expected.toLowerCase()), `personal workflow migration contract is missing: ${expected}`)
+
+for (const expected of [
+  "'fn_technologist_approval_department_head(''Технический отдел'')'",
+  'fn_restore_technologist_revision_positions',
+  'jsonb_populate_recordset',
+  'on conflict (id) do nothing',
+  'get diagnostics v_created = row_count',
+  "p_resource_key in ('my_orders', 'client_identity', 'client_prices', 'contracts'",
+  "private.crm_has_company_permission('contracts', 'view', client_id)",
+  "lower(department.name) like '%продаж%'",
+]) assert.ok(followupMigration.toLowerCase().includes(expected.toLowerCase()), `follow-up migration contract is missing: ${expected}`)
+
+assert.ok(approvalActions.includes("requirePermission('technologist_request_results', 'view')"), 'finance head decisions must use exact-head RPC authorization')
+assert.ok(!approvalActions.includes("hasPermission(permissions, 'technologist_request_results', 'manage') && head.data === userId"), 'finance head UI must not depend on a stale member/head flag')
+assert.ok(requestActions.includes('loadRequestItemPresence'), 'draft visibility must check whether the draft contains positions')
+assert.ok(requestActions.includes("request.status === 'draft' || revisionDraftIds.has(request.id)"), 'regular and rework drafts must share the non-empty visibility rule')
 
 assert.ok(requestCompletion.includes("rpc('fn_submit_technologist_request_for_approval'"), 'wizard must submit approval version')
 assert.match(

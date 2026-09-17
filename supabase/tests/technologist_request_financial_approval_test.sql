@@ -45,7 +45,7 @@ begin
     insert into public.positions(name, is_active) values ('Администратор CRM', true) returning id into v_admin_position;
   end if;
   insert into public.departments(id, name, factory_id, head_user_id) values
-    (v_department, 'Технологический отдел', v_factory, v_admin),
+    (v_department, 'Технический отдел', v_factory, v_admin),
     (v_finance_department, 'Финансовый отдел', v_factory, v_finance_one);
   insert into public.department_members(user_id, department_id, position_id) values (v_admin, v_department, v_admin_position);
   insert into public.department_members(user_id, department_id, is_department_head) values
@@ -224,7 +224,7 @@ begin
     raise exception 'return without a technologist department head unexpectedly succeeded';
   exception when others then
     get stacked diagnostics v_error = message_text;
-    if v_error not like '%начальник%технолог%' then raise; end if;
+    if v_error not like '%начальник%Техническ%' then raise; end if;
   end;
   if (select state from public.technologist_request_approval_versions where id = v_second_version) <> 'pending'
     or not exists (select 1 from public.tasks where technologist_request_approval_id = v_second_version

@@ -189,11 +189,14 @@ const migrationFiles = readdirSync(join(root, 'supabase/migrations'))
   .filter((file) => /^\d{14}_.+\.sql$/.test(file))
   .sort()
 assert.deepEqual(
-  migrationFiles.slice(-3),
+  migrationFiles.slice(-6),
   [
     '20260916090000_department_rls_matrix_cutover.sql',
     '20260916103000_fix_technologist_request_draft_visibility.sql',
     '20260917050000_fix_users_self_visibility.sql',
+    '20260917115900_technologist_revision_task_type.sql',
+    '20260917120000_technologist_approval_personal_workflow.sql',
+    '20260917180000_approval_revision_contract_scope.sql',
   ],
   'После cutover разрешены только проверенные follow-up миграции',
 )

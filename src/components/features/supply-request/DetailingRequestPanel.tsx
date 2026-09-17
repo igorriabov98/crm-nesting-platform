@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { AlertTriangle, CheckCircle2, Factory, PackageCheck, Route, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Factory, PackageCheck, Route, Search, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -45,9 +45,18 @@ function MatchRow({ match, requestId, canManage }: { match: DetailingRequestMatc
 export function DetailingRequestPanel({ workspace, canManage }: { workspace: DetailingRequestWorkspace; canManage: boolean }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
+  const [decision, setDecision] = useState(workspace.decision)
+  const [search, setSearch] = useState('')
   const activeReservations = workspace.reservations.filter((item) => ['active', 'partially_consumed'].includes(item.status) && item.allocations.some((allocation) => allocation.quantity > 0))
   const totalReservedQuantity = activeReservations.reduce((sum, item) => sum + item.allocations.reduce((value, allocation) => value + allocation.quantity, 0), 0)
   const totalReservedWeight = activeReservations.reduce((sum, item) => sum + item.allocations.reduce((value, allocation) => value + allocation.quantity * item.unitWeightKg, 0), 0)
+  const normalizedSearch = search.trim().toLocaleLowerCase('ru-RU')
+  const visibleMatches = decision === 'declined' ? [] : workspace.matches.filter((match) => !normalizedSearch || [
+    match.partName,
+    match.drawingNumber,
+    match.productLabel,
+    match.sourceFactoryName,
+  ].some((value) => value.toLocaleLowerCase('ru-RU').includes(normalizedSearch)))
 
   const decline = () => startTransition(async () => {
     const result = await declineDetailingForRequest(workspace.requestId)
@@ -55,6 +64,7 @@ export function DetailingRequestPanel({ workspace, canManage }: { workspace: Det
       toast.error(result.error || 'Не удалось сохранить решение')
       return
     }
+    setDecision('declined')
     toast.success('Сохранено: деталировку для заказа не используем'); router.refresh()
   })
   const release = (id: string) => startTransition(async () => {
@@ -72,12 +82,14 @@ export function DetailingRequestPanel({ workspace, canManage }: { workspace: Det
 
       {activeReservations.length > 0 && <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3"><div className="flex items-center gap-2 font-semibold text-emerald-900"><CheckCircle2 className="h-4 w-4" />Забронировано: {totalReservedQuantity} шт. · {kg(totalReservedWeight)}</div><div className="mt-3 space-y-2">{activeReservations.map((reservation) => <div key={reservation.id} className="flex flex-col gap-2 rounded-md bg-white/80 p-3 sm:flex-row sm:items-center sm:justify-between"><div><span className="font-medium">{reservation.partName} · {reservation.drawingNumber}</span><div className="mt-1 text-xs text-[#6B7280]">{reservation.allocations.map((allocation) => `${allocation.factoryName}: ${allocation.quantity} шт.`).join(' · ')}</div></div>{canManage && <Button variant="outline" size="sm" disabled={isPending} onClick={() => release(reservation.id)}>Снять бронь</Button>}</div>)}</div></div>}
 
-      {workspace.matches.length === 0 && activeReservations.length === 0 ? <div className="mt-4 flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-900"><CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" /><div><div className="font-semibold">Доступных совпадений нет</div><div className="mt-1 text-sm">Проверка будет пройдена автоматически перед отправкой заявки.</div></div></div> : <div className="mt-4 space-y-3">{workspace.matches.map((match) => <MatchRow key={`${match.machineItemId}:${match.partId}:${match.sourceFactoryId}`} match={match} requestId={workspace.requestId} canManage={canManage} />)}</div>}
+      {decision !== 'declined' && workspace.matches.length > 0 && <div className="relative mt-4 max-w-xl"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6B7280]" /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Поиск по детали, чертежу, изделию или заводу" aria-label="Поиск по деталировке" className="pl-9" /></div>}
 
-      {workspace.matches.some((match) => match.requiresTransfer) && <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />Бронь с другого завода создаст транспортную карточку и системную задачу перемещения.</div>}
+      {decision !== 'declined' && workspace.matches.length === 0 && activeReservations.length === 0 ? <div className="mt-4 flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-900"><CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" /><div><div className="font-semibold">Доступных совпадений нет</div><div className="mt-1 text-sm">Проверка будет пройдена автоматически перед отправкой заявки.</div></div></div> : decision !== 'declined' && <div className="mt-4 max-h-[520px] space-y-3 overflow-y-auto pr-1">{visibleMatches.map((match) => <MatchRow key={`${match.machineItemId}:${match.partId}:${match.sourceFactoryId}`} match={match} requestId={workspace.requestId} canManage={canManage} />)}{visibleMatches.length === 0 && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-[#6B7280]">По вашему запросу деталировка не найдена.</div>}</div>}
 
-      {canManage && workspace.matches.length > 0 && <div className="mt-4 flex flex-col gap-3 border-t border-[#E8ECF0] pt-4 sm:flex-row sm:items-center sm:justify-between"><div className="text-sm text-[#6B7280]">Если готовые детали для этого заказа использовать не нужно, подтвердите это явно.</div><Button variant="outline" disabled={isPending} onClick={decline}><XCircle />Не использовать деталировку</Button></div>}
-      {workspace.decision === 'declined' && <div className="mt-3 text-sm font-medium text-[#6B7280]">Решение сохранено: деталировка не используется.</div>}
+      {decision !== 'declined' && visibleMatches.some((match) => match.requiresTransfer) && <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />Бронь с другого завода создаст транспортную карточку и системную задачу перемещения.</div>}
+
+      {canManage && decision !== 'declined' && workspace.matches.length > 0 && <div className="mt-4 flex flex-col gap-3 border-t border-[#E8ECF0] pt-4 sm:flex-row sm:items-center sm:justify-between"><div className="text-sm text-[#6B7280]">Если готовые детали для этого заказа использовать не нужно, подтвердите это явно.</div><Button variant="outline" disabled={isPending} onClick={decline}><XCircle />Не использовать деталировку</Button></div>}
+      {decision === 'declined' && <div className="mt-4 flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-slate-700"><CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" /><div><div className="font-semibold">Деталировка не используется</div><div className="mt-1 text-sm">Решение сохранено. Можно переходить к следующему этапу проверки склада.</div></div></div>}
     </section>
   )
 }

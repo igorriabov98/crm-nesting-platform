@@ -2,9 +2,9 @@ import { ROUTES } from '@/lib/constants/routes'
 
 export const DEPARTMENT_REQUEST_TARGETS = {
   technologist: {
-    label: 'Технолог',
-    recipientLabel: 'технологу',
-    description: 'Нестандартные расчёты, документация и технические решения',
+    label: 'Технический отдел',
+    recipientLabel: 'в Технический отдел',
+    description: 'Запросы технологам и инженерам: расчёты, документация и технические решения',
     route: ROUTES.TECHNOLOGIST_DEPARTMENT_REQUESTS,
   },
   supply: {

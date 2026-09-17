@@ -29,7 +29,7 @@ const version = sql(`
     ('${ids.author}','${ids.author}@approval.test','Автор гонки','technologist','${ids.factory}',true),
     ('${ids.reviewer}','${ids.reviewer}@approval.test','Финансовый директор гонки','financial_director','${ids.factory}',true);
   insert into departments(id,name,factory_id,head_user_id) values
-    ('${ids.authorDepartment}','Технологический отдел','${ids.factory}','${ids.author}'),
+    ('${ids.authorDepartment}','Технический отдел','${ids.factory}','${ids.author}'),
     ('${ids.reviewerDepartment}','Финансовый отдел','${ids.factory}','${ids.reviewer}');
   insert into department_members(user_id,department_id,is_department_head) values
     ('${ids.author}','${ids.authorDepartment}',false),
@@ -37,6 +37,8 @@ const version = sql(`
   insert into department_access_permissions(department_id,subject_scope,resource_key,can_view,can_manage) values
     ('${ids.authorDepartment}','member','technologist_requests',true,true),
     ('${ids.authorDepartment}','member','inventory_detailing',true,true),
+    ('${ids.authorDepartment}','head','technologist_requests',true,true),
+    ('${ids.authorDepartment}','head','inventory_detailing',true,true),
     ('${ids.reviewerDepartment}','member','technologist_request_results',true,true),
     ('${ids.reviewerDepartment}','head','technologist_request_results',true,true);
   insert into machines(id,factory_id,name,created_by,status,material_type)

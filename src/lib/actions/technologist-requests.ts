@@ -80,6 +80,7 @@ export type TechnologistRequestListItem = Pick<
   TechnologistRequest,
   'id' | 'machine_id' | 'status' | 'submitted_at' | 'created_at' | 'updated_at'
 > & {
+  request_number: number
   lifecycle_status: RequestLifecycleStatus
   lifecycle_label: string
 }
@@ -253,6 +254,23 @@ async function loadRequestOrderStatuses(db: LooseDb, requestIds: string[]) {
   }
 
   return statuses
+}
+
+async function loadRequestItemPresence(db: LooseDb, requestIds: string[]) {
+  const present = new Set<string>()
+  const ids = Array.from(new Set(requestIds.filter(Boolean)))
+  if (ids.length === 0) return present
+  const results = await Promise.all(REQUEST_SECTION_TABLES.map((table) => db
+    .from(table)
+    .select('request_id')
+    .in('request_id', ids)))
+  for (const result of results) {
+    if (result.error) throw new Error(result.error.message || 'Не удалось проверить позиции черновиков')
+    for (const row of (result.data || []) as Array<{ request_id?: string | null }>) {
+      if (row.request_id) present.add(row.request_id)
+    }
+  }
+  return present
 }
 
 function requiredNumber(value: unknown) {
@@ -441,7 +459,15 @@ export async function getRequestsForMachine(machineId: string) {
   try {
     const { db, permissions } = await requireRequestPermission('view')
     const requests = await loadMachineRequests(db, machineId, permissions)
-    const statusesByRequest = await loadRequestOrderStatuses(db, requests.map((request) => request.id))
+    const requestIds = requests.map((request) => request.id)
+    const [statusesByRequest, itemPresence, revisionDrafts] = await Promise.all([
+      loadRequestOrderStatuses(db, requestIds),
+      loadRequestItemPresence(db, requestIds),
+      requestIds.length ? createAdminClient().from('technologist_request_revision_drafts')
+        .select('request_id').in('request_id', requestIds) : Promise.resolve({ data: [], error: null }),
+    ])
+    if (revisionDrafts.error) throw new Error(revisionDrafts.error.message)
+    const revisionDraftIds = new Set(((revisionDrafts.data || []) as Array<{ request_id: string }>).map((row) => row.request_id))
     const approvalVersions = requests.length ? await createAdminClient()
       .from('technologist_request_approval_versions')
       .select('request_id,revision_number,state')
@@ -452,7 +478,7 @@ export async function getRequestsForMachine(machineId: string) {
     for (const version of (approvalVersions.data || []) as Array<{ request_id: string; state: string }>) {
       if (!latestApprovalState.has(version.request_id)) latestApprovalState.set(version.request_id, version.state)
     }
-    const data: TechnologistRequestListItem[] = requests.map((request) => {
+    const data: TechnologistRequestListItem[] = requests.map((request, index) => {
       const lifecycleStatus = deriveRequestLifecycleStatus(request, statusesByRequest.get(request.id) || [], latestApprovalState.get(request.id))
       return {
         id: request.id,
@@ -461,9 +487,13 @@ export async function getRequestsForMachine(machineId: string) {
         submitted_at: request.submitted_at,
         created_at: request.created_at,
         updated_at: request.updated_at,
+        request_number: requests.length - index,
         lifecycle_status: lifecycleStatus,
         lifecycle_label: REQUEST_LIFECYCLE_LABELS[lifecycleStatus],
       }
+    }).filter((request) => {
+      const isDraft = request.status === 'draft' || revisionDraftIds.has(request.id)
+      return !isDraft || itemPresence.has(request.id)
     })
 
     return { data, error: null }
