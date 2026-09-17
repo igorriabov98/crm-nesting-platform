@@ -273,7 +273,7 @@ export async function finalizeTechnologistRequest(input: z.input<typeof finalize
   try {
     const parsed = finalizeSchema.parse(input)
     stagedArchives = parsed.archives
-    const { userId } = await requirePermission('technologist_requests', 'manage')
+    const { userId, supabase } = await requirePermission('technologist_requests', 'manage')
     const client = db()
     const [machineResult, sheetResult] = await Promise.all([
       client.from('technologist_requests').select('machine_id,created_by,status,machines(id,name,material_type)').eq('id', parsed.requestId).single(),
@@ -306,7 +306,10 @@ export async function finalizeTechnologistRequest(input: z.input<typeof finalize
       archives: stagedArchives,
     }
     const summarySnapshot = await buildTechnologistApprovalSnapshot(client, parsed.requestId, machineRelation, completionPayload)
-    const { data, error } = await client.rpc('fn_submit_technologist_request_for_approval', {
+    // The approval RPC verifies that p_actor matches auth.uid(). Keep the admin
+    // client for assembling the immutable snapshot, but submit through the
+    // authenticated user session so the database can enforce actor identity.
+    const { data, error } = await (supabase as any).rpc('fn_submit_technologist_request_for_approval', {
       p_request_id: parsed.requestId,
       p_actor: userId,
       p_completion_payload: completionPayload,

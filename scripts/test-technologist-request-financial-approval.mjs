@@ -22,6 +22,11 @@ for (const expected of [
 ]) assert.ok(migration.toLowerCase().includes(expected.toLowerCase()), `migration contract is missing: ${expected}`)
 
 assert.ok(requestCompletion.includes("rpc('fn_submit_technologist_request_for_approval'"), 'wizard must submit approval version')
+assert.match(
+  requestCompletion,
+  /const \{ userId, supabase \} = await requirePermission\('technologist_requests', 'manage'\)[\s\S]*?\(supabase as any\)\.rpc\('fn_submit_technologist_request_for_approval'/,
+  'approval submission must preserve the authenticated actor for the RPC',
+)
 assert.ok(!requestCompletion.includes("rpc('fn_finalize_technologist_request_with_archives'"), 'wizard must not directly finalize request')
 assert.ok(supplyRequest.includes("const visibleStatuses = ['pending_stock_check', 'stock_checked', 'submitted_to_supply', 'completed']"), 'supply direct-page allow-list changed unexpectedly')
 assert.ok(supplyRequest.includes("const isSupplyOnly = hasPermission(permissions, 'supply_material_requests', 'view')"), 'supply-only visibility must come from the access matrix')
