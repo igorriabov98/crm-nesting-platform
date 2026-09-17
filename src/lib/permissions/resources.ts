@@ -330,12 +330,14 @@ export const PERMISSION_RESOURCES = [
   {
     key: 'contracts',
     label: 'Контракты',
+    description: 'Контракты своих компаний или всех компаний по настройке отдела',
     group: 'Sales',
     defaultHref: ROUTES.CONTRACTS,
     defaultViewRoles: SALES_AND_DIRECTORS,
     defaultManageRoles: SALES_AND_DIRECTORS,
     routes: [{ path: ROUTES.CONTRACTS, match: 'prefix', operation: 'view' }],
     sidebar: { section: 'sales', icon: 'contracts', order: 50 },
+    supportsCompanyScope: true,
   },
   {
     key: 'client_payments',

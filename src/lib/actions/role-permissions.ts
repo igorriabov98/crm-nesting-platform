@@ -60,7 +60,7 @@ type MembershipRow = {
   department_id: string
   position_id: string | null
   is_department_head: boolean
-  department?: { id: string; name: string | null } | { id: string; name: string | null }[] | null
+  department?: { id: string; name: string | null; head_user_id?: string | null } | { id: string; name: string | null; head_user_id?: string | null }[] | null
   position?: { id: string; name: string | null; level: number | null } | { id: string; name: string | null; level: number | null }[] | null
   user?: { id: string; full_name: string | null; email: string; is_active: boolean | null } | { id: string; full_name: string | null; email: string; is_active: boolean | null }[] | null
 }
@@ -255,7 +255,7 @@ function normalizeMembership(row: MembershipRow): DepartmentPermissionMembership
     positionId: row.position_id ?? position?.id ?? null,
     positionName: position?.name ?? null,
     positionLevel: typeof position?.level === 'number' ? position.level : null,
-    isDepartmentHead: Boolean(row.is_department_head),
+    isDepartmentHead: Boolean(row.is_department_head || department?.head_user_id === row.user_id),
   }
 }
 
@@ -306,7 +306,7 @@ async function getUsers(client: LooseAuthAdminClient) {
 async function getMembershipRows(db: LooseDb) {
   const { data, error } = await db
     .from<MembershipRow[]>('department_members')
-    .select('id, user_id, department_id, position_id, is_department_head, department:department_id(id, name), position:position_id(id, name, level), user:user_id(id, full_name, email, is_active)')
+    .select('id, user_id, department_id, position_id, is_department_head, department:department_id(id, name, head_user_id), position:position_id(id, name, level), user:user_id(id, full_name, email, is_active)')
 
   if (error) throw new Error(error.message || 'Не удалось загрузить назначения пользователей')
   return Array.isArray(data) ? data : []

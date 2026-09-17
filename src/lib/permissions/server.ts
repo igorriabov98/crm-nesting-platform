@@ -61,10 +61,11 @@ type PermissionDb = {
 }
 
 type MembershipQueryRow = {
+  user_id: string
   department_id: string
   position_id?: string | null
   is_department_head: boolean
-  department?: { id: string; name: string | null } | { id: string; name: string | null }[] | null
+  department?: { id: string; name: string | null; head_user_id?: string | null } | { id: string; name: string | null; head_user_id?: string | null }[] | null
   position?: { id: string; name: string | null; level: number | null } | { id: string; name: string | null; level: number | null }[] | null
 }
 
@@ -82,7 +83,7 @@ function normalizeMembership(row: MembershipQueryRow): DepartmentPermissionMembe
     positionId: row.position_id ?? position?.id ?? null,
     positionName: position?.name ?? null,
     positionLevel: typeof position?.level === 'number' ? position.level : null,
-    isDepartmentHead: Boolean(row.is_department_head),
+    isDepartmentHead: Boolean(row.is_department_head || department?.head_user_id === row.user_id),
   }
 }
 
@@ -125,7 +126,7 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
   const [userResult, membershipResult] = await Promise.all([
     db.from('users').select('id, is_active').eq('id', userId).maybeSingle(),
     db.from('department_members')
-      .select('department_id, position_id, is_department_head, department:departments(id, name), position:positions(id, name, level)')
+      .select('user_id, department_id, position_id, is_department_head, department:departments(id, name, head_user_id), position:positions(id, name, level)')
       .eq('user_id', userId),
   ])
   const { data: userData, error: userError } = userResult

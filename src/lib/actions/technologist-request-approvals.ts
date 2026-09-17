@@ -5,7 +5,6 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
-import { hasPermission } from '@/lib/permissions/resources'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import { snapshotFromSource } from '@/lib/server/technologist-approval-snapshot'
@@ -21,9 +20,10 @@ function db() { return createAdminClient() as any }
 
 export async function getTechnologistApprovalList() {
   try {
-    const { userId, permissions } = await requirePermission('technologist_request_results', 'view')
+    const { userId } = await requirePermission('technologist_request_results', 'view')
     const head = await db().rpc('fn_technologist_approval_department_head', { p_name: 'Финансовый отдел' })
-    const reviewer = hasPermission(permissions, 'technologist_request_results', 'manage') && head.data === userId
+    if (head.error) throw head.error
+    const reviewer = head.data === userId
     const assigned = !reviewer ? await db().from('tasks')
       .select('approval_version:technologist_request_approval_versions!tasks_technologist_request_approval_id_fkey(request_id)')
       .eq('assigned_to', userId).eq('task_type', 'technologist_request_revision') : { data: [], error: null }
@@ -72,13 +72,14 @@ export async function getTechnologistApprovalList() {
 export async function getTechnologistApprovalDetail(requestId: string) {
   try {
     const id = requestIdSchema.parse(requestId)
-    const { userId, permissions } = await requirePermission('technologist_request_results', 'view')
+    const { userId } = await requirePermission('technologist_request_results', 'view')
     const requestResult = await db().from('technologist_requests')
       .select('id,machine_id,created_by,status,created_at,machines(id,name,material_type),users!technologist_requests_created_by_fkey(full_name)')
       .eq('id', id).single()
     if (requestResult.error || !requestResult.data) throw new Error('Заявка не найдена')
     const head = await db().rpc('fn_technologist_approval_department_head', { p_name: 'Финансовый отдел' })
-    const reviewer = hasPermission(permissions, 'technologist_request_results', 'manage') && head.data === userId
+    if (head.error) throw head.error
+    const reviewer = head.data === userId
     const revisionTasks = await db().from('tasks').select('technologist_request_approval_id').eq('assigned_to', userId)
       .eq('task_type', 'technologist_request_revision').in('status', ['pending', 'in_progress'])
     if (revisionTasks.error) throw revisionTasks.error
@@ -183,7 +184,7 @@ export async function beginTechnologistRequestRevision(requestId: string) {
 export async function returnTechnologistRequest(input: z.input<typeof returnSchema>) {
   try {
     const parsed = returnSchema.parse(input)
-    const { userId, supabase } = await requirePermission('technologist_request_results', 'manage')
+    const { userId, supabase } = await requirePermission('technologist_request_results', 'view')
     const version = await db().from('technologist_request_approval_versions').select('request_id').eq('id', parsed.versionId).single()
     if (version.error || !version.data) throw new Error('Версия не найдена')
     const { error } = await (supabase as any).rpc('fn_return_technologist_request_for_revision', {
@@ -198,7 +199,7 @@ export async function returnTechnologistRequest(input: z.input<typeof returnSche
 export async function approveTechnologistRequest(versionId: string) {
   try {
     const id = versionIdSchema.parse(versionId)
-    const { userId, supabase } = await requirePermission('technologist_request_results', 'manage')
+    const { userId, supabase } = await requirePermission('technologist_request_results', 'view')
     const version = await db().from('technologist_request_approval_versions').select('request_id').eq('id', id).single()
     if (version.error || !version.data) throw new Error('Версия не найдена')
     const { error } = await (supabase as any).rpc('fn_approve_technologist_request', { p_approval_version_id: id, p_actor: userId })

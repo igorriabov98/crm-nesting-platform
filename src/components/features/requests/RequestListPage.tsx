@@ -128,11 +128,11 @@ export function RequestListPage({ machine, requests, canCreate }: Props) {
           </div>
         ) : (
           <div className="divide-y divide-slate-100">
-            {requests.map((request, index) => (
+            {requests.map((request) => (
               <div key={request.id} className="grid gap-4 p-4 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center sm:p-5">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="text-base font-semibold text-slate-950">Заявка #{requests.length - index}</h2>
+                    <h2 className="text-base font-semibold text-slate-950">Заявка #{request.request_number}</h2>
                     <Badge variant="outline" className={cn('w-fit', lifecycleClasses[request.lifecycle_status])}>
                       {request.lifecycle_label}
                     </Badge>
