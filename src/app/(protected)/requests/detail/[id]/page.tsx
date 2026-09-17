@@ -375,6 +375,7 @@ export default async function DepartmentRequestDetailPage({
               status={request.status}
               mode={mode === 'inbox' && canManage ? 'inbox' : 'mine'}
               requestKind={request.request_kind}
+              approvalRequestId={request.approval_version?.request_id || null}
               machineId={request.machine_id}
               canClaimMachineLayout={canClaimMachineLayout}
               transportDateChangeRequestId={request.transport_trip_date_change_request_id}

@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { getTechnologistApprovalList } from '@/lib/actions/technologist-request-approvals'
 import { ROUTES } from '@/lib/constants/routes'
 import { formatApprovalVersion } from '@/lib/technologist-request-approval'
+import { approvalBadgeClass } from '@/lib/technologist-approval-badge'
 
 const stateLabels: Record<string, string> = {
   pending: 'На согласовании', returned: 'Возвращена', superseded: 'Заменена', approved: 'Одобрена',
@@ -49,7 +50,7 @@ export default async function TechnologistRequestResultsPage() {
           <tbody className="divide-y">{rows.map((row) => {
             const current = row.currentVersion; const order = machine(row)
             return <tr key={row.id} className="hover:bg-slate-50/70">
-              <td className="px-4 py-4 font-medium">№{row.request_number}<div className="mt-1"><Badge variant="outline">{current ? `Версия ${formatApprovalVersion(current.revision_number)} · ${stateLabels[current.state] || current.state}` : 'Черновик'}</Badge></div></td>
+              <td className="px-4 py-4 font-medium">№{row.request_number}<div className="mt-1"><Badge variant="outline" className={approvalBadgeClass(current?.state)}>{current ? `Версия ${formatApprovalVersion(current.revision_number)} · ${stateLabels[current.state] || current.state}` : 'Черновик'}</Badge></div></td>
               <td className="px-4 py-4">{order?.name || 'Без названия'}</td>
               <td className="px-4 py-4">{order?.material_type === 'standard' ? 'Стандартный' : order?.material_type === 'non_standard' ? 'Нестандартный' : '—'}</td>
               <td className="px-4 py-4 text-right"><Link className={buttonVariants({ variant: 'outline' })} href={`${ROUTES.TECHNOLOGIST_REQUEST_RESULTS}/${row.id}`}>Подробнее<ArrowRight className="ml-2 h-4 w-4" /></Link></td>
@@ -60,7 +61,7 @@ export default async function TechnologistRequestResultsPage() {
       <div className="grid gap-3 md:hidden">{rows.map((row) => {
         const current = row.currentVersion; const order = machine(row)
         return <Card key={row.id}><CardContent className="space-y-4 p-4">
-          <div className="flex items-start justify-between gap-3"><div><p className="font-semibold">№{row.request_number}</p><p className="mt-1 text-sm text-slate-600">{order?.name || 'Без названия'}</p></div><Badge variant="outline">{current ? `Версия ${formatApprovalVersion(current.revision_number)} · ${stateLabels[current.state] || current.state}` : 'Черновик'}</Badge></div>
+          <div className="flex items-start justify-between gap-3"><div><p className="font-semibold">№{row.request_number}</p><p className="mt-1 text-sm text-slate-600">{order?.name || 'Без названия'}</p></div><Badge variant="outline" className={approvalBadgeClass(current?.state)}>{current ? `Версия ${formatApprovalVersion(current.revision_number)} · ${stateLabels[current.state] || current.state}` : 'Черновик'}</Badge></div>
           <div className="text-sm"><span className="text-slate-500">Тип материала: </span>{order?.material_type === 'standard' ? 'Стандартный' : order?.material_type === 'non_standard' ? 'Нестандартный' : '—'}</div>
           <Link className={buttonVariants({ variant: 'outline', className: 'min-h-11 w-full' })} href={`${ROUTES.TECHNOLOGIST_REQUEST_RESULTS}/${row.id}`}>Подробнее<ArrowRight className="ml-2 h-4 w-4" /></Link>
         </CardContent></Card>

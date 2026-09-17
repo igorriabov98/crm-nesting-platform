@@ -11,6 +11,7 @@ declare
   v_technologist uuid := gen_random_uuid();
   v_finance_one uuid := gen_random_uuid();
   v_finance_two uuid := gen_random_uuid();
+  v_inactive_technologist uuid := gen_random_uuid();
   v_admin uuid := gen_random_uuid();
   v_supply uuid := gen_random_uuid();
   v_department uuid := gen_random_uuid();
@@ -20,6 +21,8 @@ declare
   v_request uuid := gen_random_uuid();
   v_second_machine uuid := gen_random_uuid();
   v_second_request uuid := gen_random_uuid();
+  v_fallback_machine uuid := gen_random_uuid();
+  v_fallback_request uuid := gen_random_uuid();
   v_second_sheet uuid := gen_random_uuid();
   v_second_component uuid := gen_random_uuid();
   v_steel_type uuid := gen_random_uuid();
@@ -34,32 +37,37 @@ begin
     (v_technologist, v_technologist || '@approval.test', 'Технолог теста', 'technologist', v_factory, true),
     (v_finance_one, v_finance_one || '@approval.test', 'Финансовый директор 1', 'financial_director', v_factory, true),
     (v_finance_two, v_finance_two || '@approval.test', 'Финансовый директор 2', 'financial_director', v_factory, true),
+    (v_inactive_technologist, v_inactive_technologist || '@approval.test', 'Технолог для fallback', 'technologist', v_factory, true),
     (v_admin, v_admin || '@approval.test', 'Администратор теста', 'technologist', v_factory, true),
     (v_supply, v_supply || '@approval.test', 'Снабжение теста', 'supply_manager', v_factory, true);
   select id into v_admin_position from public.positions where name = 'Администратор CRM';
   if v_admin_position is null then
     insert into public.positions(name, is_active) values ('Администратор CRM', true) returning id into v_admin_position;
   end if;
-  insert into public.departments(id, name, factory_id) values
-    (v_department, 'APPROVAL TEST TECHNOLOGY', v_factory),
-    (v_finance_department, 'APPROVAL TEST FINANCE', v_factory);
+  insert into public.departments(id, name, factory_id, head_user_id) values
+    (v_department, 'Технологический отдел', v_factory, v_admin),
+    (v_finance_department, 'Финансовый отдел', v_factory, v_finance_one);
   insert into public.department_members(user_id, department_id, position_id) values (v_admin, v_department, v_admin_position);
   insert into public.department_members(user_id, department_id, is_department_head) values
     (v_technologist, v_department, false),
-    (v_finance_one, v_finance_department, false),
+    (v_inactive_technologist, v_department, false),
+    (v_finance_one, v_finance_department, true),
     (v_finance_two, v_finance_department, false);
   insert into public.department_access_permissions(
     department_id, subject_scope, resource_key, can_view, can_manage
   ) values
     (v_department, 'member', 'technologist_requests', true, true),
     (v_department, 'member', 'inventory_detailing', true, true),
-    (v_finance_department, 'member', 'technologist_request_results', true, true);
+    (v_finance_department, 'member', 'technologist_request_results', true, true),
+    (v_finance_department, 'head', 'technologist_request_results', true, true);
   insert into public.machines(id, factory_id, name, created_by, status, material_type) values
     (v_machine, v_factory, 'APPROVAL ORDER 1', v_technologist, 'planned', 'standard'),
-    (v_second_machine, v_factory, 'APPROVAL ORDER 2', v_technologist, 'planned', 'non_standard');
+    (v_second_machine, v_factory, 'APPROVAL ORDER 2', v_technologist, 'planned', 'non_standard'),
+    (v_fallback_machine, v_factory, 'APPROVAL FALLBACK', v_inactive_technologist, 'planned', 'standard');
   insert into public.technologist_requests(id, machine_id, created_by, status) values
     (v_request, v_machine, v_technologist, 'stock_checked'),
-    (v_second_request, v_second_machine, v_technologist, 'stock_checked');
+    (v_second_request, v_second_machine, v_technologist, 'stock_checked'),
+    (v_fallback_request, v_fallback_machine, v_inactive_technologist, 'stock_checked');
   insert into public.steel_types(id, name, density_kg_mm3)
   values (v_steel_type, 'APPROVAL-TEST-STEEL', 0.00000785);
   insert into public.request_sheet_metal(
@@ -98,8 +106,16 @@ begin
     get stacked diagnostics v_error = message_text;
     if v_error not like '%реквизиты отправленной заявки%' then raise; end if;
   end;
-  if (select count(*) from public.tasks where technologist_request_approval_id = v_version) <> 2 then
-    raise exception 'approval task was not created for every active financial director';
+  if (select count(*) from public.tasks where technologist_request_approval_id = v_version) <> 1
+    or not exists (select 1 from public.tasks where technologist_request_approval_id = v_version and assigned_to = v_finance_one) then
+    raise exception 'approval task was not assigned only to the financial department head';
+  end if;
+  if not exists (select 1 from public.department_requests where technologist_approval_version_id = v_version
+      and request_kind = 'technologist_approval' and target_department = 'finance'
+      and assigned_to = v_finance_one and due_date = (now() at time zone 'Europe/Kyiv')::date)
+    or not exists (select 1 from public.notifications where user_id = v_finance_one
+      and type = 'department_request_new_technologist_approval' and related_machine_id = v_machine) then
+    raise exception 'personal financial request or notification is missing';
   end if;
   if exists (select 1 from public.tasks where technologist_request_approval_id = v_version and deadline <> (now() at time zone 'Europe/Kyiv')::date) then
     raise exception 'approval task deadline is not the submission date';
@@ -128,7 +144,7 @@ begin
     raise exception 'author approved own request without approval permission';
   exception when others then
     get stacked diagnostics v_error = message_text;
-    if v_error not like '%Недостаточно прав%' then raise; end if;
+    if v_error not like '%начальнику Финансового отдела%' then raise; end if;
   end;
   perform set_config('request.jwt.claim.sub', v_finance_one::text, true);
   begin
@@ -183,12 +199,73 @@ begin
     select 1 from public.technologist_request_approval_versions
     where id = v_version and state = 'returned' and return_reason = 'Уточнить количество материала'
   ) then raise exception 'returned version and reason were not preserved'; end if;
-  if exists (select 1 from public.tasks where technologist_request_approval_id = v_version and status in ('pending', 'in_progress')) then
+  if exists (select 1 from public.tasks where technologist_request_approval_id = v_version
+    and task_type = 'technologist_request_approval' and status in ('pending', 'in_progress')) then
     raise exception 'return did not close all approval tasks';
   end if;
+  if not exists (select 1 from public.department_requests where technologist_approval_version_id = v_version
+    and request_kind = 'technologist_revision' and assigned_to = v_technologist
+    and description like '%Уточнить количество материала%') then
+    raise exception 'personal rework request with director comment is missing';
+  end if;
 
-  update public.technologist_requests set status = 'stock_checked' where id = v_request;
+  perform set_config('request.jwt.claim.sub', v_inactive_technologist::text, true);
+  select public.fn_submit_technologist_request_for_approval(
+    v_fallback_request, v_inactive_technologist,
+    jsonb_build_object('decision', 'none', 'enteredPlasmaMinutes', 0, 'wasteItems', '[]'::jsonb, 'futureItems', '[]'::jsonb, 'archives', '[]'::jsonb),
+    jsonb_build_object('schemaVersion', 1, 'requestId', v_fallback_request, 'machineId', v_fallback_machine, 'items', '[]'::jsonb, 'sourceData', public.fn_technologist_approval_source(v_fallback_request)),
+    '[]'::jsonb
+  ) into v_second_version;
+  update public.users set is_active = false where id = v_inactive_technologist;
+  perform set_config('request.jwt.claim.sub', v_finance_one::text, true);
+  update public.users set is_active = false where id = v_admin;
+  begin
+    perform public.fn_return_technologist_request_for_revision(v_second_version, v_finance_one, 'Автор больше не активен');
+    raise exception 'return without a technologist department head unexpectedly succeeded';
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%начальник%технолог%' then raise; end if;
+  end;
+  if (select state from public.technologist_request_approval_versions where id = v_second_version) <> 'pending'
+    or not exists (select 1 from public.tasks where technologist_request_approval_id = v_second_version
+      and task_type = 'technologist_request_approval' and status = 'pending') then
+    raise exception 'failed fallback routing did not roll back the return';
+  end if;
+  update public.users set is_active = true where id = v_admin;
+  perform public.fn_return_technologist_request_for_revision(v_second_version, v_finance_one, 'Автор больше не активен');
+  if not exists (select 1 from public.department_requests where technologist_approval_version_id = v_second_version
+      and request_kind = 'technologist_revision' and assigned_to is null)
+    or not exists (select 1 from public.tasks where technologist_request_approval_id = v_second_version
+      and task_type = 'technologist_request_revision' and assigned_to = v_admin and status = 'pending')
+    or not exists (select 1 from public.notifications where user_id = v_admin
+      and type = 'department_request_new_technologist_revision' and related_machine_id = v_fallback_machine) then
+    raise exception 'inactive original technologist was not routed to the pool and department head';
+  end if;
+
+  begin
+    update public.tasks set status = 'completed' where technologist_request_approval_id = v_version
+      and task_type = 'technologist_request_revision';
+    raise exception 'revision task bypass unexpectedly succeeded';
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%после повторной отправки%' then raise; end if;
+  end;
+  begin
+    update public.department_requests set status = 'done' where technologist_approval_version_id = v_version
+      and request_kind = 'technologist_revision';
+    raise exception 'revision request bypass unexpectedly succeeded';
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%решением по заявке%' then raise; end if;
+  end;
   perform set_config('request.jwt.claim.sub', v_technologist::text, true);
+  perform public.fn_begin_technologist_request_revision(v_request, v_technologist);
+  perform public.fn_begin_technologist_request_revision(v_request, v_technologist);
+  if (select count(*) from public.technologist_request_revision_drafts where request_id = v_request) <> 1
+    or (select revision_number from public.technologist_request_revision_drafts where request_id = v_request) <> 1 then
+    raise exception 'opening version 1.1 is not idempotent';
+  end if;
+  update public.technologist_requests set status = 'stock_checked' where id = v_request;
   select public.fn_submit_technologist_request_for_approval(
     v_request, v_technologist,
     jsonb_build_object('decision', 'none', 'enteredPlasmaMinutes', 0, 'wasteItems', '[]'::jsonb, 'futureItems', '[]'::jsonb, 'archives', '[]'::jsonb),
@@ -198,12 +275,22 @@ begin
   if (select revision_number from public.technologist_request_approval_versions where id = v_version) <> 1 then
     raise exception 'second version is not revision 1.1';
   end if;
+  if exists (select 1 from public.technologist_request_revision_drafts where request_id = v_request)
+    or exists (select 1 from public.department_requests where technologist_approval_version_id in (
+        select id from public.technologist_request_approval_versions where request_id = v_request and revision_number = 0
+      ) and request_kind = 'technologist_revision' and status <> 'done')
+    or exists (select 1 from public.tasks where technologist_request_approval_id in (
+        select id from public.technologist_request_approval_versions where request_id = v_request and revision_number = 0
+      ) and task_type = 'technologist_request_revision' and status <> 'completed') then
+    raise exception 'resubmission did not close revision work or remove the draft';
+  end if;
   perform public.fn_begin_technologist_request_revision(v_request, v_technologist);
   if (select state from public.technologist_request_approval_versions where id = v_version) <> 'superseded' then
     raise exception 'self-edit did not preserve the previous version as superseded';
   end if;
 
   update public.users set is_active = false where id in (v_finance_one, v_finance_two);
+  update public.departments set head_user_id = v_admin where id = v_finance_department;
   perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   select public.fn_submit_technologist_request_for_approval(
     v_second_request, v_technologist,
@@ -221,7 +308,7 @@ begin
   ) into v_second_version;
   if not exists (
     select 1 from public.tasks where technologist_request_approval_id = v_second_version and assigned_to = v_admin
-  ) then raise exception 'CRM administrator fallback task was not created'; end if;
+  ) then raise exception 'configured financial head task was not created'; end if;
 
   begin
     update public.request_sheet_metal set quantity_sheets = 2 where id = v_second_sheet;
@@ -280,9 +367,10 @@ begin
     raise exception 'submission without any reviewers unexpectedly succeeded';
   exception when others then
     get stacked diagnostics v_error = message_text;
-    if v_error not like '%Нет активного финансового директора%' then raise; end if;
+    if v_error not like '%Не назначен действующий начальник Финансового отдела%' then raise; end if;
   end;
   update public.users set is_active = true where id = v_finance_one;
+  update public.departments set head_user_id = v_finance_one where id = v_finance_department;
   perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   select public.fn_submit_technologist_request_for_approval(v_request,v_technologist,
     jsonb_build_object('decision','none','enteredPlasmaMinutes',0,'wasteItems','[]'::jsonb,'futureItems','[]'::jsonb,'archives','[]'::jsonb),
@@ -304,6 +392,19 @@ begin
     end if;
     if exists (select 1 from public.technologist_request_completions where request_id = '94000000-0000-4000-8000-000000000001') then
       raise exception 'legacy migration replayed production side effects';
+    end if;
+  end if;
+  if exists (select 1 from public.technologist_request_approval_versions where id = '95000000-0000-4000-8000-000000000004') then
+    if not exists (select 1 from public.department_requests
+        where technologist_approval_version_id = '95000000-0000-4000-8000-000000000004'
+          and request_kind = 'technologist_revision' and assigned_to = '95000000-0000-4000-8000-000000000002')
+      or not exists (select 1 from public.tasks
+        where technologist_request_approval_id = '95000000-0000-4000-8000-000000000004'
+          and task_type = 'technologist_request_revision' and assigned_to = '95000000-0000-4000-8000-000000000002')
+      or not exists (select 1 from public.notifications
+        where user_id = '95000000-0000-4000-8000-000000000002'
+          and type = 'department_request_new_technologist_revision') then
+      raise exception 'returned-version migration backfill did not restore all three work items';
     end if;
   end if;
 end;

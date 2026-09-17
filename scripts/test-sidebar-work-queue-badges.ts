@@ -15,6 +15,7 @@ const counts: SidebarWorkQueueCounts = {
     supply: 3,
     production: 4,
     planning: 5,
+    finance: 0,
     total: 5,
   },
   transport: 5,

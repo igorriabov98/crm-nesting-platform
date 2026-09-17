@@ -73,7 +73,7 @@ export type DepartmentRequestEvent = {
 
 export type DepartmentRequestRow = {
   id: string
-  request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'supply_position_revision' | 'transport_trip_date_approval'
+  request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'supply_position_revision' | 'transport_trip_date_approval' | 'technologist_approval' | 'technologist_revision'
   target_department: DepartmentRequestTarget
   title: string
   description: string
@@ -89,6 +89,7 @@ export type DepartmentRequestRow = {
   long_stock_plan_id: string | null
   long_stock_returned_version_id: string | null
   transport_trip_date_change_request_id: string | null
+  approval_version: { request_id: string } | null
   transport_date_change: {
     transport_order_id: string
     transport_order: {
@@ -229,6 +230,7 @@ const requestListSelect = `
   long_stock_plan_id,
   long_stock_returned_version_id,
   transport_trip_date_change_request_id,
+  approval_version:technologist_request_approval_versions!department_requests_technologist_approval_version_id_fkey(request_id),
   request_item_label,
   due_date,
   response,
@@ -501,9 +503,12 @@ export async function getDepartmentRequestDetail(requestId: string) {
     || !request.factory_id
     || request.factory_id === context.factoryId
   const canManage = departmentAllowed && factoryAllowed
-  const personallyAssignedTransportApproval = request.request_kind !== 'transport_trip_date_approval'
+  const personallyAssignedTransportApproval = !['transport_trip_date_approval', 'technologist_approval'].includes(request.request_kind)
+    && !(request.request_kind === 'technologist_revision' && request.assigned_to)
     || request.assigned_to === context.userId
-  if (request.created_by !== context.userId && !(canManage && personallyAssignedTransportApproval)) return null
+  const assignedWorkflow = ['technologist_approval', 'technologist_revision'].includes(request.request_kind)
+    && request.assigned_to === context.userId
+  if (request.created_by !== context.userId && !(canManage && personallyAssignedTransportApproval) && !assignedWorkflow) return null
 
   if (
     request.created_by === context.userId
@@ -560,7 +565,7 @@ async function loadRequestMutationMeta(requestId: string) {
   return data as {
     target_department: DepartmentRequestTarget
     machine_id: string | null
-    request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'supply_position_revision' | 'transport_trip_date_approval'
+    request_kind: DepartmentRequestRow['request_kind']
   } | null
 }
 

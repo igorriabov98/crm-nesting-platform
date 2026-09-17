@@ -9,6 +9,7 @@ import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { getTechnologistApprovalDetail } from '@/lib/actions/technologist-request-approvals'
 import { ROUTES } from '@/lib/constants/routes'
+import { approvalBadgeClass } from '@/lib/technologist-approval-badge'
 import {
   formatApprovalVersion,
 } from '@/lib/technologist-request-approval'
@@ -23,7 +24,7 @@ export default async function RequestResultDetailPage({ params }: { params: Prom
     if (result.error === 'Заявка не найдена') notFound()
     return <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-red-700">{result.error}</div>
   }
-  const { request, versions, canReview, canEdit, currentSnapshot, currentDraft } = result.data
+  const { request, versions, canReview, canEdit, currentSnapshot, currentDraft, revisionDraft } = result.data
   const order = Array.isArray(request.machines) ? request.machines[0] : request.machines
   type VersionView = {
     id: string
@@ -36,7 +37,7 @@ export default async function RequestResultDetailPage({ params }: { params: Prom
   return <main className="mx-auto max-w-6xl space-y-6 pb-16">
     <Link className={buttonVariants({ variant: 'ghost', className: '-ml-3' })} href={ROUTES.TECHNOLOGIST_REQUEST_RESULTS}><ArrowLeft className="mr-2 h-4 w-4" />К итогам</Link>
     <header className="flex flex-col justify-between gap-4 rounded-xl border bg-white p-5 sm:flex-row sm:items-start">
-      <div><div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-semibold">Заявка №{request.request_number}</h1>{current && <Badge>{stateLabels[current.state] || current.state}</Badge>}</div><p className="mt-1 text-slate-600">{order?.name || 'Без названия'} · {order?.material_type === 'standard' ? 'Стандартный материал' : order?.material_type === 'non_standard' ? 'Нестандартный материал' : 'Тип не выбран'}</p></div>
+      <div><div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-semibold">Заявка №{request.request_number}{revisionDraft ? `.${revisionDraft.revision_number}` : ''}</h1>{current && <Badge variant="outline" className={approvalBadgeClass(current.state)}>{stateLabels[current.state] || current.state}</Badge>}{revisionDraft && <Badge variant="outline">Черновик редакции {request.request_number}.{revisionDraft.revision_number}</Badge>}</div><p className="mt-1 text-slate-600">{order?.name || 'Без названия'} · {order?.material_type === 'standard' ? 'Стандартный материал' : order?.material_type === 'non_standard' ? 'Нестандартный материал' : 'Тип не выбран'}</p></div>
     </header>
     <Card><CardHeader><CardTitle>{currentDraft ? 'Текущий черновик' : 'Текущая сводка'}{current && !currentDraft ? ` · Версия ${formatApprovalVersion(current.revision_number)}` : ''}</CardTitle></CardHeader><CardContent className="space-y-4">{currentDraft && <p className="text-sm text-slate-500">Состав и брони показаны на текущий момент. Отходность, время и будущая деталировка — по последней отправке; они обновятся после повторного итогового мастера.</p>}<ApprovalSummary snapshot={currentSnapshot || null} /></CardContent></Card>
     <ApprovalDecisionActions requestId={request.id} versionId={current?.id || null} canEdit={canEdit} canReview={canReview} pending={current?.state === 'pending'} />

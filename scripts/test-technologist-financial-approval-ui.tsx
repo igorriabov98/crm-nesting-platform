@@ -12,6 +12,7 @@ import * as dialogs from '../src/components/ui/dialog'
 import * as textareas from '../src/components/ui/textarea'
 import * as procurement from '../src/lib/constants/procurement'
 import * as approval from '../src/lib/technologist-request-approval'
+import * as approvalBadge from '../src/lib/technologist-approval-badge'
 import { ApprovalSummary, ApprovalDiff } from '../src/components/features/technologist/ApprovalSummary'
 
 function load<T>(path: string, imports: Record<string, unknown>): T {
@@ -77,6 +78,7 @@ test('history does not fetch or render snapshots before opening', () => {
     '@/components/ui/button': buttons, '@/lib/actions/technologist-request-approvals': {
       getTechnologistApprovalHistoryVersion() { throw new Error('History must be loaded on demand') },
     }, '@/lib/technologist-request-approval': approval,
+    '@/lib/technologist-approval-badge': approvalBadge,
     './ApprovalSummary': { ApprovalSummary, ApprovalDiff },
   })
   const html = renderToStaticMarkup(<history.ApprovalVersionHistory requestId="request" versions={[{ id:'version', revision_number:1, state:'returned', is_legacy:false }]} />)

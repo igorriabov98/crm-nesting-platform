@@ -125,6 +125,9 @@ for (const migration of migrations) {
   if (migration === '20260914120000_technologist_request_financial_approval.sql' && process.env.FINANCIAL_APPROVAL_LEGACY_FIXTURE === 'true') {
     runPsql('financial approval legacy fixture', readFileSync(path.join(root, 'supabase/tests/technologist_request_financial_approval_legacy_setup.sql'), 'utf8'))
   }
+  if (migration === '20260917120000_technologist_approval_personal_workflow.sql' && process.env.FINANCIAL_APPROVAL_LEGACY_FIXTURE === 'true') {
+    runPsql('returned approval backfill fixture', readFileSync(path.join(root, 'supabase/tests/technologist_request_financial_approval_returned_setup.sql'), 'utf8'))
+  }
   const replayPrelude = replayPreludes.get(migration)
   if (replayPrelude) runPsql(`${migration} replay prelude`, replayPrelude)
   const normalizedSource = normalizeForLocalPostgres(source)

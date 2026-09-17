@@ -46,6 +46,7 @@ export function RequestActions({
   status,
   mode,
   requestKind,
+  approvalRequestId,
   machineId,
   canClaimMachineLayout,
   transportDateChangeRequestId,
@@ -58,7 +59,8 @@ export function RequestActions({
   requestId: string
   status: DepartmentRequestStatus
   mode: 'mine' | 'inbox'
-  requestKind: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'supply_position_revision' | 'transport_trip_date_approval'
+  requestKind: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'supply_position_revision' | 'transport_trip_date_approval' | 'technologist_approval' | 'technologist_revision'
+  approvalRequestId: string | null
   machineId: string | null
   canClaimMachineLayout: boolean
   transportDateChangeRequestId: string | null
@@ -171,6 +173,14 @@ export function RequestActions({
         toast.error(error instanceof Error ? error.message : 'Не удалось изменить запрос')
       }
     })
+  }
+
+  if (['technologist_approval', 'technologist_revision'].includes(requestKind)) {
+    if (!approvalRequestId) return null
+    return <Link href={`${ROUTES.TECHNOLOGIST_REQUEST_RESULTS}/${approvalRequestId}`}
+      className={cn(buttonVariants({ variant: 'default' }), 'min-h-11')}>
+      {requestKind === 'technologist_approval' ? 'Проверить заявку' : 'Открыть доработку'}
+    </Link>
   }
 
   const activeReturnedPosition = ['new', 'in_progress'].includes(status)

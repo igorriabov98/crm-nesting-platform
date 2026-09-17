@@ -152,7 +152,7 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
     const result = await finalizeTechnologistRequest(completionPayload(archives))
     if (!result.success) { toast.error(result.error || 'Не удалось завершить заявку'); return false }
     toast.success('Версия заявки отправлена финансовому директору')
-    router.replace(`${ROUTES.TECHNOLOGIST_REQUEST_RESULTS}/${workspace.requestId}`)
+    router.replace(ROUTES.MATERIAL_REQUESTS)
     return true
   }
 
