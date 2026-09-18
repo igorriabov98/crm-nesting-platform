@@ -173,19 +173,16 @@ declare
   v_table text;
   v_columns text;
   v_rows jsonb;
-  v_replication_role text := current_setting('session_replication_role');
+  v_search_path text := current_setting('search_path');
 begin
   if p_source is null or jsonb_typeof(p_source) <> 'object' then
     raise exception 'Снимок исходной заявки не найден';
   end if;
 
-  -- Approval snapshots already contain the validated calculated and lifecycle
-  -- values. Replaying business triggers while restoring them can both mutate
-  -- that immutable snapshot and invoke legacy trigger functions whose hardened
-  -- search_path no longer resolves unqualified relations. The SECURITY DEFINER
-  -- owner is the migration owner, so trigger suppression remains scoped to this
-  -- transaction and is restored before returning to the caller.
-  perform set_config('session_replication_role', 'replica', true);
+  -- Legacy calculation triggers inherit this SECURITY DEFINER function's
+  -- hardened empty search_path. Give those triggers an explicit trusted schema
+  -- while rows are restored, then restore the caller's path before returning.
+  perform set_config('search_path', 'pg_catalog, public, pg_temp', true);
 
   foreach v_table in array array[
     'request_sheet_metal','request_round_tube','request_circle','request_pipe',
@@ -210,9 +207,9 @@ begin
     ) using v_rows;
   end loop;
 
-  perform set_config('session_replication_role', v_replication_role, true);
+  perform set_config('search_path', v_search_path, true);
 exception when others then
-  perform set_config('session_replication_role', v_replication_role, true);
+  perform set_config('search_path', v_search_path, true);
   raise;
 end $$;
 
