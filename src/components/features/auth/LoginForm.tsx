@@ -3,7 +3,6 @@
 // Форма входа — клиентский компонент
 // React Hook Form + Zod валидация + Supabase Auth
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -34,7 +33,6 @@ const loginSchema = z.object({
 type LoginFormValues = z.infer<typeof loginSchema>
 
 export function LoginForm() {
-  const router = useRouter()
   const [isLoading, setIsLoading] = useState(false)
 
   const form = useForm<LoginFormValues>({
@@ -63,8 +61,7 @@ export function LoginForm() {
     }
 
     toast.success('Добро пожаловать!')
-    router.push(ROUTES.DASHBOARD)
-    router.refresh()
+    window.location.replace(ROUTES.DASHBOARD)
   }
 
   return (

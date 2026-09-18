@@ -110,10 +110,11 @@ export async function startUserImpersonation(targetUserId: string) {
       throw new Error(verificationError?.message || 'Сессия открылась не для выбранного пользователя')
     }
 
+    const landingPath = getTargetLandingPath(previewResult.data)
     return {
       success: true as const,
       error: null,
-      redirectTo: getTargetLandingPath(previewResult.data),
+      redirectTo: `/api/impersonation/continue?audit=${encodeURIComponent(auditId)}&next=${encodeURIComponent(landingPath)}`,
     }
   } catch (error) {
     let requiresLogin = false

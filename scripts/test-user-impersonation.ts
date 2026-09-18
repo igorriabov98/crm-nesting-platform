@@ -81,4 +81,27 @@ assert.match(stopRoute, /fetchSite === 'same-origin'/)
 assert.match(stopRoute, /fetchSite === 'none'/)
 assert.doesNotMatch(stopRoute, /fetchSite === 'cross-site'/)
 
+const continueRoute = readFileSync(
+  path.resolve('src/app/api/impersonation/continue/route.ts'),
+  'utf8',
+)
+assert.match(continueRoute, /marker\.auditId !== auditId/)
+assert.match(continueRoute, /context\.userId !== marker\.targetUserId/)
+assert.match(continueRoute, /safeNextPath/)
+assert.match(continueRoute, /Cache-Control', 'no-store, max-age=0'/)
+assert.doesNotMatch(continueRoute, /fetchSite === 'cross-site'/)
+
+const impersonationAction = readFileSync(
+  path.resolve('src/lib/actions/impersonation.ts'),
+  'utf8',
+)
+assert.match(impersonationAction, /\/api\/impersonation\/continue\?audit=/)
+
+const loginForm = readFileSync(
+  path.resolve('src/components/features/auth/LoginForm.tsx'),
+  'utf8',
+)
+assert.match(loginForm, /window\.location\.replace\(ROUTES\.DASHBOARD\)/)
+assert.doesNotMatch(loginForm, /router\.push\(ROUTES\.DASHBOARD\)/)
+
 console.log('User impersonation session helpers: OK')
