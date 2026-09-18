@@ -27,7 +27,7 @@ const version = sql(`
   insert into factories(id,name) values ('${ids.factory}','APPROVAL-CONCURRENCY-TEST');
   insert into users(id,email,full_name,role,factory_id,is_active) values
     ('${ids.author}','${ids.author}@approval.test','Автор гонки','technologist','${ids.factory}',true),
-    ('${ids.reviewer}','${ids.reviewer}@approval.test','Финансовый директор гонки','financial_director','${ids.factory}',true);
+    ('${ids.reviewer}','${ids.reviewer}@approval.test','Начальник финансового отдела гонки','engineer','${ids.factory}',true);
   insert into departments(id,name,factory_id,head_user_id) values
     ('${ids.authorDepartment}','Технический отдел','${ids.factory}','${ids.author}'),
     ('${ids.reviewerDepartment}','Финансовый отдел','${ids.factory}','${ids.reviewer}');
