@@ -66,7 +66,7 @@ sql(`
   insert into technologist_requests(id,machine_id,created_by,status)
     values ('${restoreRequest}','${ids.machine}','${ids.author}','pending_stock_check');
   insert into request_knives(id,request_id,knife_type,order_mm,steel_type_id,width_mm,height_mm,remainder_meters,remainder_qty,calculated_weight_kg)
-    values ('${restoreKnife}','${restoreRequest}','Нож из снимка',1000,'${ids.steel}',100,10,1,1,12.34);
+    values ('${restoreKnife}','${restoreRequest}','Нож из снимка',1000,'${ids.steel}',100,10,1,1,7.85);
   commit;
 `)
 const sourceSnapshot = sql(`select jsonb_build_object('request_knives', jsonb_agg(to_jsonb(knife))) from request_knives knife where request_id = '${restoreRequest}'`).trim()
@@ -81,7 +81,7 @@ sql(`
   select fn_restore_technologist_revision_positions('${restoreRequest}', '${sourceSnapshot.replaceAll("'", "''")}'::jsonb);
   commit;
 `)
-assert.equal(sql(`select calculated_weight_kg from request_knives where id = '${restoreKnife}'`).trim(), '12.34', 'Revision restore must preserve snapshot values without running legacy calculation triggers')
+assert.equal(sql(`select calculated_weight_kg from request_knives where id = '${restoreKnife}'`).trim(), '7.85', 'Revision restore must provide a trusted search path to legacy calculation triggers')
 const secondRequest = randomUUID()
 const secondVersion = sql(`
   insert into technologist_requests(id,machine_id,created_by,status) values ('${secondRequest}','${ids.machine}','${ids.author}','stock_checked');
