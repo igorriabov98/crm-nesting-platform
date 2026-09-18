@@ -5,6 +5,7 @@ const migration = await readFile(new URL('../supabase/migrations/20260914120000_
 const workflowMigration = await readFile(new URL('../supabase/migrations/20260917120000_technologist_approval_personal_workflow.sql', import.meta.url), 'utf8')
 const followupMigration = await readFile(new URL('../supabase/migrations/20260917180000_approval_revision_contract_scope.sql', import.meta.url), 'utf8')
 const jwtContextMigration = await readFile(new URL('../supabase/migrations/20260918130000_finance_approval_jwt_context.sql', import.meta.url), 'utf8')
+const cleanupActorMigration = await readFile(new URL('../supabase/migrations/20260918160000_finance_approval_draft_cleanup_actor.sql', import.meta.url), 'utf8')
 const requestCompletion = await readFile(new URL('../src/lib/actions/request-completion.ts', import.meta.url), 'utf8')
 const supplyRequest = await readFile(new URL('../src/lib/actions/supply-request.ts', import.meta.url), 'utf8')
 const approvalActions = await readFile(new URL('../src/lib/actions/technologist-request-approvals.ts', import.meta.url), 'utf8')
@@ -58,6 +59,12 @@ for (const expected of [
   'v_request.created_by::text',
   'v_original_claims',
 ]) assert.ok(jwtContextMigration.toLowerCase().includes(expected.toLowerCase()), `approval JWT context migration is missing: ${expected}`)
+
+for (const expected of [
+  "current_setting('app.financial_approval_request', true) = new.id::text",
+  'then new.created_by',
+  'fn_discard_long_stock_request_item_drafts_v1(new.id, v_actor, null, null)',
+]) assert.ok(cleanupActorMigration.toLowerCase().includes(expected.toLowerCase()), `approval draft cleanup actor migration is missing: ${expected}`)
 
 assert.ok(approvalActions.includes("requirePermission('technologist_request_results', 'view')"), 'finance head decisions must use exact-head RPC authorization')
 assert.ok(!approvalActions.includes("hasPermission(permissions, 'technologist_request_results', 'manage') && head.data === userId"), 'finance head UI must not depend on a stale member/head flag')
