@@ -58,6 +58,30 @@ const version = sql(`
   commit;
 `).trim()
 assert.match(version, /^[0-9a-f-]{36}$/)
+const restoreRequest = randomUUID()
+const restoreKnife = randomUUID()
+sql(`
+  begin;
+  set local session_replication_role = replica;
+  insert into technologist_requests(id,machine_id,created_by,status)
+    values ('${restoreRequest}','${ids.machine}','${ids.author}','pending_stock_check');
+  insert into request_knives(id,request_id,knife_type,order_mm,steel_type_id,width_mm,height_mm,remainder_meters,remainder_qty,calculated_weight_kg)
+    values ('${restoreKnife}','${restoreRequest}','Нож из снимка',1000,'${ids.steel}',100,10,1,1,12.34);
+  commit;
+`)
+const sourceSnapshot = sql(`select jsonb_build_object('request_knives', jsonb_agg(to_jsonb(knife))) from request_knives knife where request_id = '${restoreRequest}'`).trim()
+assert.ok(sourceSnapshot.includes(restoreKnife), 'Approval snapshot must contain the knife fixture')
+sql(`
+  begin;
+  set local session_replication_role = replica;
+  delete from request_knives where id = '${restoreKnife}';
+  commit;
+  begin;
+  set local role service_role;
+  select fn_restore_technologist_revision_positions('${restoreRequest}', '${sourceSnapshot.replaceAll("'", "''")}'::jsonb);
+  commit;
+`)
+assert.equal(sql(`select calculated_weight_kg from request_knives where id = '${restoreKnife}'`).trim(), '12.34', 'Revision restore must preserve snapshot values without running legacy calculation triggers')
 const secondRequest = randomUUID()
 const secondVersion = sql(`
   insert into technologist_requests(id,machine_id,created_by,status) values ('${secondRequest}','${ids.machine}','${ids.author}','stock_checked');
