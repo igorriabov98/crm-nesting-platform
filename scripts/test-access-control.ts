@@ -367,6 +367,7 @@ assert(
 )
 
 const apiRoutesWithDedicatedAuthorization = new Set([
+  'src/app/api/impersonation/continue/route.ts',
   'src/app/api/impersonation/stop/route.ts',
   'src/app/api/mail/attachments/[id]/route.ts',
   'src/app/api/mail/oauth/callback/route.ts',
