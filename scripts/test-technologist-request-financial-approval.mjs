@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 const migration = await readFile(new URL('../supabase/migrations/20260914120000_technologist_request_financial_approval.sql', import.meta.url), 'utf8')
 const workflowMigration = await readFile(new URL('../supabase/migrations/20260917120000_technologist_approval_personal_workflow.sql', import.meta.url), 'utf8')
 const followupMigration = await readFile(new URL('../supabase/migrations/20260917180000_approval_revision_contract_scope.sql', import.meta.url), 'utf8')
+const jwtContextMigration = await readFile(new URL('../supabase/migrations/20260918130000_finance_approval_jwt_context.sql', import.meta.url), 'utf8')
 const requestCompletion = await readFile(new URL('../src/lib/actions/request-completion.ts', import.meta.url), 'utf8')
 const supplyRequest = await readFile(new URL('../src/lib/actions/supply-request.ts', import.meta.url), 'utf8')
 const approvalActions = await readFile(new URL('../src/lib/actions/technologist-request-approvals.ts', import.meta.url), 'utf8')
@@ -49,6 +50,14 @@ for (const expected of [
   "private.crm_has_company_permission('contracts', 'view', client_id)",
   "lower(department.name) like '%продаж%'",
 ]) assert.ok(followupMigration.toLowerCase().includes(expected.toLowerCase()), `follow-up migration contract is missing: ${expected}`)
+
+for (const expected of [
+  "current_setting(''request.jwt.claims'', true)",
+  "jsonb_set(",
+  "''{sub}''",
+  'v_request.created_by::text',
+  'v_original_claims',
+]) assert.ok(jwtContextMigration.toLowerCase().includes(expected.toLowerCase()), `approval JWT context migration is missing: ${expected}`)
 
 assert.ok(approvalActions.includes("requirePermission('technologist_request_results', 'view')"), 'finance head decisions must use exact-head RPC authorization')
 assert.ok(!approvalActions.includes("hasPermission(permissions, 'technologist_request_results', 'manage') && head.data === userId"), 'finance head UI must not depend on a stale member/head flag')
