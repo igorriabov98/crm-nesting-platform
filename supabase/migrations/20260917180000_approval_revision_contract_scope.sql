@@ -169,11 +169,24 @@ create or replace function public.fn_restore_technologist_revision_positions(
   p_request_id uuid,
   p_source jsonb
 ) returns void language plpgsql security definer set search_path = '' as $$
-declare v_table text; v_columns text; v_rows jsonb;
+declare
+  v_table text;
+  v_columns text;
+  v_rows jsonb;
+  v_replication_role text := current_setting('session_replication_role');
 begin
   if p_source is null or jsonb_typeof(p_source) <> 'object' then
     raise exception 'Снимок исходной заявки не найден';
   end if;
+
+  -- Approval snapshots already contain the validated calculated and lifecycle
+  -- values. Replaying business triggers while restoring them can both mutate
+  -- that immutable snapshot and invoke legacy trigger functions whose hardened
+  -- search_path no longer resolves unqualified relations. The SECURITY DEFINER
+  -- owner is the migration owner, so trigger suppression remains scoped to this
+  -- transaction and is restored before returning to the caller.
+  perform set_config('session_replication_role', 'replica', true);
+
   foreach v_table in array array[
     'request_sheet_metal','request_round_tube','request_circle','request_pipe',
     'request_knives','request_components','request_paint','request_mesh','request_chain_cord'
@@ -196,6 +209,11 @@ begin
       v_table, v_columns
     ) using v_rows;
   end loop;
+
+  perform set_config('session_replication_role', v_replication_role, true);
+exception when others then
+  perform set_config('session_replication_role', v_replication_role, true);
+  raise;
 end $$;
 
 revoke all on function public.fn_restore_technologist_revision_positions(uuid,jsonb) from public, anon, authenticated;
