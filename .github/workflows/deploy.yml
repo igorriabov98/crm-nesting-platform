@@ -327,17 +327,27 @@ jobs:
       - name: Verify Vercel deployed version
         run: |
           deployed=""
+          deployment_id="$(jq -r '.id // .uid // empty' vercel-inspect.json)"
+          if [ -z "$deployment_id" ]; then
+            echo "Vercel deployment id is missing"
+            exit 1
+          fi
           for attempt in 1 2 3; do
             probe="$(curl -fsS -o /dev/null -w '%{http_code} %{url_effective}' https://www.crmleda.online/api/version || true)"
             deployed="$(curl -fsS https://www.crmleda.online/api/version | jq -r '.sha' || true)"
-            echo "Vercel version check ${attempt}/3: probe=${probe:-failed} body=${deployed:-missing}"
-            if [ "$deployed" = "$GITHUB_SHA" ]; then
+            served_deployment="$(curl -fsSI https://www.crmleda.online/login \
+              | tr -d '\r' \
+              | grep -Eio 'dpl=dpl_[A-Za-z0-9]+' \
+              | head -n 1 \
+              | cut -d= -f2 || true)"
+            echo "Vercel version check ${attempt}/3: probe=${probe:-failed} body=${deployed:-missing} deployment=${served_deployment:-missing}"
+            if [ "$deployed" = "$GITHUB_SHA" ] && [ "$served_deployment" = "$deployment_id" ]; then
               exit 0
             fi
             sleep 5
           done
 
-          echo "Vercel deployed version mismatch: expected ${GITHUB_SHA}, got ${deployed:-missing}"
+          echo "Vercel deployment mismatch: expected sha=${GITHUB_SHA} deployment=${deployment_id}, got sha=${deployed:-missing} deployment=${served_deployment:-missing}"
           exit 1
 
   smoke:

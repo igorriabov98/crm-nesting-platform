@@ -4,6 +4,7 @@ import type { Metadata } from 'next'
 import { Fira_Code, Fira_Sans, Geist_Mono, Inter } from 'next/font/google'
 import { Toaster } from '@/components/ui/sonner'
 import { TopProgressBar } from '@/components/features/layout/TopProgressBar'
+import { DeploymentVersionGuard } from '@/components/layout/DeploymentVersionGuard'
 import './globals.css'
 import { validateEnv } from '@/lib/config'
 
@@ -46,6 +47,7 @@ export default function RootLayout({
         <Suspense fallback={null}>
           <TopProgressBar />
         </Suspense>
+        <DeploymentVersionGuard buildSha={process.env.DEPLOY_SHA ?? null} />
         {children}
         <Toaster position="top-right" richColors />
       </body>
