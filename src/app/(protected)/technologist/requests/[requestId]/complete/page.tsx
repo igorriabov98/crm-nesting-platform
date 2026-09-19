@@ -1,9 +1,10 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { notFound, redirect } from 'next/navigation'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { getCompletionWorkspace } from '@/lib/actions/request-completion'
 import { RequestCompletionWizard } from '@/components/features/technologist/RequestCompletionWizard'
 
-export default async function RequestCompletionPage({ params }: { params: Promise<{ requestId: string }> }) {
+async function RequestCompletionPage({ params }: { params: Promise<{ requestId: string }> }) {
   const { requestId } = await params
   const result = await getCompletionWorkspace(requestId)
   if (result.redirectTo) redirect(result.redirectTo)
@@ -13,3 +14,5 @@ export default async function RequestCompletionPage({ params }: { params: Promis
   }
   return <RequestCompletionWizard workspace={result.data} />
 }
+
+export default withPagePermission('/technologist/requests/sample-id/complete', RequestCompletionPage)

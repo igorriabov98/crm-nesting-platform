@@ -4,6 +4,7 @@ export const ROUTES = {
   LOGIN:          '/login',
   PROFILE:        '/profile',
   DASHBOARD:      '/dashboard',
+  ADMIN_ORGANIZATION: '/admin/organization',
   ADMIN_USERS:    '/admin/users',
   ADMIN_USERS_NEW:'/admin/users/new',
   ADMIN_DATABASE: '/admin/database',

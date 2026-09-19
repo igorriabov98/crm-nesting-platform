@@ -40,26 +40,18 @@ function fixture({ session = true, active = true, admin = false, allow = false, 
       authCalls++
       return { data: { user: session ? { id: 'user-1' } : null }, error: null }
     } },
-    from(table) {
-      const filters = {}
-      const query = {
-        select() { return query }, eq(key, value) { filters[key] = value; return query },
-        in(key, value) { filters[key] = value; return query }, maybeSingle() { return query },
-        then(resolve, reject) {
-          calls.push({ table, filters })
-          const rows = {
-            users: { id: 'user-1', role: roleOnly ? 'director' : 'technologist', is_active: active },
-            department_members: [{ department_id: 'department-1', position_id: 'position-1', is_department_head: false,
-              department: { id: 'department-1', name: 'Production' },
-              position: { id: 'position-1', name: admin ? 'Администратор CRM' : 'Technologist', level: 1 } }],
-            department_access_permissions: [{ department_id: 'department-1', subject_scope: 'member', resource_key: 'materials', can_view: allow, can_manage: false }],
-            role_permissions: [],
-          }
-          assert.ok(table in rows, `Lookup must not query ${table}`)
-          return Promise.resolve({ data: rows[table], error: table === 'department_members' ? membershipError : null }).then(resolve, reject)
-        },
-      }
-      return query
+    async rpc(name, args) {
+      calls.push({ name, args })
+      assert.equal(name, 'crm_access_snapshot')
+      assert.equal(args.p_user_id, 'user-1')
+      return { data: membershipError ? null : {
+        userId: 'user-1', version: '1', isActive: active, isAdmin: admin,
+        memberships: [{ departmentId: 'department-1', departmentName: 'Production',
+          positionId: 'position-1', positionName: roleOnly ? 'Администратор CRM' : 'Technologist',
+          positionLevel: 1, isDepartmentHead: false }],
+        accessRows: [{ department_id: 'department-1', subject_scope: 'member',
+          resource_key: 'materials', can_view: allow, can_manage: false }],
+      }, error: membershipError }
     },
   }
   return { db, calls, permissions: loadPermissions(db), get authCalls() { return authCalls } }
@@ -77,14 +69,14 @@ test('blocked CRM administrator cannot read materials', async () => {
   await assert.rejects(() => f.permissions.requireReadPermissionDataClient('materials'), /Недостаточно прав/)
 })
 
-test('CRM administrator keeps access with only one profile and membership query', async () => {
+test('Protected CRM administrator keeps access with one atomic snapshot', async () => {
   const f = fixture({ admin: true })
   const result = await f.permissions.requireReadPermissionDataClient('materials')
   assert.equal(result.supabase, f.db)
   assert.equal(result.userId, 'user-1')
   assert.equal(f.authCalls, 1)
-  assert.deepEqual(f.calls.map((call) => call.table).sort(), ['department_members', 'users'])
-  assert.ok(f.calls.every((call) => call.filters.id === 'user-1' || call.filters.user_id === 'user-1'))
+  assert.equal(f.calls.length, 1)
+  assert.equal(f.calls[0].name, 'crm_access_snapshot')
 })
 
 test('ordinary employee uses the existing department matrix', async () => {
@@ -92,11 +84,11 @@ test('ordinary employee uses the existing department matrix', async () => {
     const f = fixture({ allow })
     if (allow) await f.permissions.requireReadPermissionDataClient('materials')
     else await assert.rejects(() => f.permissions.requireReadPermissionDataClient('materials'), /Недостаточно прав/)
-    assert.ok(f.calls.some((call) => call.table === 'department_access_permissions'))
+    assert.equal(f.calls.length, 1)
   }
 })
 
-test('director role alone does not bypass an explicit department denial', async () => {
+test('administrator position name alone does not bypass an explicit department denial', async () => {
   const f = fixture({ roleOnly: true })
   await assert.rejects(() => f.permissions.requireReadPermissionDataClient('materials'), /Недостаточно прав/)
 })

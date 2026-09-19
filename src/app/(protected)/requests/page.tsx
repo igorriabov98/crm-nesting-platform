@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { DepartmentRequestsPage } from '@/components/features/department-requests/DepartmentRequestsPage'
 import {
   getMyDepartmentRequestWorkspace,
@@ -8,7 +9,7 @@ export const metadata = {
   title: 'Запросы | CRM Завода',
 }
 
-export default async function MyDepartmentRequestsPage({
+async function MyDepartmentRequestsPage({
   searchParams,
 }: {
   searchParams: Promise<{
@@ -29,3 +30,5 @@ export default async function MyDepartmentRequestsPage({
 
   return <DepartmentRequestsPage workspace={workspace} factoryId={query.factory} />
 }
+
+export default withPagePermission('/requests', MyDepartmentRequestsPage)

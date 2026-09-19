@@ -3,27 +3,9 @@
 import { revalidatePath } from 'next/cache'
 import { ROUTES } from '@/lib/constants/routes'
 import { createAdminClient } from '@/lib/supabase/admin'
-import {
-  PERMISSION_RESOURCES,
-  RESOURCE_BY_KEY,
-  getEmptyPermissionMap,
-  getFullPermissionMap,
-  type PermissionState,
-  type FactoryAccessScope,
-  type CompanyAccessScope,
-  type ResourceKey,
-} from '@/lib/permissions/resources'
-import {
-  CRM_ADMIN_POSITION_NAME,
-  requireAccessSettingsPermission,
-  type DepartmentPermissionMembership,
-} from '@/lib/permissions/server'
-import {
-  resolveDepartmentPermissions,
-  type DepartmentAccessPermissionRow,
-  type CompanyAccessOperationScopes,
-  type FactoryAccessOperationScopes,
-} from '@/lib/permissions/resolve'
+import { PERMISSION_RESOURCES, RESOURCE_BY_KEY, type PermissionState, type FactoryAccessScope, type CompanyAccessScope, type ResourceKey } from '@/lib/permissions/resources'
+import { requireAccessSettingsPermission, requirePermission, requireAnyPermission, getAccessSnapshot, resolveAccessSnapshot, type DepartmentPermissionMembership } from '@/lib/permissions/server'
+import { type DepartmentAccessPermissionRow } from '@/lib/permissions/resolve'
 
 export type DepartmentAccessSubjectScope = 'head' | 'member'
 
@@ -36,6 +18,7 @@ type DepartmentAccessRow = DepartmentAccessPermissionRow & {
   factory_scope: FactoryAccessScope
   company_view_scope: CompanyAccessScope
   company_manage_scope: CompanyAccessScope
+  revision?: string | number
   updated_by?: string | null
   updated_at?: string | null
 }
@@ -126,6 +109,8 @@ type RpcClient = {
 }
 
 export type DepartmentAccessPermissionInput = {
+  revision?: string
+  expectedRevision?: string
   departmentId: string
   subjectScope: DepartmentAccessSubjectScope
   resourceKey: ResourceKey
@@ -150,6 +135,7 @@ export type AccessUserSummary = {
 }
 
 export type UserAccessPreview = {
+  version: string
   userId: string
   fullName: string | null
   email: string
@@ -171,6 +157,10 @@ export type UserAccessPreview = {
 }
 
 export type RolePermissionsPageData = {
+  currentUserId:string
+  canManage: boolean
+  canImpersonate: boolean
+  memberships: Array<{userId: string; departmentId: string; isDepartmentHead: boolean}>
   departments: Array<{
     id: string
     name: string
@@ -218,13 +208,6 @@ function relationOne<T>(value: T | T[] | null | undefined): T | null {
   return value || null
 }
 
-function normalizeState(input: Pick<DepartmentAccessPermissionInput, 'canView' | 'canManage'>): PermissionState {
-  return {
-    canView: input.canView || input.canManage,
-    canManage: input.canManage,
-  }
-}
-
 function normalizedFactoryScope(
   input: Pick<DepartmentAccessPermissionInput, 'canView' | 'canManage' | 'factoryScope'>,
   supportsFactoryScope: boolean,
@@ -243,21 +226,6 @@ function normalizedCompanyScopes(
   return {
     view: input.canView && (input.companyViewScope === 'all' || manage === 'all') ? 'all' as const : 'own' as const,
     manage,
-  }
-}
-
-function normalizeMembership(row: MembershipRow): DepartmentPermissionMembership {
-  const department = relationOne(row.department)
-  const position = relationOne(row.position)
-  return {
-    departmentId: row.department_id,
-    departmentName: department?.name ?? null,
-    positionId: row.position_id ?? position?.id ?? null,
-    positionName: position?.name ?? null,
-    positionLevel: typeof position?.level === 'number' ? position.level : null,
-    isDepartmentHead: Boolean(row.is_department_head || (
-      department?.head_user_id && department.head_user_id === row.user_id
-    )),
   }
 }
 
@@ -322,7 +290,7 @@ async function getAccessRows(db: LooseDb) {
     const from = rows.length
     const { data, error } = await db
       .from<DepartmentAccessRow[]>('department_access_permissions')
-      .select('department_id, subject_scope, resource_key, can_view, can_manage, factory_scope, company_view_scope, company_manage_scope, updated_by, updated_at')
+      .select('department_id, subject_scope, resource_key, can_view, can_manage, factory_scope, company_view_scope, company_manage_scope, revision, updated_by, updated_at')
       .order('department_id', { ascending: true })
       .order('subject_scope', { ascending: true })
       .order('resource_key', { ascending: true })
@@ -388,18 +356,18 @@ function buildAccessInputs(departments: DepartmentRow[], rows: DepartmentAccessR
   )
 }
 
-function buildUserSummaries(users: UserRow[], memberships: MembershipRow[]) {
+function buildUserSummaries(users: UserRow[], memberships: MembershipRow[], adminIds: Set<string>) {
   const byUser = new Map<string, AccessUserSummary>()
   for (const user of users) {
     byUser.set(user.id, {
       id: user.id,
       fullName: user.full_name,
       email: user.email,
-      isActive: user.is_active !== false,
+      isActive: user.is_active === true,
       departments: [],
       positions: [],
       isDepartmentHead: false,
-      isAdminPosition: false,
+      isAdminPosition: user.is_active === true && adminIds.has(user.id),
     })
   }
 
@@ -415,7 +383,6 @@ function buildUserSummaries(users: UserRow[], memberships: MembershipRow[]) {
       user.positions.push(position.name)
     }
     user.isDepartmentHead = user.isDepartmentHead || Boolean(membership.is_department_head)
-    user.isAdminPosition = user.isAdminPosition || position?.name === CRM_ADMIN_POSITION_NAME
   }
 
   return Array.from(byUser.values()).sort((a, b) =>
@@ -423,89 +390,28 @@ function buildUserSummaries(users: UserRow[], memberships: MembershipRow[]) {
   )
 }
 
-async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<UserAccessPreview> {
-  const { data: userData, error: userError } = await db
-    .from<UserRow>('users')
-    .select('id, full_name, email, is_active')
-    .eq('id', userId)
-    .maybeSingle()
-
-  if (userError || !userData) {
-    throw new Error(userError?.message || 'Пользователь не найден')
-  }
-
-  const { data: membershipData } = await db
-    .from<MembershipRow[]>('department_members')
-    .select('id, user_id, department_id, position_id, is_department_head, department:departments(id, name), position:positions(id, name, level)')
-    .eq('user_id', userId)
-
-  const memberships = Array.isArray(membershipData)
-    ? membershipData.map(normalizeMembership)
-    : []
-
-  const isAdminPosition = memberships.some((membership) => membership.positionName === CRM_ADMIN_POSITION_NAME)
-  let permissions = isAdminPosition ? getFullPermissionMap() : getEmptyPermissionMap()
-  const sources: Partial<Record<ResourceKey, string[]>> = {}
-  const factoryScopes: Partial<Record<ResourceKey, FactoryAccessOperationScopes>> = {}
-  const companyScopes: Partial<Record<ResourceKey, CompanyAccessOperationScopes>> = {}
-
-  if (isAdminPosition) {
-    for (const resource of PERMISSION_RESOURCES) {
-      sources[resource.key] = [CRM_ADMIN_POSITION_NAME]
-      factoryScopes[resource.key] = { view: 'all', manage: 'all' }
-      companyScopes[resource.key] = { view: 'all', manage: 'all' }
-    }
-  } else if (userData.is_active === false) {
-    permissions = getEmptyPermissionMap()
-  } else {
-    const departmentIds = Array.from(new Set(memberships.map((membership) => membership.departmentId).filter(Boolean)))
-    let accessRows: DepartmentAccessRow[] = []
-
-    if (departmentIds.length > 0) {
-      const { data: accessData } = await db
-        .from<DepartmentAccessRow[]>('department_access_permissions')
-        .select('department_id, subject_scope, resource_key, can_view, can_manage, factory_scope, company_view_scope, company_manage_scope')
-        .in('department_id', departmentIds)
-
-      accessRows = Array.isArray(accessData) ? accessData : []
-    }
-
-    const resolved = resolveDepartmentPermissions(memberships, accessRows)
-    permissions = resolved.permissions
-    Object.assign(sources, resolved.sources)
-    Object.assign(factoryScopes, resolved.factoryScopes)
-    Object.assign(companyScopes, resolved.companyScopes)
-
-  }
-
+async function buildUserAccessPreview(_db: LooseDb, userId: string, afterRestore=false): Promise<UserAccessPreview> {
+  const snapshot = await getAccessSnapshot(userId)
+  const details = resolveAccessSnapshot(afterRestore?{...snapshot,isActive:true,isAdmin:snapshot.hasAdminStatus}:snapshot)
   return {
-    userId,
-    fullName: userData.full_name,
-    email: userData.email,
-    isActive: userData.is_active !== false,
-    isAdminPosition,
-    memberships,
-    permissions: PERMISSION_RESOURCES.map((resource) => {
-      const state = permissions[resource.key] || { canView: false, canManage: false }
-      return {
-        resourceKey: resource.key,
-        label: resource.label,
-        group: resource.group,
-        canView: state.canView,
-        canManage: state.canManage,
-        factoryViewScope: factoryScopes[resource.key]?.view || 'own',
-        factoryManageScope: factoryScopes[resource.key]?.manage || 'own',
-        companyViewScope: companyScopes[resource.key]?.view || 'own',
-        companyManageScope: companyScopes[resource.key]?.manage || 'own',
-        sources: sources[resource.key] || [],
-      }
-    }),
+    version: snapshot.version, userId, fullName: snapshot.fullName, email: snapshot.email, isActive: afterRestore || snapshot.isActive,
+    isAdminPosition: details.isAdminPosition, memberships: details.memberships,
+    permissions: PERMISSION_RESOURCES.map(resource => ({
+      resourceKey: resource.key, label: resource.label, group: resource.group,
+      canView: details.permissions[resource.key]?.canView === true,
+      canManage: details.permissions[resource.key]?.canManage === true,
+      factoryViewScope: details.factoryScopes[resource.key]?.view || 'own',
+      factoryManageScope: details.factoryScopes[resource.key]?.manage || 'own',
+      companyViewScope: details.companyScopes[resource.key]?.view || 'own',
+      companyManageScope: details.companyScopes[resource.key]?.manage || 'own',
+      sources: details.sources[resource.key] || [],
+    })),
   }
 }
 
 export async function getRolePermissionsPageData(): Promise<{ data: RolePermissionsPageData | null; error: string | null }> {
   try {
-    const context = await requireAccessSettingsPermission()
+    const context = await requirePermission('access_settings', 'view')
     const db = createAdminClient() as unknown as LooseAuthAdminClient
     const [departments, users, memberships, accessRows, auditRows] = await Promise.all([
       getDepartments(db),
@@ -514,10 +420,16 @@ export async function getRolePermissionsPageData(): Promise<{ data: RolePermissi
       getAccessRows(db),
       getAuditRows(db),
     ])
-    const userSummaries = buildUserSummaries(users, memberships)
+    const {data: adminRows, error: adminError} = await db.from<Array<{user_id: string}>>('user_system_roles').select('user_id')
+    if (adminError) throw new Error(adminError.message)
+    const userSummaries = buildUserSummaries(users, memberships, new Set((adminRows || []).map(row => row.user_id)))
 
     return {
       data: {
+        currentUserId:context.userId,
+        canManage: context.permissions.access_settings?.canManage === true,
+        canImpersonate: context.permissionDetails.isAdminPosition,
+        memberships: memberships.map(row => ({userId: row.user_id, departmentId: row.department_id, isDepartmentHead: row.is_department_head})),
         departments: departments.map((department) => ({
           id: department.id,
           name: department.name,
@@ -532,7 +444,9 @@ export async function getRolePermissionsPageData(): Promise<{ data: RolePermissi
           supportsCompanyScope: 'supportsCompanyScope' in resource && resource.supportsCompanyScope === true,
           viewOnly: 'viewOnly' in resource && resource.viewOnly === true,
         })),
-        permissions: buildAccessInputs(departments, accessRows),
+        permissions: buildAccessInputs(departments, accessRows).map(row => ({...row,
+          revision: String(accessRows.find(saved => saved.department_id === row.departmentId && saved.subject_scope === row.subjectScope && saved.resource_key === row.resourceKey)?.revision || 0),
+        })),
         auditLog: auditRows
           .filter((row) => row.resource_key in RESOURCE_BY_KEY)
           .map((row) => ({
@@ -555,7 +469,7 @@ export async function getRolePermissionsPageData(): Promise<{ data: RolePermissi
             changedByName: relationOne(row.user)?.full_name || null,
           })),
         adminUsers: userSummaries.filter((user) => user.isAdminPosition),
-        previewUsers: userSummaries.filter((user) => user.isActive && user.id !== context.userId),
+        previewUsers: userSummaries,
       },
       error: null,
     }
@@ -604,123 +518,26 @@ export async function saveDepartmentAccessPermissions(input: DepartmentAccessPer
     const context = await requireAccessSettingsPermission()
     const db = createAdminClient() as unknown as LooseDb
     const departments = await getDepartments(db)
-    const normalized = validateInput(input, new Set(departments.map((department) => department.id)))
-
-    const rpcResult = await (context.supabase as unknown as RpcClient).rpc(
-      'fn_save_department_access_permissions',
-      { p_permissions: normalized },
-    )
-    if (!rpcResult.error) {
-      const saved = Array.isArray(rpcResult.data)
-        ? rpcResult.data as DepartmentAccessPermissionInput[]
-        : normalized
-      revalidatePath('/', 'layout')
-      revalidatePath(ROUTES.ADMIN_SETTINGS)
-      revalidatePath(ROUTES.ADMIN_ACCESS_SETTINGS)
-      return { success: true, error: null, permissions: saved }
-    }
-    if (!['PGRST202', '42883'].includes(rpcResult.error.code || '')) {
-      throw new Error(rpcResult.error.message || 'Не удалось сохранить права доступа')
-    }
-
-    // Compatibility path for the application release that precedes the
-    // database cutover. Once the migration is applied, the RPC above is the
-    // only path used and the matrix plus audit commit atomically.
-    const existingRows = await getAccessRows(db)
-    const existing = new Map<string, PermissionState & {
-      factoryScope: FactoryAccessScope
-      companyViewScope: CompanyAccessScope
-      companyManageScope: CompanyAccessScope
-    }>()
-
-    for (const row of existingRows) {
-      if (!(row.resource_key in RESOURCE_BY_KEY)) continue
-      existing.set(accessKey(row.department_id, row.subject_scope, row.resource_key as ResourceKey), {
-        canView: row.can_view || row.can_manage,
-        canManage: row.can_manage,
-        factoryScope: row.factory_scope || 'own',
-        companyViewScope: row.company_view_scope || 'own',
-        companyManageScope: row.company_manage_scope || 'own',
-      })
-    }
-
-    const auditRows = normalized
-      .map((item) => {
-        const previous = existing.get(accessKey(item.departmentId, item.subjectScope, item.resourceKey)) || {
-          canView: false,
-          canManage: false,
-          factoryScope: 'own' as const,
-          companyViewScope: 'own' as const,
-          companyManageScope: 'own' as const,
-        }
-        const next = normalizeState(item)
-        if (previous.canView === next.canView
-          && previous.canManage === next.canManage
-          && previous.factoryScope === item.factoryScope
-          && previous.companyViewScope === item.companyViewScope
-          && previous.companyManageScope === item.companyManageScope) return null
-        return {
-          department_id: item.departmentId,
-          subject_scope: item.subjectScope,
-          resource_key: item.resourceKey,
-          old_can_view: previous.canView,
-          old_can_manage: previous.canManage,
-          new_can_view: next.canView,
-          new_can_manage: next.canManage,
-          old_factory_scope: previous.factoryScope,
-          new_factory_scope: item.factoryScope,
-          old_company_view_scope: previous.companyViewScope,
-          new_company_view_scope: item.companyViewScope,
-          old_company_manage_scope: previous.companyManageScope,
-          new_company_manage_scope: item.companyManageScope,
-          changed_by: context.userId,
-        }
-      })
-      .filter(Boolean)
-
-    const upsertRows = normalized.map((item) => ({
-      department_id: item.departmentId,
-      subject_scope: item.subjectScope,
-      resource_key: item.resourceKey,
-      can_view: item.canView || item.canManage,
-      can_manage: item.canManage,
-      factory_scope: item.factoryScope,
-      company_view_scope: item.companyViewScope,
-      company_manage_scope: item.companyManageScope,
-      updated_by: context.userId,
-    }))
-
-    if (upsertRows.length > 0) {
-      const { error } = await db
-        .from('department_access_permissions')
-        .upsert(upsertRows, { onConflict: 'department_id,subject_scope,resource_key' })
-      if (error) throw new Error(error.message || 'Не удалось сохранить права доступа')
-    }
-
-    if (auditRows.length > 0) {
-      const { error } = await db.from('department_access_audit_log').insert(auditRows)
-      if (error) throw new Error(error.message || 'Не удалось сохранить историю изменений')
-    }
-
+    const normalized = validateInput(input, new Set(departments.map(department => department.id)))
+    if (normalized.length !== input.length) throw new Error('Некорректные строки матрицы')
+    const changes = normalized.map((row, index) => ({...row, expectedRevision: input[index].expectedRevision}))
+    if (changes.some(row => !row.expectedRevision || !/^\d+$/.test(row.expectedRevision))) throw new Error('Обновите матрицу перед сохранением')
+    const {data, error} = await (context.supabase as unknown as RpcClient).rpc('crm_save_matrix', {p_changes: changes})
+    if (error) throw new Error(error.message || 'Не удалось сохранить права')
     revalidatePath('/', 'layout')
-    revalidatePath(ROUTES.ADMIN_SETTINGS)
     revalidatePath(ROUTES.ADMIN_ACCESS_SETTINGS)
-
-    return { success: true, error: null, permissions: normalized }
+    return {success: true, error: null, permissions: data as DepartmentAccessPermissionInput[]}
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Не удалось сохранить права доступа',
-      permissions: null,
-    }
+    return {success: false, error: error instanceof Error ? error.message : 'Не удалось сохранить права', permissions: null}
   }
 }
 
-export async function getAccessPreviewForUser(userId: string) {
+export async function getAccessPreviewForUser(userId: string, afterRestore=false) {
   try {
-    await requireAccessSettingsPermission()
+    await requireAnyPermission([{resourceKey:'access_settings',operation:'view'},{resourceKey:'admin_users',operation:'view'}])
     const db = createAdminClient() as unknown as LooseDb
-    const data = await buildUserAccessPreview(db, userId)
+    if(afterRestore)await requirePermission('admin_users','manage')
+    const data = await buildUserAccessPreview(db, userId, afterRestore)
     return { data, error: null }
   } catch (error) {
     return {

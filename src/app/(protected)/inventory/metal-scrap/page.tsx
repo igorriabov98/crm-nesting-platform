@@ -1,8 +1,9 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { getMetalScrapPage } from '@/lib/actions/future-inventory'
 import { MetalScrapPage } from '@/components/features/inventory/MetalScrapPage'
 import { AlertTriangle } from 'lucide-react'
 
-export default async function Page({ searchParams }: { searchParams: Promise<{ factory?: string; status?: string; page?: string }> }) {
+async function Page({ searchParams }: { searchParams: Promise<{ factory?: string; status?: string; page?: string }> }) {
   const params = await searchParams
   const result = await getMetalScrapPage(params.factory, params.status, Number(params.page || 0))
 
@@ -27,3 +28,5 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ f
     />
   )
 }
+
+export default withPagePermission('/inventory/metal-scrap', Page)

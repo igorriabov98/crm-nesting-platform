@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { MaterialRequestQueue } from '@/components/features/material-requests/MaterialRequestQueue'
 import { getMaterialRequestQueue } from '@/lib/actions/material-request-queue'
 
@@ -5,7 +6,7 @@ export const metadata = {
   title: 'Заявки на материалы | CRM Завода',
 }
 
-export default async function MaterialRequestsPage() {
+async function MaterialRequestsPage() {
   const result = await getMaterialRequestQueue()
 
   if (result.error || !result.data) {
@@ -26,3 +27,5 @@ export default async function MaterialRequestsPage() {
     />
   )
 }
+
+export default withPagePermission('/material-requests', MaterialRequestsPage)

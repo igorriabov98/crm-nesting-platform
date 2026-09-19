@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { notFound } from 'next/navigation'
 import { RequestListPage } from '@/components/features/requests/RequestListPage'
 import { getMachine } from '@/app/(protected)/sales-plan/actions'
@@ -10,7 +11,7 @@ export const metadata = {
   title: 'Заявки на материалы | CRM Завода',
 }
 
-export default async function RequestPage({ params }: { params: Promise<{ id: string }> }) {
+async function RequestPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const { user } = await getCurrentUserContextOrRedirect()
   const permissionDetails = await getCurrentUserPermissions(user.id)
@@ -30,3 +31,5 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
     />
   )
 }
+
+export default withPagePermission('/sales-plan/sample-id/request', RequestPage)

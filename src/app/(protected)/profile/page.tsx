@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { User2, Crown } from 'lucide-react'
 import { getCurrentUserContextOrRedirect } from '@/lib/auth/current-user'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -7,7 +8,7 @@ export const metadata = {
   title: 'Профиль — CRM Завода',
 }
 
-export default async function ProfilePage() {
+async function ProfilePage() {
   const { user } = await getCurrentUserContextOrRedirect()
   const memberships = user.department_memberships || []
 
@@ -72,3 +73,5 @@ export default async function ProfilePage() {
     </div>
   )
 }
+
+export default withPagePermission('/profile', ProfilePage)

@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { notFound } from 'next/navigation'
 
 import { getSupplyByMachine } from '../actions'
@@ -6,7 +7,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 
 export const metadata = { title: 'Детали снабжения машины — CRM Завода' }
 
-export default async function SupplyMachinePage({ params }: { params: Promise<{ machineId: string }> }) {
+async function SupplyMachinePage({ params }: { params: Promise<{ machineId: string }> }) {
   const { machineId } = await params
   let data
   let user
@@ -32,3 +33,5 @@ export default async function SupplyMachinePage({ params }: { params: Promise<{ 
 
   return <SupplyMachineDetail data={{ ...data, currentUser: user }} />
 }
+
+export default withPagePermission('/supply/sample-id', SupplyMachinePage)

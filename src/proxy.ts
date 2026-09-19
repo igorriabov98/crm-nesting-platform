@@ -1,3 +1,4 @@
+import { isAuthServiceUnavailable } from '@/lib/auth/service-error'
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
@@ -24,6 +25,7 @@ export async function proxy(request: NextRequest) {
         },
         setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
+          requestHeaders.set('cookie', request.cookies.toString())
           supabaseResponse = NextResponse.next({
             request: {
               headers: requestHeaders,
@@ -42,20 +44,22 @@ export async function proxy(request: NextRequest) {
   )
 
   const {
-    data: { user },
+    data: { user }, error: authError,
   } = await supabase.auth.getUser()
 
   const allowsRouteLevelAuth =
+    pathname === '/api/access/snapshot' ||
     pathname.startsWith('/api/version') ||
     pathname.startsWith('/api/documents/generate') ||
     pathname.startsWith('/api/telegram/webhook') ||
     pathname.startsWith('/api/meetings/reminders') ||
     pathname.startsWith('/api/meetings/rules/evaluate') ||
     pathname.startsWith('/api/tasks/due') ||
+    pathname === '/api/organization/auth-sync' ||
     pathname.startsWith('/api/mail/pubsub') ||
     pathname.startsWith('/api/mail/watch/renew')
 
-  if (!user && allowsRouteLevelAuth) {
+  if ((!user && allowsRouteLevelAuth) || (isAuthServiceUnavailable(authError))) {
     return supabaseResponse
   }
 
@@ -72,7 +76,7 @@ export async function proxy(request: NextRequest) {
       .eq('id', user.id)
       .maybeSingle()
 
-    if (profile?.id && profile.is_active !== false) {
+    if (profile?.id && profile.is_active === true) {
       const url = request.nextUrl.clone()
       url.pathname = ROUTES.DASHBOARD
       return NextResponse.redirect(url)

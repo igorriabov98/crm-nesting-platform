@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { redirect } from 'next/navigation'
 import { MyTasksView } from '@/components/features/tasks/MyTasksView'
 import { getTaskDelegationOverview, getTasks } from '@/lib/actions/tasks'
@@ -8,7 +9,7 @@ export const metadata = {
   title: 'Мои задачи | CRM Завода',
 }
 
-export default async function TasksPage({
+async function TasksPage({
   searchParams,
 }: {
   searchParams?: Promise<{ task?: string }>
@@ -65,3 +66,5 @@ export default async function TasksPage({
     </div>
   )
 }
+
+export default withPagePermission('/tasks', TasksPage)

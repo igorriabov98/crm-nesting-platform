@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -61,15 +62,20 @@ function main() {
     return;
   }
 
+  const organizationBatch = pending.filter(({ file }) => /^20260919(?:120000|121000|121500|122000|123000|124000|124500|125000|125500)_/.test(file));
   for (const migration of pending) {
-    const { file, checksum } = migration;
-    const fullPath = path.join(migrationsDir, file);
-    runMigration(fullPath, file, checksum);
-    console.log(`[supabase:migrate] applied ${file}`);
+    if (organizationBatch.includes(migration)) {
+      if (migration !== organizationBatch[0]) continue;
+      runMigrations(organizationBatch, true);
+      for (const item of organizationBatch) console.log(`[supabase:migrate] applied ${item.file}`);
+    } else {
+      runMigrations([migration]);
+      console.log(`[supabase:migrate] applied ${migration.file}`);
+    }
   }
 }
 
-function runMigration(filePath: string, fileName: string, checksum: string) {
+function runMigrations(migrations: {file: string; checksum: string}[], organizationCutover = false) {
   const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'supabase-migration-'));
   const wrapper = path.join(tmpDir, 'apply.sql');
   try {
@@ -78,8 +84,15 @@ function runMigration(filePath: string, fileName: string, checksum: string) {
       [
         '\\set ON_ERROR_STOP on',
         'BEGIN;',
-        `\\i ${escapePsqlPath(filePath)}`,
-        `INSERT INTO ${ledgerTable} (name, checksum) VALUES (${sqlLiteral(fileName)}, ${sqlLiteral(checksum)});`,
+        ...(organizationCutover ? [
+          "SET LOCAL lock_timeout = '10s';",
+          "SELECT pg_advisory_xact_lock(hashtextextended('crm:organization', 0));",
+          'LOCK TABLE public.users, public.departments, public.positions, public.department_members, public.department_access_permissions IN SHARE ROW EXCLUSIVE MODE;',
+        ] : []),
+        ...migrations.flatMap(({file, checksum}) => [
+          `\\i ${escapePsqlPath(path.join(migrationsDir, file))}`,
+          `INSERT INTO ${ledgerTable} (name, checksum) VALUES (${sqlLiteral(file)}, ${sqlLiteral(checksum)});`,
+        ]),
         'COMMIT;',
         '',
       ].join('\n'),
@@ -107,7 +120,6 @@ function psql(args: string[], inherit: boolean) {
 }
 
 function sha256(value: string) {
-  const { createHash } = require('node:crypto') as typeof import('node:crypto');
   return createHash('sha256').update(value).digest('hex');
 }
 

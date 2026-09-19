@@ -1,9 +1,10 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { ConsumablesWorkspace } from '@/components/features/consumables/ConsumablesWorkspace'
 import { getConsumablesWorkspaceData } from '@/lib/actions/consumables'
 
 export const metadata = { title: 'Расходники производства — CRM Завода' }
 
-export default async function ConsumablesPage({
+async function ConsumablesPage({
   searchParams,
 }: {
   searchParams?: Promise<{ factory?: string }>
@@ -17,3 +18,5 @@ export default async function ConsumablesPage({
 
   return <ConsumablesWorkspace {...data} selectedFactoryId={data.selectedFactoryId} />
 }
+
+export default withPagePermission('/production/consumables', ConsumablesPage)

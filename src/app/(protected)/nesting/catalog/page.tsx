@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import type React from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { CatalogTabsShell, type CatalogTab } from '@/components/features/nesting/catalog/CatalogTabsShell'
@@ -54,7 +55,7 @@ function CatalogError({ message }: { message: string }) {
   )
 }
 
-export default async function NestingCatalogPage({
+async function NestingCatalogPage({
   searchParams,
 }: {
   searchParams?: Promise<CatalogSearchParams>
@@ -113,3 +114,5 @@ export default async function NestingCatalogPage({
     )
   }
 }
+
+export default withPagePermission('/nesting/catalog', NestingCatalogPage)

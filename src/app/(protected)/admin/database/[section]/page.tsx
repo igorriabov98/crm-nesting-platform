@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import {
@@ -37,7 +38,7 @@ export async function generateMetadata({ params }: { params: Promise<{ section: 
   return { title: `${SUPPLIER_DIRECTORY_SECTIONS[section].title} — CRM Завода` }
 }
 
-export default async function SupplierDirectorySectionPage({ params }: { params: Promise<{ section: string }> }) {
+async function SupplierDirectorySectionPage({ params }: { params: Promise<{ section: string }> }) {
   const { section } = await params
   if (!isSupplierDirectorySection(section)) notFound()
 
@@ -104,3 +105,5 @@ export default async function SupplierDirectorySectionPage({ params }: { params:
     </div>
   )
 }
+
+export default withPagePermission('/admin/database/sample-id', SupplierDirectorySectionPage)

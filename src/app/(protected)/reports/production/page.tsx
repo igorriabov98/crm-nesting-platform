@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import {
   AlertTriangle,
@@ -75,7 +76,7 @@ function statusClass(status: string) {
   return 'border-blue-200 bg-blue-50 text-blue-700'
 }
 
-export default async function ProductionReportPage({ searchParams }: { searchParams?: Promise<SearchParams> }) {
+async function ProductionReportPage({ searchParams }: { searchParams?: Promise<SearchParams> }) {
   const params = await searchParams
   const data = await loadProductionReportPageData({
     month: params?.month,
@@ -270,3 +271,5 @@ function Load({ data }: { data: Awaited<ReturnType<typeof loadProductionReportPa
     </div>
   )
 }
+
+export default withPagePermission('/reports/production', ProductionReportPage)

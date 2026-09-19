@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { Card, CardContent } from '@/components/ui/card'
 import { buttonVariants } from '@/components/ui/button'
@@ -14,7 +15,7 @@ export const metadata = { title: 'Раскладка металла - CRM Зав
 
 const statuses: NestingStatus[] = [...nestingStatuses]
 
-export default async function NestingProjectsPage({
+async function NestingProjectsPage({
   searchParams,
 }: {
   searchParams?: Promise<{ page?: string; status?: string; search?: string; view?: string; scope?: string }>
@@ -98,3 +99,5 @@ async function HistoryView({
     )
   }
 }
+
+export default withPagePermission('/nesting', NestingProjectsPage)

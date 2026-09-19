@@ -33,8 +33,9 @@ const cuttingAreaCancelledRequestsPath = path.join(
 const rlsManifest = JSON.parse(
   readFileSync(path.join(root, 'config', 'rls-resource-manifest.json'), 'utf8'),
 )
+assert.ok(process.env.FULL_SCHEMA_TEST_DATABASE_URL, 'Set FULL_SCHEMA_TEST_DATABASE_URL explicitly: this test rebuilds the selected local database')
 const databaseUrl = new URL(
-  process.env.FULL_SCHEMA_TEST_DATABASE_URL ?? 'postgresql://localhost/crm_full_schema_test',
+  process.env.FULL_SCHEMA_TEST_DATABASE_URL,
 )
 
 assert.equal(databaseUrl.protocol, 'postgresql:', 'FULL_SCHEMA_TEST_DATABASE_URL must use postgresql://')
@@ -59,12 +60,20 @@ postgresEnv.PGSSLMODE = databaseUrl.searchParams.get('sslmode') || 'disable'
 if (databaseUrl.username) postgresEnv.PGUSER = decodeURIComponent(databaseUrl.username)
 if (databaseUrl.password) postgresEnv.PGPASSWORD = decodeURIComponent(databaseUrl.password)
 
-const migrations = orderSupabaseMigrationFiles(listSupabaseMigrationFiles(migrationsDir))
+const migrations = orderSupabaseMigrationFiles(listSupabaseMigrationFiles(migrationsDir)).filter(file=>!process.env.FULL_SCHEMA_MIGRATION_BEFORE || !/^\d{14}_/.test(file) || file < process.env.FULL_SCHEMA_MIGRATION_BEFORE)
 const prismaMigrations = readdirSync(prismaMigrationsDir, { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
   .map((entry) => entry.name)
   .sort()
 const replayPreludes = new Map([
+  ['20260919120000_organization_access_foundation.sql', `CREATE TABLE IF NOT EXISTS auth.users(id uuid PRIMARY KEY,email text); INSERT INTO public.departments(name,is_active) VALUES ('Финансовый отдел',true);
+    DO $fixture$ DECLARE fixture_user uuid; fixture_dept uuid; BEGIN
+      IF EXISTS(SELECT 1 FROM public.users WHERE is_active) AND NOT EXISTS(SELECT 1 FROM public.users WHERE public.crm_user_is_admin(id)) THEN
+        INSERT INTO public.users(email,full_name,role,is_active) VALUES('replay-admin@organization.test','Replay administrator','engineer',true) RETURNING id INTO fixture_user;
+        INSERT INTO public.departments(name,is_active) VALUES('Replay administration',true) RETURNING id INTO fixture_dept;
+        INSERT INTO public.department_members(user_id,department_id,position_id) SELECT fixture_user,fixture_dept,id FROM public.positions WHERE name='Администратор CRM' LIMIT 1;
+      END IF;
+    END $fixture$;`],
   [
     '100_manual_production_stage_overdue.sql',
     'DROP VIEW IF EXISTS public.production_stages_with_delay;\n',
@@ -146,6 +155,8 @@ runPsql(
   'full_schema_inventory_transfer_compat.sql',
   readFileSync(transferCompatPath, 'utf8'),
 )
+if(process.env.FULL_SCHEMA_REPLAY_ONLY==='true')process.exit(0)
+
 runPsql(
   'production_cutting_area_cancelled_requests_test.sql',
   readFileSync(cuttingAreaCancelledRequestsPath, 'utf8'),

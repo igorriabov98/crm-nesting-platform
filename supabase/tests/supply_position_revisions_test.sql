@@ -266,7 +266,7 @@ begin
     insert into public.users(id,email,full_name,role,factory_id,is_active)
       values (v_finance,v_finance || '@revision.test','Начальник Финансового отдела','financial_director',v_factory,true);
     insert into public.departments(id, name, factory_id, head_user_id)
-      values (v_finance_department, 'Финансовый отдел', v_factory, v_finance);
+      values (v_finance_department, 'Финансовый отдел', v_factory, null);
     insert into public.department_members(user_id, department_id, is_department_head)
       values (v_finance, v_finance_department, true);
     insert into public.department_access_permissions(department_id,subject_scope,resource_key,can_view,can_manage)

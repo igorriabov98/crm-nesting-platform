@@ -1,5 +1,6 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
-import { Archive, Bot, Building2, CalendarClock, Factory, Mail, Ruler, Send, Settings, ShieldCheck, Users } from 'lucide-react'
+import { Archive, Bot, Building2, CalendarClock, Factory, Mail, Ruler, Send, Settings, ShieldCheck } from 'lucide-react'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -29,11 +30,11 @@ function canViewResource(permissions: PermissionMap, resourceKey: ResourceKey) {
   return hasPermission(permissions, resourceKey, 'view')
 }
 
-export default async function AdminSettingsPage() {
+async function AdminSettingsPage() {
   const { user } = await getCurrentUserContextOrRedirect()
   const permissionDetails = await getCurrentUserPermissions(user.id)
   const permissions = permissionDetails.permissions
-  const canOpenAccessSettings = hasPermission(permissions, 'access_settings', 'manage')
+  const canOpenAccessSettings = hasPermission(permissions, 'access_settings', 'view')
   const canViewSettingsContent = permissions.admin_settings?.canView === true
     || permissions.admin_settings?.canManage === true
 
@@ -58,12 +59,12 @@ export default async function AdminSettingsPage() {
       buttonLabel: 'Открыть управление доступом',
       icon: ShieldCheck,
     },
-    canViewResource(permissions, 'departments') && {
+    (canViewResource(permissions, 'departments') || canViewResource(permissions, 'admin_users')) && {
       key: 'departments',
-      title: 'Отделы и структура',
+      title: 'Пользователи и структура',
       description: 'Управление отделами, должностями, руководителями и назначениями сотрудников.',
-      href: ROUTES.ADMIN_DEPARTMENTS,
-      buttonLabel: 'Открыть отделы и структуру',
+      href: ROUTES.ADMIN_ORGANIZATION,
+      buttonLabel: 'Открыть пользователей и структуру',
       icon: Building2,
     },
     canViewSettingsContent && canViewResource(permissions, 'nesting_settings') && {
@@ -73,14 +74,6 @@ export default async function AdminSettingsPage() {
       href: ROUTES.NESTING_SETTINGS,
       buttonLabel: 'Открыть настройки AI',
       icon: Bot,
-    },
-    canViewSettingsContent && canViewResource(permissions, 'admin_users') && {
-      key: 'users',
-      title: 'Настройка пользователей',
-      description: 'Пользователи CRM, отделы, должности, статус аккаунтов и Telegram chat ID.',
-      href: ROUTES.ADMIN_USERS,
-      buttonLabel: 'Открыть настройку пользователей',
-      icon: Users,
     },
     canViewSettingsContent && canViewResource(permissions, 'telegram_settings') && {
       key: 'telegram',
@@ -184,3 +177,5 @@ function SettingsLinkCard({ card }: { card: SettingsCard }) {
     </Card>
   )
 }
+
+export default withPagePermission('/admin/settings', AdminSettingsPage)

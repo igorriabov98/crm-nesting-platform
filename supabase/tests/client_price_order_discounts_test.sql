@@ -11,6 +11,9 @@ insert into public.users(id, email, full_name, role, factory_id, is_active) valu
   ('71000000-0000-4000-8000-000000000103', 'admin@discount.test', 'Администратор скидок', 'planning_director', '71000000-0000-4000-8000-000000000001', true),
   ('71000000-0000-4000-8000-000000000104', 'other@discount.test', 'Чужой менеджер', 'sales_manager', '71000000-0000-4000-8000-000000000001', true);
 
+-- Administrative authority is an explicit protected grant after the organization cutover.
+insert into public.user_system_roles(user_id,role) values ('71000000-0000-4000-8000-000000000103','crm_admin');
+
 insert into public.departments(id, name, factory_id) values
   ('71000000-0000-4000-8000-000000000201', 'Продажи скидок', '71000000-0000-4000-8000-000000000001'),
   ('71000000-0000-4000-8000-000000000202', 'Финансы скидок', '71000000-0000-4000-8000-000000000001');
@@ -167,6 +170,8 @@ begin
   update public.machine_items set quantity = 3 where id = '71000000-0000-4000-8000-000000000606';
   if (select status from public.machine_discount_requests where id = v_request) <> 'superseded' then raise exception 'goods change must supersede approved discount'; end if;
 
+  -- Legacy inactive-reviewer fixture intentionally predates handoff; the organization suite tests that guard.
+  ALTER TABLE public.users DISABLE TRIGGER organization_guard_user_status;
   update public.users set is_active = false where id = '71000000-0000-4000-8000-000000000102';
   v_fallback := public.fn_submit_machine_discount_request(
     '71000000-0000-4000-8000-000000000506', 0.01, 'Минимальная скидка', '71000000-0000-4000-8000-000000000101'
@@ -175,6 +180,7 @@ begin
   perform public.fn_reject_machine_discount_request(v_fallback, '71000000-0000-4000-8000-000000000103', 'Скидка не согласована');
   if (select status from public.machine_discount_requests where id = v_fallback) <> 'rejected' then raise exception 'fallback administrator rejection failed'; end if;
   update public.users set is_active = true where id = '71000000-0000-4000-8000-000000000102';
+  ALTER TABLE public.users ENABLE TRIGGER organization_guard_user_status;
 
   v_request := public.fn_submit_machine_discount_request(
     '71000000-0000-4000-8000-000000000507', 50, 'Проверка конкурентного решения', '71000000-0000-4000-8000-000000000101'

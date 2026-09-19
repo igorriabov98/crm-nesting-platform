@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { notFound } from 'next/navigation'
 import { TechnologistRequestPage } from '@/components/features/requests/TechnologistRequestPage'
 import { getMachine } from '@/app/(protected)/sales-plan/actions'
@@ -13,7 +14,7 @@ export const metadata = {
   title: 'Заявка на материалы | CRM Завода',
 }
 
-export default async function RequestDetailPage({
+async function RequestDetailPage({
   params,
 }: {
   params: Promise<{ id: string; requestId: string }>
@@ -52,3 +53,5 @@ export default async function RequestDetailPage({
     />
   )
 }
+
+export default withPagePermission('/sales-plan/sample-id/request/sample-id', RequestDetailPage)

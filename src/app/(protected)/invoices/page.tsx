@@ -1,10 +1,11 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { getInvoices } from './actions'
 import { InvoiceList } from '@/components/features/invoices/InvoiceList'
 import { INVOICES_LIST_LIMIT } from '@/lib/constants/performance-limits'
 
 export const metadata = { title: 'Инвойсы — CRM Завода' }
 
-export default async function InvoicesPage() {
+async function InvoicesPage() {
   let data
   try {
     data = await getInvoices()
@@ -31,3 +32,5 @@ export default async function InvoicesPage() {
     </div>
   )
 }
+
+export default withPagePermission('/invoices', InvoicesPage)

@@ -5815,6 +5815,11 @@ export type Database = {
       inventory_transaction_type: 'receipt' | 'reserve' | 'unreserve' | 'write_off' | 'adjustment' | 'transfer_out' | 'transfer_in'
     }
     Functions: {
+      crm_user_is_admin: { Args: {p_user_id: string}; Returns: boolean }
+      crm_access_snapshot: { Args: {p_user_id?: string}; Returns: Json }
+      crm_change_organization: { Args: {p_kind: string; p_id: string | null; p_data: Json; p_expected_version: number}; Returns: Json }
+      crm_set_administrator: { Args: {p_user_id: string; p_enabled: boolean; p_expected_version: number}; Returns: undefined }
+      crm_save_matrix: { Args: {p_changes: Json}; Returns: Json }
       can_view_product_projects: {
         Args: Record<PropertyKey, never>
         Returns: boolean

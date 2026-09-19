@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { InventoryPage } from '@/components/features/inventory/InventoryPage'
 import { canManageInventory, getInventory, getInventoryFactories } from '@/lib/actions/inventory'
 import { getSteelTypes } from '@/lib/actions/steel-types'
@@ -8,7 +9,7 @@ export const metadata = {
   title: 'Склад - CRM Завода',
 }
 
-export default async function InventoryRoute({
+async function InventoryRoute({
   searchParams,
 }: {
   searchParams?: Promise<{ factory?: string; mode?: string }>
@@ -50,3 +51,5 @@ export default async function InventoryRoute({
     </div>
   )
 }
+
+export default withPagePermission('/inventory', InventoryRoute)

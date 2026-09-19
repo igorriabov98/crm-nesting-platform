@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { Metadata } from "next";
 import { AccessDenied } from "@/components/ui/AccessDenied";
 import { MeetingFlowCard } from "@/components/features/meetings-v2/MeetingFlowCard";
@@ -8,7 +9,7 @@ export const metadata: Metadata = {
   title: "Карточка собрания | CRM Завода",
 };
 
-export default async function MeetingPage({
+async function MeetingPage({
   params,
 }: {
   params: Promise<{ id: string }>;
@@ -26,3 +27,5 @@ export default async function MeetingPage({
   ]);
   return <MeetingFlowCard data={data} canManage={canManage} />;
 }
+
+export default withPagePermission('/meetings/sample-id', MeetingPage)

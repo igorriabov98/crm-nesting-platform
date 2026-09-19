@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { notFound } from 'next/navigation'
 import { ClientDetail } from '@/components/features/clients/ClientDetail'
 import { getClient, getClientImageUrls } from '@/lib/actions/clients'
@@ -10,7 +11,7 @@ export const metadata = {
   title: 'Карточка клиента — CRM Завода',
 }
 
-export default async function ClientPage({ params }: { params: Promise<{ id: string }> }) {
+async function ClientPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const canAccess = await requireClientCardAccess(id).then(() => true).catch(() => false)
   if (!canAccess) return <AccessDenied />
@@ -37,3 +38,5 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     />
   )
 }
+
+export default withPagePermission('/clients/sample-id', ClientPage)

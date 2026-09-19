@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { AccessVisibilityContext } from "@/components/providers/access-visibility"
 import { Dialog as SheetPrimitive } from "@base-ui/react/dialog"
 
 import { cn } from "@/lib/utils"
@@ -20,6 +21,8 @@ function SheetClose({ ...props }: SheetPrimitive.Close.Props) {
 }
 
 function SheetPortal({ ...props }: SheetPrimitive.Portal.Props) {
+  const visible = React.useContext(AccessVisibilityContext)
+  if (!visible) return null
   return <SheetPrimitive.Portal data-slot="sheet-portal" {...props} />
 }
 

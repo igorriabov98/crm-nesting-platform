@@ -135,7 +135,7 @@ if (process.env.INVENTORY_TRANSFER_TEST_DATABASE_URL) {
     SELECT '${fixture.supply}', '${fixture.supply}@example.test', 'Concurrency supply', 'procurement_head', id, true
     FROM public.factories WHERE name = 'Берегово' LIMIT 1;
     INSERT INTO public.departments(id, name, head_user_id, factory_id, is_active, sort_order, created_by)
-    SELECT '${fixture.department}', 'Снабжение', '${fixture.supply}', id, true, -2000, '${fixture.actor}'
+    SELECT '${fixture.department}', 'Снабжение', NULL, id, true, -2000, '${fixture.actor}'
     FROM public.factories WHERE name = 'Берегово' LIMIT 1;
     INSERT INTO public.department_members(user_id, department_id, is_department_head, created_by)
     VALUES
@@ -196,6 +196,8 @@ if (process.env.INVENTORY_TRANSFER_TEST_DATABASE_URL) {
     DELETE FROM public.inventory WHERE material_id = '${fixture.material}';
     DELETE FROM public.departments WHERE id = '${fixture.department}';
     DELETE FROM public.materials WHERE id = '${fixture.material}';
+    DELETE FROM public.user_auth_sync WHERE user_id IN ('${fixture.actor}', '${fixture.supply}');
+    DELETE FROM public.organization_audit_log WHERE actor_id IN ('${fixture.actor}', '${fixture.supply}');
     DELETE FROM public.users WHERE id IN ('${fixture.actor}', '${fixture.supply}');
   `
 

@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { ProductProjectList } from '@/components/features/products/ProductProjectList'
 import { getProductProjects } from '@/lib/actions/products'
 
@@ -5,7 +6,7 @@ export const metadata = {
   title: 'Проекты изделий — CRM Завода',
 }
 
-export default async function ProductProjectsPage() {
+async function ProductProjectsPage() {
   const { data, error } = await getProductProjects()
 
   return error ? (
@@ -14,3 +15,5 @@ export default async function ProductProjectsPage() {
     <ProductProjectList projects={data || []} />
   )
 }
+
+export default withPagePermission('/product-projects', ProductProjectsPage)

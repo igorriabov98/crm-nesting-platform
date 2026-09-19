@@ -1,9 +1,10 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { ConsumableRequestsPage } from '@/components/features/consumables/ConsumableRequestsPage'
 import { getConsumableRequestsPageData } from '@/lib/actions/consumables'
 
 export const metadata = { title: 'Заявки на расходники — CRM Завода' }
 
-export default async function ProductionConsumableRequestsPage({
+async function ProductionConsumableRequestsPage({
   searchParams,
 }: {
   searchParams?: Promise<{ factory?: string }>
@@ -12,3 +13,5 @@ export default async function ProductionConsumableRequestsPage({
   const data = await getConsumableRequestsPageData('production', params?.factory)
   return <ConsumableRequestsPage {...data} />
 }
+
+export default withPagePermission('/production/consumable-requests', ProductionConsumableRequestsPage)

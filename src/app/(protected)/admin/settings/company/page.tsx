@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { CompanySettingsPage } from '@/components/features/settings/CompanySettingsPage'
 import { getCompanySettings } from '@/lib/actions/company-settings'
@@ -78,7 +79,7 @@ function CompanySettingsUnavailable({ error }: { error: unknown }) {
   )
 }
 
-export default async function CompanySettingsRoute() {
+async function CompanySettingsRoute() {
   const { supabase } = await requirePermission('company_settings', 'view').catch(() => ({ supabase: null }))
   if (!supabase) {
     return <AccessDenied />
@@ -136,3 +137,5 @@ export default async function CompanySettingsRoute() {
     />
   )
 }
+
+export default withPagePermission('/admin/settings/company', CompanySettingsRoute)

@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { getProductionData } from '@/app/(protected)/production/actions'
 import { getGanttData } from '@/app/(protected)/production/gantt/actions'
 import { ProductionWorkspace } from '@/components/features/production/ProductionWorkspace'
@@ -12,7 +13,7 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Неизвестная ошибка'
 }
 
-export default async function ProductionPage({
+async function ProductionPage({
   searchParams
 }: {
   searchParams?: Promise<{ factory?: string }>
@@ -82,3 +83,5 @@ export default async function ProductionPage({
     />
   )
 }
+
+export default withPagePermission('/production', ProductionPage)

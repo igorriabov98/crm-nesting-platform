@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { ProductionLocalShipmentsPage } from '@/components/features/production/ProductionLocalShipmentsPage'
 import { getProductionLocalShipmentsWorkspace } from '@/lib/actions/production-local-shipments'
 
@@ -7,7 +8,7 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Неизвестная ошибка'
 }
 
-export default async function ProductionLocalShipmentsRoute({
+async function ProductionLocalShipmentsRoute({
   searchParams,
 }: {
   searchParams?: Promise<{ factory?: string }>
@@ -24,3 +25,5 @@ export default async function ProductionLocalShipmentsRoute({
     )
   }
 }
+
+export default withPagePermission('/production/local-shipments', ProductionLocalShipmentsRoute)

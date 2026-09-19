@@ -1,5 +1,7 @@
 'use client'
 
+import { usePermissions } from '@/components/providers/PermissionProvider'
+
 import { useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { LogOut, User2, Menu } from 'lucide-react'
@@ -55,6 +57,7 @@ const PAGE_TITLES: Record<string, string> = {
   [ROUTES.ADMIN_PRODUCTION_FACT_SETTINGS]: 'Настройки факта производства',
   [ROUTES.ADMIN_LONG_STOCK_LAYOUT_SETTINGS]: 'Раскладка хлыстов',
   [ROUTES.NESTING_SETTINGS]: 'Настройки AI',
+  [ROUTES.ADMIN_ORGANIZATION]: 'Пользователи и структура',
   [ROUTES.ADMIN_USERS]: 'Управление пользователями',
   [ROUTES.ADMIN_USERS_NEW]: 'Новый пользователь',
   [ROUTES.NOTIFICATIONS]: 'Уведомления',
@@ -69,7 +72,9 @@ interface HeaderProps {
   isImpersonating?: boolean
 }
 
-export function Header({ user, permissions, isImpersonating = false }: HeaderProps) {
+export function Header({ user, permissions: initialPermissions, isImpersonating = false }: HeaderProps) {
+  const {permissions} = usePermissions()
+  void initialPermissions
   const router = useRouter()
   const pathname = usePathname()
   const { reset } = useUserStore()

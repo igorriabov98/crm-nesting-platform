@@ -3,7 +3,7 @@ import 'server-only'
 import { createServerClient, DEFAULT_COOKIE_OPTIONS, type CookieOptions } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { CRM_ADMIN_POSITION_NAME } from '@/lib/permissions/server'
+
 import type { Database } from '@/lib/types/database'
 import {
   IMPERSONATION_COOKIE_NAME,
@@ -17,10 +17,6 @@ import {
 } from './impersonation-state'
 
 type CookieStore = Awaited<ReturnType<typeof cookies>>
-
-type MembershipRow = {
-  position?: { name: string | null } | { name: string | null }[] | null
-}
 
 const isSecureCookie = process.env.NODE_ENV === 'production'
 
@@ -171,19 +167,7 @@ function clearMarkerAndBackups(cookieStore: CookieStore, marker?: ImpersonationM
 }
 
 async function isActiveCrmAdministrator(userId: string) {
-  const supabase = createAdminClient()
-  const [{ data: profile }, { data: memberships }] = await Promise.all([
-    supabase.from('users').select('id, is_active').eq('id', userId).maybeSingle(),
-    supabase
-      .from('department_members')
-      .select('position:positions(name)')
-      .eq('user_id', userId),
-  ])
-
-  const profileRow = profile as { id: string; is_active: boolean | null } | null
-  if (!profileRow || profileRow.is_active === false || !Array.isArray(memberships)) return false
-  return (memberships as MembershipRow[]).some((membership) => {
-    const position = Array.isArray(membership.position) ? membership.position[0] : membership.position
-    return position?.name === CRM_ADMIN_POSITION_NAME
-  })
+  const {data, error} = await (createAdminClient() as unknown as import('@supabase/supabase-js').SupabaseClient).rpc('crm_user_is_admin', {p_user_id: userId})
+  if (error) throw new Error('Не удалось проверить статус администратора')
+  return data === true
 }

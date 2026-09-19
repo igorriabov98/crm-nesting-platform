@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { ContractsPageClient } from '@/components/features/contracts/ContractsPageClient'
 import { getClientOptions } from '@/lib/actions/clients'
 import { getContracts } from '@/lib/actions/contracts'
@@ -6,7 +7,7 @@ export const metadata = {
   title: 'Контракты — CRM Завода',
 }
 
-export default async function ContractsPage() {
+async function ContractsPage() {
   const [{ data: contracts, error }, { data: clients, error: clientsError }] = await Promise.all([
     getContracts(),
     getClientOptions(),
@@ -24,3 +25,5 @@ export default async function ContractsPage() {
     </div>
   )
 }
+
+export default withPagePermission('/contracts', ContractsPage)

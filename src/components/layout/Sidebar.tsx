@@ -1,5 +1,7 @@
 'use client'
 
+import { usePermissions } from '@/components/providers/PermissionProvider'
+
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
@@ -176,7 +178,9 @@ function sectionItems(_user: CurrentUser, permissions: PermissionMap, section: P
     .filter((item): item is NavItem => Boolean(item))
 }
 
-export function Sidebar({ user, permissions, isMobile = false, onNavigate }: SidebarProps) {
+export function Sidebar({ user, permissions: initialPermissions, isMobile = false, onNavigate }: SidebarProps) {
+  const {permissions} = usePermissions()
+  void initialPermissions
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const currentFactory = searchParams.get('factory')
@@ -289,7 +293,10 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const inventoryItems = sectionItems(user, permissions, 'inventory')
   const meetingItems = sectionItems(user, permissions, 'meetings')
   const toolsItems = sectionItems(user, permissions, 'tools')
-  const settingsItems = sectionItems(user, permissions, 'settings')
+  const settingsItems = sectionItems(user, permissions, 'settings').filter(item=>item.href!==ROUTES.ADMIN_DEPARTMENTS)
+  if (permissions.admin_users?.canView || permissions.admin_users?.canManage || permissions.departments?.canView || permissions.departments?.canManage) {
+    settingsItems.push({href:ROUTES.ADMIN_ORGANIZATION,label:'Пользователи и структура',icon:Users})
+  }
 
   function navHref(item: NavItem) {
     return currentFactory ? `${item.href}?factory=${currentFactory}` : item.href

@@ -1,9 +1,10 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { FinanceCalendar } from '@/components/features/finance/FinanceCalendar'
 import { getFinanceCalendarData } from '@/lib/actions/finance'
 
 export const metadata = { title: 'Финансовый план — CRM Завода' }
 
-export default async function FinanceCalendarPage({
+async function FinanceCalendarPage({
   searchParams,
 }: {
   searchParams?: Promise<{ start?: string; end?: string }>
@@ -36,3 +37,5 @@ export default async function FinanceCalendarPage({
     )
   }
 }
+
+export default withPagePermission('/finance/calendar', FinanceCalendarPage)

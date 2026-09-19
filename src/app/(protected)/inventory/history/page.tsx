@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { InventoryWarehouseHistoryPage } from '@/components/features/inventory/InventoryWarehouseHistoryPage'
 import { getInventoryFactories, getTransactions, getWarehouseHistoryOverview } from '@/lib/actions/inventory'
 import type { InventoryTransactionType } from '@/lib/types'
@@ -17,7 +18,7 @@ type SearchParams = {
 const PAGE_SIZE = 50
 const TRANSACTION_TYPES: InventoryTransactionType[] = ['receipt', 'reserve', 'unreserve', 'write_off', 'adjustment']
 
-export default async function InventoryWarehouseHistoryRoute({
+async function InventoryWarehouseHistoryRoute({
   searchParams,
 }: {
   searchParams?: Promise<SearchParams>
@@ -101,3 +102,5 @@ function addDays(value: Date, days: number) {
   next.setUTCDate(next.getUTCDate() + days)
   return next
 }
+
+export default withPagePermission('/inventory/history', InventoryWarehouseHistoryRoute)

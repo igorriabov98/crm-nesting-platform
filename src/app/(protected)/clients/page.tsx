@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { ClientList, type ClientListRow } from '@/components/features/clients/ClientList'
 import { ClientPageHeader } from '@/components/features/clients/ClientPageHeader'
 import { getClients } from '@/lib/actions/clients'
@@ -7,7 +8,7 @@ export const metadata = {
   title: 'Клиенты — CRM Завода',
 }
 
-export default async function ClientsPage() {
+async function ClientsPage() {
   const { data, error } = await getClients()
 
   return (
@@ -22,3 +23,5 @@ export default async function ClientsPage() {
     </div>
   )
 }
+
+export default withPagePermission('/clients', ClientsPage)

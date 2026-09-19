@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { notFound, redirect } from 'next/navigation'
 import { DepartmentRequestsPage } from '@/components/features/department-requests/DepartmentRequestsPage'
 import {
@@ -20,7 +21,7 @@ export async function generateMetadata({
   return { title: `Запросы · ${DEPARTMENT_REQUEST_TARGETS[department].label} | CRM Завода` }
 }
 
-export default async function DepartmentRequestsRoute({
+async function DepartmentRequestsRoute({
   params,
   searchParams,
 }: {
@@ -62,3 +63,5 @@ export default async function DepartmentRequestsRoute({
     />
   )
 }
+
+export default withPagePermission('/requests/sample-id', DepartmentRequestsRoute)

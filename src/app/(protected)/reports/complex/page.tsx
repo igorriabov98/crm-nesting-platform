@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { Download, FileBarChart, Filter, Rows3 } from 'lucide-react'
 
@@ -45,7 +46,7 @@ function exportHref(filters: ShipmentReportFilters) {
   return `/api/reports/complex/shipments.xlsx?${params.toString()}`
 }
 
-export default async function ComplexReportsPage({
+async function ComplexReportsPage({
   searchParams,
 }: {
   searchParams?: Promise<SearchParams>
@@ -199,3 +200,5 @@ export default async function ComplexReportsPage({
     </div>
   )
 }
+
+export default withPagePermission('/reports/complex', ComplexReportsPage)

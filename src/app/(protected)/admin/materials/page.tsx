@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { MaterialsAdminPage } from '@/components/features/materials/MaterialsAdminPage'
 import { SteelTypesSection } from '@/components/features/materials/SteelTypesSection'
 import { getMaterials } from '@/lib/actions/materials'
@@ -9,7 +10,7 @@ export const metadata = {
   title: 'Справочник материалов - CRM Завода',
 }
 
-export default async function AdminMaterialsPage({
+async function AdminMaterialsPage({
   searchParams,
 }: {
   searchParams?: Promise<{ page?: string }>
@@ -45,3 +46,5 @@ export default async function AdminMaterialsPage({
     </div>
   )
 }
+
+export default withPagePermission('/admin/materials', AdminMaterialsPage)

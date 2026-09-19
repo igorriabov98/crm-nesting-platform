@@ -1,3 +1,4 @@
+import { isAuthServiceUnavailable } from '@/lib/auth/service-error'
 import 'server-only'
 
 import { cache } from 'react'
@@ -38,7 +39,8 @@ export type CurrentUserContext = {
 
 export const getCurrentUserContext = cache(async (): Promise<CurrentUserContext> => {
   const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (isAuthServiceUnavailable(authError)) throw new Error('Не удалось проверить сессию')
   if (!user) throw new AuthRequiredError()
 
   const [profileResult, membershipResult] = await Promise.all([
@@ -49,15 +51,16 @@ export const getCurrentUserContext = cache(async (): Promise<CurrentUserContext>
       .maybeSingle(),
     supabase
       .from('department_members')
-      .select('department:departments(id, name), position:positions(id, name, level), is_department_head')
+      .select('department:departments(id, name), position:positions(id, name, level), is_department_head, is_primary')
       .eq('user_id', user.id),
   ])
   const { data: profile, error } = profileResult
 
-  if (error || !profile) throw new UserProfileMissingError(error?.message)
+  if (error) throw new Error('Не удалось прочитать профиль пользователя')
+  if (!profile) throw new UserProfileMissingError()
 
   const baseProfile = profile as Pick<User, 'id' | 'email' | 'full_name' | 'role' | 'factory_id' | 'is_active' | 'created_at'>
-  if (baseProfile.is_active === false) {
+  if (baseProfile.is_active !== true) {
     throw new UserInactiveError()
   }
 
@@ -76,10 +79,11 @@ export const getCurrentUserContext = cache(async (): Promise<CurrentUserContext>
     factory = (factoryData as Factory | null) || null
   }
 
+  if (membershipResult.error) throw new Error('Не удалось проверить назначения пользователя')
   const { data: membershipData } = membershipResult
 
   const departmentMemberships = Array.isArray(membershipData)
-    ? (membershipData as UserDepartmentMembershipSummary[])
+    ? (membershipData as UserDepartmentMembershipSummary[]).sort((a,b)=>Number(b.is_primary)-Number(a.is_primary))
     : []
 
   const currentUser = { ...profileRow, factory, department_memberships: departmentMemberships } as unknown as CurrentUser

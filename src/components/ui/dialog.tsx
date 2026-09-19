@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { AccessVisibilityContext } from "@/components/providers/access-visibility"
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 
 import { cn } from "@/lib/utils"
@@ -16,6 +17,8 @@ function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
 }
 
 function DialogPortal({ ...props }: DialogPrimitive.Portal.Props) {
+  const visible = React.useContext(AccessVisibilityContext)
+  if (!visible) return null
   return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />
 }
 

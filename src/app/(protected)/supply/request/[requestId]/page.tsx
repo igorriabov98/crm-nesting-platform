@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { notFound } from 'next/navigation'
 import { SupplyRequestPage } from '@/components/features/supply-request/SupplyRequestPage'
 import { getRequestForSupply } from '@/lib/actions/supply-request'
@@ -8,7 +9,7 @@ export const metadata = {
   title: 'Заявка для снабжения | CRM Завода',
 }
 
-export default async function SupplyRequestRoute({
+async function SupplyRequestRoute({
   params,
 }: {
   params: Promise<{ requestId: string }>
@@ -24,3 +25,5 @@ export default async function SupplyRequestRoute({
 
   return <SupplyRequestPage data={data} detailing={detailing} />
 }
+
+export default withPagePermission('/supply/request/sample-id', SupplyRequestRoute)

@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { getMachines } from './actions'
 import { MachineTable } from '@/components/features/machines/MachineTable'
 import { requirePermission } from '@/lib/permissions/server'
@@ -8,7 +9,7 @@ export const metadata = {
   title: 'План продаж — CRM Завода',
 }
 
-export default async function SalesPlanPage({
+async function SalesPlanPage({
   searchParams
 }: {
   searchParams?: Promise<{ factory?: string; productionMonth?: string; view?: string }>
@@ -77,3 +78,5 @@ export default async function SalesPlanPage({
     </div>
   )
 }
+
+export default withPagePermission('/sales-plan', SalesPlanPage)

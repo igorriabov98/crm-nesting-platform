@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { AccessDenied } from "@/components/ui/AccessDenied";
 import { MeetingSettingsWorkspace } from "@/components/features/meetings-v2/MeetingSettingsWorkspace";
 import { getMeetingSettingsV2 } from "@/app/(protected)/meetings/v2-actions";
@@ -5,7 +6,7 @@ import { requirePermission } from "@/lib/permissions/server";
 
 export const metadata = { title: "Конструктор совещаний | CRM Завода" };
 
-export default async function MeetingSettingsPage() {
+async function MeetingSettingsPage() {
   const canView = await requirePermission("meeting_templates", "view")
     .then(() => true)
     .catch(() => false);
@@ -32,3 +33,5 @@ export default async function MeetingSettingsPage() {
     />
   );
 }
+
+export default withPagePermission('/admin/settings/meetings', MeetingSettingsPage)

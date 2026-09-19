@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { AccessDenied } from "@/components/ui/AccessDenied";
 import { AgendaPoolWorkspace } from "@/components/features/meetings-v2/AgendaPoolWorkspace";
 import { getAgendaPoolV2 } from "@/app/(protected)/meetings/v2-actions";
@@ -7,7 +8,7 @@ export const metadata = {
   title: "Пул повесток | CRM Завода",
 };
 
-export default async function AgendaPoolPage({
+async function AgendaPoolPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -58,3 +59,5 @@ export default async function AgendaPoolPage({
     />
   );
 }
+
+export default withPagePermission('/meetings/agenda-pool', AgendaPoolPage)

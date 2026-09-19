@@ -31,6 +31,7 @@ export const BREADCRUMB_SEGMENT_LABELS: Record<string, string> = {
   settings: 'Настройки',
   'production-fact': 'Факт производства',
   access: 'Управление доступом',
+  organization: 'Пользователи и структура',
   departments: 'Отделы и структура',
   users: 'Пользователи',
   materials: 'Материалы',

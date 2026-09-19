@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { MachineCreateForm } from '@/components/features/machines/MachineCreateForm'
@@ -9,7 +10,7 @@ export const metadata = {
   title: 'Новая машина — CRM Завода',
 }
 
-export default async function NewMachinePage() {
+async function NewMachinePage() {
   const canManage = await requirePermission('sales_plan', 'manage')
     .then(() => true)
     .catch(() => false)
@@ -41,3 +42,5 @@ export default async function NewMachinePage() {
     </div>
   )
 }
+
+export default withPagePermission('/sales-plan/new', NewMachinePage)

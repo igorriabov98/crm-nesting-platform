@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import {
@@ -64,7 +65,7 @@ export const metadata = {
   title: 'Рабочий запрос | CRM Завода',
 }
 
-export default async function DepartmentRequestDetailPage({
+async function DepartmentRequestDetailPage({
   params,
   searchParams,
 }: {
@@ -391,3 +392,5 @@ export default async function DepartmentRequestDetailPage({
     </div>
   )
 }
+
+export default withPagePermission('/requests/detail/sample-id', DepartmentRequestDetailPage)

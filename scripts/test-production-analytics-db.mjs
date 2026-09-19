@@ -33,6 +33,7 @@ declare
 begin
   delete from public.machines where id = v_machine;
   delete from public.production_fact_sections where id in (v_section, v_parent);
+  delete from public.user_auth_sync where user_id = v_actor;
   delete from public.users where id = v_actor;
   select id into strict v_factory from public.factories order by created_at, id limit 1;
   insert into public.users(id, email, full_name, role, factory_id, is_active)
@@ -68,6 +69,7 @@ drop table if exists public.test_production_analytics_race_fixture;
 delete from public.machines where id = '${fixture.machine_id}';
 delete from public.production_tonnage_facts where section_id = '${fixture.section_id}';
 delete from public.production_fact_sections where id = '${fixture.section_id}' or id = '95000000-0000-4000-8000-000000000002';
+delete from public.user_auth_sync where user_id = '${fixture.actor_id}';
 delete from public.users where id = '${fixture.actor_id}';
 `)
 

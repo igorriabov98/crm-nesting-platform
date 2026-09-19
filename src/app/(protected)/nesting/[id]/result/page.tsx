@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { AlertTriangle } from 'lucide-react'
 import { redirect } from 'next/navigation'
@@ -12,7 +13,7 @@ import { isCompletedNestingStatus } from '@/lib/nesting/status'
 
 export const metadata = { title: 'Результат раскладки — CRM Завода' }
 
-export default async function NestingResultPage({
+async function NestingResultPage({
   params,
 }: {
   params: Promise<{ id: string }>
@@ -63,3 +64,5 @@ function ResultErrorCard({ message }: { message: string }) {
     </Card>
   )
 }
+
+export default withPagePermission('/nesting/sample-id/result', NestingResultPage)

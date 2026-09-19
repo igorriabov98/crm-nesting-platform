@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { MaterialReceivingPage } from '@/components/features/inventory/MaterialReceivingPage'
 import { getMaterialReceivingPageData } from '@/lib/actions/supply-orders'
 import { getDetailingReceivingItems } from '@/lib/actions/detailing'
@@ -11,7 +12,7 @@ export const metadata = {
   title: 'Прием материала - CRM Завода',
 }
 
-export default async function InventoryReceivingRoute({
+async function InventoryReceivingRoute({
   searchParams,
 }: {
   searchParams?: Promise<{ factory?: string }>
@@ -46,3 +47,5 @@ export default async function InventoryReceivingRoute({
     </div>
   )
 }
+
+export default withPagePermission('/inventory/receiving', InventoryReceivingRoute)

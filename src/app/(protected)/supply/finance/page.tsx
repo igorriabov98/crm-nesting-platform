@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { FinanceCalendar } from '@/components/features/finance/FinanceCalendar'
 import { getSupplyFinanceData } from '@/lib/actions/finance'
@@ -5,7 +6,7 @@ import { ROUTES } from '@/lib/constants/routes'
 
 export const metadata = { title: 'Финансы снабжения — CRM Завода' }
 
-export default async function SupplyFinancePage({
+async function SupplyFinancePage({
   searchParams,
 }: {
   searchParams?: Promise<{ start?: string; end?: string }>
@@ -45,3 +46,5 @@ export default async function SupplyFinancePage({
     )
   }
 }
+
+export default withPagePermission('/supply/finance', SupplyFinancePage)

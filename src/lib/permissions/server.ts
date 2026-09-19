@@ -29,9 +29,13 @@ export type DepartmentPermissionMembership = {
   positionName: string | null
   positionLevel: number | null
   isDepartmentHead: boolean
+  id?: string
+  isPrimary?: boolean
 }
 
 export type UserPermissionDetails = {
+  version?: string
+  userId?: string
   permissions: PermissionMap
   isAdminPosition: boolean
   memberships: DepartmentPermissionMembership[]
@@ -40,154 +44,45 @@ export type UserPermissionDetails = {
   companyScopes: Partial<Record<ResourceKey, CompanyAccessOperationScopes>>
 }
 
-type PermissionQueryResult<T> = {
-  data: T | null
-  error: { message?: string } | null
+export type AccessSnapshotInput = {
+  userId: string
+  version: string
+  isActive: boolean
+  hasAdminStatus: boolean
+  isAdmin: boolean
+  fullName: string | null
+  email: string
+  memberships: DepartmentPermissionMembership[]
+  accessRows: DepartmentAccessPermissionRow[]
 }
 
-type PermissionQuery = PromiseLike<PermissionQueryResult<unknown>> & {
-  select: (columns?: string) => PermissionQuery
-  eq: (column: string, value: unknown) => PermissionQuery
-  in: (column: string, values: unknown[]) => PermissionQuery
-  order: (column: string, options?: { ascending?: boolean }) => PermissionQuery
-  limit: (count: number) => PermissionQuery
-  maybeSingle: () => PermissionQuery
-  upsert: (values: unknown, options?: { onConflict?: string }) => PermissionQuery
-  insert: (values: unknown) => PermissionQuery
-}
-
-type PermissionDb = {
-  from: (table: string) => PermissionQuery
-}
-
-type MembershipQueryRow = {
-  user_id: string
-  department_id: string
-  position_id?: string | null
-  is_department_head: boolean
-  department?: { id: string; name: string | null; head_user_id?: string | null } | { id: string; name: string | null; head_user_id?: string | null }[] | null
-  position?: { id: string; name: string | null; level: number | null } | { id: string; name: string | null; level: number | null }[] | null
-}
-
-function relationOne<T>(value: T | T[] | null | undefined): T | null {
-  if (Array.isArray(value)) return value[0] || null
-  return value || null
-}
-
-function normalizeMembership(row: MembershipQueryRow): DepartmentPermissionMembership {
-  const department = relationOne(row.department)
-  const position = relationOne(row.position)
-  return {
-    departmentId: row.department_id,
-    departmentName: department?.name ?? null,
-    positionId: row.position_id ?? position?.id ?? null,
-    positionName: position?.name ?? null,
-    positionLevel: typeof position?.level === 'number' ? position.level : null,
-    isDepartmentHead: Boolean(row.is_department_head || (
-      department?.head_user_id && department.head_user_id === row.user_id
-    )),
+export function resolveAccessSnapshot(snapshot: AccessSnapshotInput): UserPermissionDetails {
+  const empty = { permissions: getEmptyPermissionMap(), isAdminPosition: false, memberships: snapshot.memberships,
+    sources: {}, factoryScopes: {}, companyScopes: {}, version: snapshot.version, userId: snapshot.userId }
+  if (!snapshot.isActive) return empty
+  if (snapshot.isAdmin) return {
+    ...empty, permissions: getFullPermissionMap(), isAdminPosition: true,
+    sources: Object.fromEntries(PERMISSION_RESOURCES.map(r => [r.key, [CRM_ADMIN_POSITION_NAME]])),
+    factoryScopes: Object.fromEntries(PERMISSION_RESOURCES.map(r => [r.key, {view: 'all', manage: 'all'}])),
+    companyScopes: Object.fromEntries(PERMISSION_RESOURCES.map(r => [r.key, {view: 'all', manage: 'all'}])),
   }
+  return { ...empty, ...resolveDepartmentPermissions(snapshot.memberships, snapshot.accessRows) }
 }
 
-function makeFullAdminPermissionDetails(memberships: DepartmentPermissionMembership[]): UserPermissionDetails {
-  const permissions = getFullPermissionMap()
-  const sources: Partial<Record<ResourceKey, string[]>> = {}
-  for (const resource of PERMISSION_RESOURCES) {
-    sources[resource.key] = [CRM_ADMIN_POSITION_NAME]
-  }
-  return {
-    permissions,
-    isAdminPosition: true,
-    memberships,
-    sources,
-    factoryScopes: Object.fromEntries(PERMISSION_RESOURCES.map((resource) => [resource.key, { view: 'all', manage: 'all' }])) as Partial<Record<ResourceKey, FactoryAccessOperationScopes>>,
-    companyScopes: Object.fromEntries(PERMISSION_RESOURCES.map((resource) => [resource.key, { view: 'all', manage: 'all' }])) as Partial<Record<ResourceKey, CompanyAccessOperationScopes>>,
-  }
-}
-
-function getCurrentContextAdminPermissions(
-  user: Pick<Awaited<ReturnType<typeof getCurrentUserContext>>['user'], 'department_memberships'>,
-) {
-  const memberships = (user.department_memberships || []).map((membership) => ({
-    departmentId: membership.department?.id || '',
-    departmentName: membership.department?.name ?? null,
-    positionId: membership.position?.id ?? null,
-    positionName: membership.position?.name ?? null,
-    positionLevel: membership.position?.level ?? null,
-    isDepartmentHead: Boolean(membership.is_department_head),
-  }))
-
-  if (!memberships.some((membership) => membership.positionName === CRM_ADMIN_POSITION_NAME)) return null
-  return makeFullAdminPermissionDetails(memberships)
-}
-
-export const getCurrentUserPermissions = cache(async (userId: string): Promise<UserPermissionDetails> => {
+export const getAccessSnapshot = cache(async (userId: string): Promise<AccessSnapshotInput> => {
   const supabase = await createServerSupabaseClient()
-  const db = supabase as unknown as PermissionDb
-
-  const [userResult, membershipResult] = await Promise.all([
-    db.from('users').select('id, is_active').eq('id', userId).maybeSingle(),
-    db.from('department_members')
-      .select('user_id, department_id, position_id, is_department_head, department:departments(id, name, head_user_id), position:positions(id, name, level)')
-      .eq('user_id', userId),
-  ])
-  const { data: userData, error: userError } = userResult
-
-  const userRow = userData as { id: string; is_active: boolean | null } | null
-  if (userError || !userRow || userRow.is_active === false) {
-    return {
-      permissions: getEmptyPermissionMap(),
-      isAdminPosition: false,
-      memberships: [],
-      sources: {},
-      factoryScopes: {},
-      companyScopes: {},
-    }
-  }
-
-  const { data: membershipData, error: membershipError } = membershipResult
-
-  if (membershipError) {
-    throw new Error(membershipError.message || 'Не удалось проверить отделы пользователя')
-  }
-
-  const memberships = Array.isArray(membershipData)
-    ? (membershipData as MembershipQueryRow[]).map(normalizeMembership)
-    : []
-
-  if (memberships.some((membership) => membership.positionName === CRM_ADMIN_POSITION_NAME)) {
-    return makeFullAdminPermissionDetails(memberships)
-  }
-
-  const departmentIds = Array.from(new Set(memberships.map((membership) => membership.departmentId).filter(Boolean)))
-
-  let accessRows: DepartmentAccessPermissionRow[] = []
-  if (departmentIds.length > 0) {
-    const { data: accessData, error: accessError } = await db
-      .from('department_access_permissions')
-      .select('department_id, subject_scope, resource_key, can_view, can_manage, factory_scope, company_view_scope, company_manage_scope')
-      .in('department_id', departmentIds)
-
-    if (accessError) {
-      throw new Error(accessError.message || 'Не удалось проверить матрицу доступов отделов')
-    }
-
-    accessRows = Array.isArray(accessData) ? (accessData as DepartmentAccessPermissionRow[]) : []
-  }
-
-  const { permissions, sources, factoryScopes, companyScopes } = resolveDepartmentPermissions(memberships, accessRows)
-
-  return {
-    permissions,
-    isAdminPosition: false,
-    memberships,
-    sources,
-    factoryScopes,
-    companyScopes,
-  }
+  const { data, error } = await (supabase as unknown as {
+    rpc: (name: string, args: Record<string, unknown>) => Promise<{data: unknown; error: {message: string} | null}>
+  }).rpc('crm_access_snapshot', {p_user_id: userId})
+  if (error || !data) throw new Error(error?.message || 'Не удалось проверить доступ')
+  return data as AccessSnapshotInput
 })
 
+export const getCurrentUserPermissions = cache(async (userId: string): Promise<UserPermissionDetails> =>
+  resolveAccessSnapshot(await getAccessSnapshot(userId)))
+
 export async function canCurrentUserAccessPath(permissions: PermissionMap, pathname: string) {
+  if (pathname === '/admin/organization') return hasPermission(permissions, 'admin_users', 'view') || hasPermission(permissions, 'departments', 'view')
   const requirement = getPermissionRequirementForPath(pathname)
   if (!requirement) return true
   return hasPermission(permissions, requirement.resourceKey, requirement.operation)
@@ -213,8 +108,7 @@ type PermissionRequirement = {
 export async function requireAnyPermission(requirements: readonly PermissionRequirement[]) {
   if (requirements.length === 0) throw new Error('Не задано ни одного требуемого права')
   const context = await getCurrentUserContext()
-  const permissionDetails = getCurrentContextAdminPermissions(context.user)
-    ?? await getCurrentUserPermissions(context.user.id)
+  const permissionDetails = await getCurrentUserPermissions(context.user.id)
 
   if (!requirements.some(({ resourceKey, operation }) =>
     hasPermission(permissionDetails.permissions, resourceKey, operation))) {
