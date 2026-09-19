@@ -42,9 +42,9 @@ test('the active category is prefetched once and reused for category-label searc
   assert.match(materialSearchSource, /void loadMaterialSearchBundle\(key, effectiveQuery, category, allowCrossCategoryFallback\)/)
 })
 
-test('trusted CRM admin context skips duplicate permission queries', () => {
-  assert.match(permissionSource, /getCurrentContextAdminPermissions\(context\.user\)/)
-  assert.match(permissionSource, /\?\? await getCurrentUserPermissions\(context\.user\.id\)/)
+test('permission snapshots are shared within a server render', () => {
+  assert.match(permissionSource, /getAccessSnapshot = cache\(/)
+  assert.match(permissionSource, /getCurrentUserPermissions = cache\(/)
   assert.match(currentUserSource, /const \[profileResult, membershipResult\] = await Promise\.all/)
 })
 
@@ -53,7 +53,7 @@ test('read-only material search reuses live authorization without loading factor
   assert.match(materialActionsSource, /requireReadPermissionDataClient\('materials'\)/)
   assert.doesNotMatch(permissionSource, /supabase\.auth\.getClaims\(\)/)
   assert.match(permissionSource, /supabase\.auth\.getUser\(\)/)
-  assert.match(permissionSource, /const \[userResult, membershipResult\] = await Promise\.all/)
+  assert.match(permissionSource, /\.rpc\('crm_access_snapshot'/)
 })
 
 test('search debounce is short enough for interactive use', () => {
