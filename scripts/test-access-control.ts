@@ -377,6 +377,7 @@ const apiRoutesWithDedicatedAuthorization = new Set([
   'src/app/api/meetings/reminders/route.ts',
   'src/app/api/meetings/rules/evaluate/route.ts',
   'src/app/api/tasks/due/route.ts',
+  'src/app/api/organization/auth-sync/route.ts',
   'src/app/api/telegram/webhook/route.ts',
   'src/app/api/version/route.ts',
   'src/app/api/access/snapshot/route.ts',
