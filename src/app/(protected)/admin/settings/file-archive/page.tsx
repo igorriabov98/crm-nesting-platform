@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { FileArchiveSettingsPage } from '@/components/features/settings/FileArchiveSettingsPage'
 import { getFileArchiveDashboard } from '@/lib/actions/file-archive'
@@ -7,7 +8,7 @@ import { hasPermission } from '@/lib/permissions/resources'
 export const metadata = { title: 'Архив файлов — CRM Завода' }
 export const dynamic = 'force-dynamic'
 
-export default async function FileArchiveSettingsRoute() {
+async function FileArchiveSettingsRoute() {
   const context = await requirePermission('file_archive_settings', 'view').catch(() => null)
   if (!context) return <AccessDenied />
   return (
@@ -17,3 +18,5 @@ export default async function FileArchiveSettingsRoute() {
     />
   )
 }
+
+export default withPagePermission('/admin/settings/file-archive', FileArchiveSettingsRoute)

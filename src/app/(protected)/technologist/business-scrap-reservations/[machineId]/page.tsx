@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
 
@@ -5,7 +6,7 @@ import { BusinessScrapWorkspaceView } from '@/components/features/business-scrap
 import { getBusinessScrapMachineEntry } from '@/lib/actions/business-scrap-corrections'
 import { ROUTES } from '@/lib/constants/routes'
 
-export default async function BusinessScrapMachinePage({ params }: { params: Promise<{ machineId: string }> }) {
+async function BusinessScrapMachinePage({ params }: { params: Promise<{ machineId: string }> }) {
   const { machineId } = await params
   const result = await getBusinessScrapMachineEntry(machineId)
   if (!result.data || result.error) {
@@ -29,3 +30,5 @@ export default async function BusinessScrapMachinePage({ params }: { params: Pro
     </div>
   )
 }
+
+export default withPagePermission('/technologist/business-scrap-reservations/sample-id', BusinessScrapMachinePage)

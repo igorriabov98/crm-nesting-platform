@@ -1,9 +1,10 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { PeoplePlanningBoard } from '@/components/features/production/PeoplePlanningBoard'
 import { getPeoplePlanningWorkspace } from '@/lib/actions/people-planning'
 
 export const metadata = { title: 'Планирование людей — CRM LEDA' }
 
-export default async function PeoplePlanningPage({
+async function PeoplePlanningPage({
   searchParams,
 }: {
   searchParams?: Promise<{ factory?: string; date?: string; month?: string; view?: string }>
@@ -25,3 +26,5 @@ export default async function PeoplePlanningPage({
     )
   }
 }
+
+export default withPagePermission('/production/people', PeoplePlanningPage)

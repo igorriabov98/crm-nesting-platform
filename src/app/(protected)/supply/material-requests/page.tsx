@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { SupplyMaterialRequestQueue } from '@/components/features/supply-material-requests/SupplyMaterialRequestQueue'
 import { getSupplyMaterialRequestQueue } from '@/lib/actions/supply-material-request-queue'
 
@@ -7,7 +8,7 @@ export const metadata = {
 
 export const dynamic = 'force-dynamic'
 
-export default async function SupplyMaterialRequestsPage() {
+async function SupplyMaterialRequestsPage() {
   const result = await getSupplyMaterialRequestQueue()
 
   if (result.error || !result.data) {
@@ -23,3 +24,5 @@ export default async function SupplyMaterialRequestsPage() {
 
   return <SupplyMaterialRequestQueue items={result.data.items} factories={result.data.factories} />
 }
+
+export default withPagePermission('/supply/material-requests', SupplyMaterialRequestsPage)

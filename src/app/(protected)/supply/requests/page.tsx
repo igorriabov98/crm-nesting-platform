@@ -1,9 +1,10 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { SupplyOutsourcingRequestsPage } from '@/components/features/supply/SupplyOutsourcingRequestsPage'
 import { getSupplyOutsourcingRequests } from '@/lib/actions/outsourcing'
 
 export const metadata = { title: 'Согласование аутсорсинга | CRM Завода' }
 
-export default async function SupplyOutsourcingRequestsRoute() {
+async function SupplyOutsourcingRequestsRoute() {
   const { data, error } = await getSupplyOutsourcingRequests()
 
   if (error) {
@@ -23,3 +24,5 @@ export default async function SupplyOutsourcingRequestsRoute() {
     />
   )
 }
+
+export default withPagePermission('/supply/requests', SupplyOutsourcingRequestsRoute)

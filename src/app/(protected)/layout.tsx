@@ -1,12 +1,12 @@
+import { unstable_rethrow } from 'next/navigation'
+import { AccessUnavailable } from '@/components/ui/AccessUnavailable'
 import { Suspense } from 'react'
-import { headers } from 'next/headers'
 import { getCurrentUserContextOrRedirect } from '@/lib/auth/current-user'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Header } from '@/components/layout/Header'
 import { ImpersonationBanner } from '@/components/layout/ImpersonationBanner'
-import { AccessDenied } from '@/components/ui/AccessDenied'
-import { PermissionProvider } from '@/components/providers/PermissionProvider'
-import { canCurrentUserAccessPath, getCurrentUserPermissions } from '@/lib/permissions/server'
+import { PermissionProvider, RouteAccessBoundary } from '@/components/providers/PermissionProvider'
+import { getCurrentUserPermissions } from '@/lib/permissions/server'
 import { getImpersonationContext } from '@/lib/auth/impersonation'
 import { FocusTargetScroller } from '@/components/ui/FocusTargetScroller'
 
@@ -15,18 +15,20 @@ export default async function ProtectedLayout({
 }: {
   children: React.ReactNode
 }) {
-  const context = await getCurrentUserContextOrRedirect()
-  const headerList = await headers()
-  const pathname = headerList.get('x-current-pathname') || ''
-
+  let context, permissionDetails, impersonation
+  try {
+    context = await getCurrentUserContextOrRedirect()
+    permissionDetails = await getCurrentUserPermissions(context.user.id)
+    impersonation = await getImpersonationContext(context.user.id)
+  } catch (error) {
+    unstable_rethrow(error)
+    return <AccessUnavailable />
+  }
   const { user: currentUser } = context
-  const permissionDetails = await getCurrentUserPermissions(currentUser.id)
   const permissions = permissionDetails.permissions
-  const canAccessCurrentPath = await canCurrentUserAccessPath(permissions, pathname)
-  const impersonation = await getImpersonationContext(currentUser.id)
 
   return (
-    <PermissionProvider permissions={permissions} isAdminPosition={permissionDetails.isAdminPosition}>
+    <PermissionProvider permissions={permissions} isAdminPosition={permissionDetails.isAdminPosition} userId={currentUser.id} version={permissionDetails.version}>
       <Suspense fallback={null}><FocusTargetScroller /></Suspense>
       {/* Keep the fixed shell non-scrollable; the sidebar nav and main own their scrolling. */}
       <div className="fixed inset-0 flex flex-col overflow-clip bg-[#F4F6F9]">
@@ -44,7 +46,7 @@ export default async function ProtectedLayout({
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
             <Header user={currentUser} permissions={permissions} isImpersonating={Boolean(impersonation)} />
             <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6">
-              {canAccessCurrentPath ? children : <AccessDenied />}
+              <RouteAccessBoundary>{children}</RouteAccessBoundary>
             </main>
           </div>
         </div>

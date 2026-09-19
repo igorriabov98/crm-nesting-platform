@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { ProductForm } from '@/components/features/products/ProductForm'
 import { ROUTES } from '@/lib/constants/routes'
@@ -7,7 +8,7 @@ export const metadata = {
   title: 'Новый продукт — CRM Завода',
 }
 
-export default function NewProductPage() {
+function NewProductPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-3">
@@ -21,3 +22,5 @@ export default function NewProductPage() {
     </div>
   )
 }
+
+export default withPagePermission('/products/new', NewProductPage)

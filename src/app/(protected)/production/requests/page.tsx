@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { ProductionOutsourcingRequestsPage } from '@/components/features/production/ProductionOutsourcingRequestsPage'
 import { getProductionOutsourcingSummary } from '@/lib/actions/outsourcing'
 import { hasPermission } from '@/lib/permissions/resources'
@@ -7,7 +8,7 @@ import type { FactorySummary } from '@/lib/types'
 
 export const metadata = { title: 'Запросы производства | CRM Завода' }
 
-export default async function ProductionOutsourcingRequestsRoute({
+async function ProductionOutsourcingRequestsRoute({
   searchParams,
 }: {
   searchParams?: Promise<{ factory?: string }>
@@ -66,3 +67,5 @@ export default async function ProductionOutsourcingRequestsRoute({
     />
   )
 }
+
+export default withPagePermission('/production/requests', ProductionOutsourcingRequestsRoute)

@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { AccessVisibilityContext } from "@/components/providers/access-visibility"
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog"
 
 import { cn } from "@/lib/utils"
@@ -17,6 +18,8 @@ function AlertDialogTrigger({ ...props }: AlertDialogPrimitive.Trigger.Props) {
 }
 
 function AlertDialogPortal({ ...props }: AlertDialogPrimitive.Portal.Props) {
+  const visible = React.useContext(AccessVisibilityContext)
+  if (!visible) return null
   return (
     <AlertDialogPrimitive.Portal data-slot="alert-dialog-portal" {...props} />
   )

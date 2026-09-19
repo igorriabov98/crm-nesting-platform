@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { AISettingsPage } from '@/components/features/nesting/AISettingsPage'
 import { requirePermission } from '@/lib/permissions/server'
@@ -65,7 +66,7 @@ function NestingServiceUnavailable({ error }: { error: unknown }) {
   )
 }
 
-export default async function NestingAISettingsRoute() {
+async function NestingAISettingsRoute() {
   const allowed = await requirePermission('nesting_settings', 'view')
     .then(() => true)
     .catch(() => false)
@@ -84,3 +85,5 @@ export default async function NestingAISettingsRoute() {
 
   return <AISettingsPage initialSettings={data.settings} initialUsage={data.usage.data} />
 }
+
+export default withPagePermission('/nesting/settings', NestingAISettingsRoute)

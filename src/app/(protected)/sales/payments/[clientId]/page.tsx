@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { ArrowLeft, Building2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -8,7 +9,7 @@ import { ROUTES } from '@/lib/constants/routes'
 export const metadata = { title: 'Оплаты компании — CRM Завода' }
 export const dynamic = 'force-dynamic'
 
-export default async function ClientPaymentsPage({ params }: { params: Promise<{ clientId: string }> }) {
+async function ClientPaymentsPage({ params }: { params: Promise<{ clientId: string }> }) {
   const { clientId } = await params
   const data = await getClientPaymentDetails(clientId)
   return (
@@ -22,3 +23,5 @@ export default async function ClientPaymentsPage({ params }: { params: Promise<{
     </div>
   )
 }
+
+export default withPagePermission('/sales/payments/sample-id', ClientPaymentsPage)

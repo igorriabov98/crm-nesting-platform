@@ -1,23 +1,7 @@
 'use server'
-
-import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
-import {
-  addDepartmentMemberSchema,
-  createDepartmentSchema,
-  createPositionSchema,
-  updateDepartmentMemberSchema,
-  updateDepartmentSchema,
-  updatePositionSchema,
-  type AddDepartmentMemberInput,
-  type CreateDepartmentInput,
-  type CreatePositionInput,
-  type UpdateDepartmentMemberInput,
-  type UpdateDepartmentInput,
-  type UpdatePositionInput,
-} from '@/lib/types/schemas'
-import { ROUTES } from '@/lib/constants/routes'
+import { type AddDepartmentMemberInput, type CreateDepartmentInput, type CreatePositionInput, type UpdateDepartmentMemberInput, type UpdateDepartmentInput, type UpdatePositionInput } from '@/lib/types/schemas'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import type { Department, DepartmentMember, Position } from '@/lib/types/departments'
 
@@ -101,73 +85,6 @@ type SubordinateMember = DepartmentMember & {
   depth: number
 }
 
-const BROKER_DEPARTMENT_NAME = 'Брокерский'
-const BROKER_HEAD_POSITION_NAME = 'Начальник Брокерского отдела'
-
-async function syncBrokerDepartmentHeadMembership(
-  db: LooseDb,
-  departmentId: string,
-  headUserId: string | null,
-  createdBy: string,
-) {
-  const { data: department, error: departmentError } = await db
-    .from('departments')
-    .select('id, name')
-    .eq('id', departmentId)
-    .single()
-
-  if (departmentError) throw departmentError
-  if ((department as { name?: string } | null)?.name?.trim() !== BROKER_DEPARTMENT_NAME) return
-
-  const { error: clearHeadError } = await db
-    .from('department_members')
-    .update({ is_department_head: false })
-    .eq('department_id', departmentId)
-    .eq('is_department_head', true)
-
-  if (clearHeadError) throw clearHeadError
-  if (!headUserId) return
-
-  const { data: position, error: positionError } = await db
-    .from('positions')
-    .select('id')
-    .eq('name', BROKER_HEAD_POSITION_NAME)
-    .eq('is_active', true)
-    .maybeSingle()
-
-  if (positionError) throw positionError
-  if (!position) throw new Error(`Должность «${BROKER_HEAD_POSITION_NAME}» не найдена`)
-
-  const { data: membership, error: membershipError } = await db
-    .from('department_members')
-    .select('id')
-    .eq('department_id', departmentId)
-    .eq('user_id', headUserId)
-    .maybeSingle()
-
-  if (membershipError) throw membershipError
-
-  if (membership) {
-    const { error: updateError } = await db
-      .from('department_members')
-      .update({
-        position_id: (position as { id: string }).id,
-        is_department_head: true,
-      })
-      .eq('id', (membership as { id: string }).id)
-    if (updateError) throw updateError
-    return
-  }
-
-  const { error: insertError } = await db.from('department_members').insert({
-    department_id: departmentId,
-    user_id: headUserId,
-    position_id: (position as { id: string }).id,
-    is_department_head: true,
-    created_by: createdBy,
-  })
-  if (insertError) throw insertError
-}
 
 type SubordinatesResult = {
   data: SubordinateMember[] | null
@@ -222,54 +139,6 @@ function mapDepartment(row: DepartmentQueryRow): Department {
   }
 }
 
-async function assertActiveHeadUser(db: LooseDb, headUserId: string | null | undefined) {
-  if (!headUserId) return
-
-  const { data, error } = await db
-    .from('users')
-    .select('id')
-    .eq('id', headUserId)
-    .eq('is_active', true)
-    .maybeSingle()
-
-  if (error) throw error
-  if (!data) throw new Error('Указанный руководитель не найден или неактивен')
-}
-
-// ──────────────────────────────────────
-// validateNoCircularDependency (внутренняя)
-// ──────────────────────────────────────
-async function validateNoCircularDependency(
-  departmentId: string,
-  newParentId: string | null
-): Promise<boolean> {
-  if (!newParentId) return true
-  if (newParentId === departmentId) return false
-
-  const db = getOrganizationDb()
-  let currentId: string | null = newParentId
-  const visited = new Set<string>()
-
-  while (currentId) {
-    if (visited.has(currentId)) return false
-    if (currentId === departmentId) return false
-    visited.add(currentId)
-
-    const { data, error } = await db
-      .from('departments')
-      .select('parent_id')
-      .eq('id', currentId)
-      .maybeSingle()
-
-    if (error) throw error
-    if (!data) throw new Error('Родительский отдел не найден')
-
-    currentId = (data as { parent_id: string | null }).parent_id
-  }
-
-  return true
-}
-
 // ──────────────────────────────────────
 // getPositions
 // ──────────────────────────────────────
@@ -296,83 +165,24 @@ export async function getPositions(): Promise<PositionsResult> {
 // createPosition
 // ──────────────────────────────────────
 export async function createPosition(data: CreatePositionInput): Promise<PositionActionResult> {
-  try {
-    const context = await requirePermission('departments', 'manage')
-    const parsed = createPositionSchema.parse(data)
-    const db = getOrganizationDb()
-
-    const { error } = await db.from('positions').insert({
-      ...parsed,
-      created_by: context.user.id,
-    })
-
-    if (error) throw error
-
-    revalidatePath(ROUTES.ADMIN_DEPARTMENTS)
-    return { success: true, error: null }
-  } catch (error: unknown) {
-    return { success: false, error: getErrorMessage(error) }
-  }
+  void data
+  return {success:false,error:'Откройте раздел «Пользователи и структура» и повторите изменение с актуальными данными'}
 }
 
 // ──────────────────────────────────────
 // updatePosition
 // ──────────────────────────────────────
 export async function updatePosition(id: string, data: UpdatePositionInput): Promise<PositionActionResult> {
-  try {
-    await requirePermission('departments', 'manage')
-    const parsed = updatePositionSchema.parse(data)
-    const db = getOrganizationDb()
-
-    const { error } = await db
-      .from('positions')
-      .update(parsed)
-      .eq('id', id)
-
-    if (error) throw error
-
-    revalidatePath(ROUTES.ADMIN_DEPARTMENTS)
-    return { success: true, error: null }
-  } catch (error: unknown) {
-    return { success: false, error: getErrorMessage(error) }
-  }
+  void id; void data
+  return {success:false,error:'Откройте раздел «Пользователи и структура» и повторите изменение с актуальными данными'}
 }
 
 // ──────────────────────────────────────
 // deletePosition
 // ──────────────────────────────────────
 export async function deletePosition(id: string): Promise<PositionActionResult> {
-  try {
-    await requirePermission('departments', 'manage')
-    const db = getOrganizationDb()
-
-    const { count, error: countError } = await db
-      .from('department_members')
-      .select('id', { count: 'exact', head: true })
-      .eq('position_id', id)
-
-    if (countError) throw countError
-
-    const assignedCount = count || 0
-    if (assignedCount > 0) {
-      return {
-        success: false,
-        error: `Нельзя удалить должность, она назначена ${assignedCount} сотрудникам`,
-      }
-    }
-
-    const { error } = await db
-      .from('positions')
-      .delete()
-      .eq('id', id)
-
-    if (error) throw error
-
-    revalidatePath(ROUTES.ADMIN_DEPARTMENTS)
-    return { success: true, error: null }
-  } catch (error: unknown) {
-    return { success: false, error: getErrorMessage(error) }
-  }
+  void id
+  return {success:false,error:'Откройте раздел «Пользователи и структура» и повторите изменение с актуальными данными'}
 }
 
 // ──────────────────────────────────────
@@ -425,42 +235,8 @@ export async function getDepartmentById(id: string): Promise<DepartmentResult> {
 // createDepartment
 // ──────────────────────────────────────
 export async function createDepartment(data: CreateDepartmentInput): Promise<CreateDepartmentResult> {
-  try {
-    const context = await requirePermission('departments', 'manage')
-    const parsed = createDepartmentSchema.parse(data)
-    const db = getOrganizationDb()
-
-    await assertActiveHeadUser(db, parsed.head_user_id)
-
-    const { data: createdDepartment, error } = await db
-      .from('departments')
-      .insert({
-        ...parsed,
-        created_by: context.user.id,
-      })
-      .select('id')
-      .single()
-
-    if (error) throw error
-    if (!createdDepartment) throw new Error('Не удалось создать отдел')
-
-    const createdDepartmentId = (createdDepartment as { id: string }).id
-    await syncBrokerDepartmentHeadMembership(
-      db,
-      createdDepartmentId,
-      parsed.head_user_id ?? null,
-      context.user.id,
-    )
-
-    revalidatePath(ROUTES.ADMIN_DEPARTMENTS)
-    return {
-      success: true,
-      data: { id: createdDepartmentId },
-      error: null,
-    }
-  } catch (error: unknown) {
-    return { success: false, error: getErrorMessage(error) }
-  }
+  void data
+  return {success:false,error:'Откройте раздел «Пользователи и структура» и повторите изменение с актуальными данными'}
 }
 
 // ──────────────────────────────────────
@@ -470,93 +246,16 @@ export async function updateDepartment(
   id: string,
   data: UpdateDepartmentInput
 ): Promise<DepartmentActionResult> {
-  try {
-    const context = await requirePermission('departments', 'manage')
-    const parsed = updateDepartmentSchema.parse(data)
-    const db = getOrganizationDb()
-
-    if (parsed.head_user_id !== undefined) {
-      await assertActiveHeadUser(db, parsed.head_user_id)
-    }
-
-    if (parsed.parent_id !== undefined) {
-      const safe = await validateNoCircularDependency(id, parsed.parent_id)
-      if (!safe) {
-        return {
-          success: false,
-          error: 'Нельзя: создаётся циклическая зависимость отделов',
-        }
-      }
-    }
-
-    const { error } = await db
-      .from('departments')
-      .update(parsed)
-      .eq('id', id)
-
-    if (error) throw error
-
-    if (parsed.head_user_id !== undefined) {
-      await syncBrokerDepartmentHeadMembership(db, id, parsed.head_user_id, context.user.id)
-    }
-
-    revalidatePath(ROUTES.ADMIN_DEPARTMENTS)
-    return { success: true, error: null }
-  } catch (error: unknown) {
-    return { success: false, error: getErrorMessage(error) }
-  }
+  void id; void data
+  return {success:false,error:'Откройте раздел «Пользователи и структура» и повторите изменение с актуальными данными'}
 }
 
 // ──────────────────────────────────────
 // deleteDepartment
 // ──────────────────────────────────────
 export async function deleteDepartment(id: string): Promise<DepartmentActionResult> {
-  try {
-    await requirePermission('departments', 'manage')
-    const db = getOrganizationDb()
-
-    const { count: childCount, error: childCountError } = await db
-      .from('departments')
-      .select('id', { count: 'exact', head: true })
-      .eq('parent_id', id)
-
-    if (childCountError) throw childCountError
-
-    const children = childCount || 0
-    if (children > 0) {
-      return {
-        success: false,
-        error: `Нельзя удалить: в отделе есть ${children} подотделов. Сначала удалите или переместите их.`,
-      }
-    }
-
-    const { count: memberCount, error: memberCountError } = await db
-      .from('department_members')
-      .select('id', { count: 'exact', head: true })
-      .eq('department_id', id)
-
-    if (memberCountError) throw memberCountError
-
-    const members = memberCount || 0
-    if (members > 0) {
-      return {
-        success: false,
-        error: `Нельзя удалить: в отделе есть ${members} сотрудников. Сначала уберите их из отдела.`,
-      }
-    }
-
-    const { error } = await db
-      .from('departments')
-      .delete()
-      .eq('id', id)
-
-    if (error) throw error
-
-    revalidatePath(ROUTES.ADMIN_DEPARTMENTS)
-    return { success: true, error: null }
-  } catch (error: unknown) {
-    return { success: false, error: getErrorMessage(error) }
-  }
+  void id
+  return {success:false,error:'Откройте раздел «Пользователи и структура» и повторите изменение с актуальными данными'}
 }
 
 // ──────────────────────────────────────
@@ -596,44 +295,8 @@ export async function getDepartmentMembers(departmentId: string): Promise<Depart
 // addMember
 // ──────────────────────────────────────
 export async function addMember(data: AddDepartmentMemberInput): Promise<DepartmentMemberActionResult> {
-  try {
-    const context = await requirePermission('departments', 'manage')
-    const parsed = addDepartmentMemberSchema.parse(data)
-    const db = getOrganizationDb()
-
-    if (parsed.reports_to_user_id === parsed.user_id) {
-      return { success: false, error: 'Сотрудник не может подчиняться самому себе' }
-    }
-
-    if (parsed.is_department_head) {
-      const { error: clearHeadError } = await db
-        .from('department_members')
-        .update({ is_department_head: false })
-        .eq('department_id', parsed.department_id)
-        .eq('is_department_head', true)
-
-      if (clearHeadError) throw clearHeadError
-
-      const { error: departmentError } = await db
-        .from('departments')
-        .update({ head_user_id: parsed.user_id })
-        .eq('id', parsed.department_id)
-
-      if (departmentError) throw departmentError
-    }
-
-    const { error } = await db.from('department_members').insert({
-      ...parsed,
-      created_by: context.user.id,
-    })
-
-    if (error) throw error
-
-    revalidatePath(ROUTES.ADMIN_DEPARTMENTS)
-    return { success: true, error: null }
-  } catch (error: unknown) {
-    return { success: false, error: getErrorMessage(error) }
-  }
+  void data
+  return {success:false,error:'Откройте раздел «Пользователи и структура» и повторите изменение с актуальными данными'}
 }
 
 // ──────────────────────────────────────
@@ -643,121 +306,16 @@ export async function updateMember(
   memberId: string,
   data: UpdateDepartmentMemberInput
 ): Promise<DepartmentMemberActionResult> {
-  try {
-    await requirePermission('departments', 'manage')
-    const parsed = updateDepartmentMemberSchema.parse(data)
-    const db = getOrganizationDb()
-
-    const { data: currentMember, error: memberError } = await db
-      .from('department_members')
-      .select('department_id, user_id, is_department_head')
-      .eq('id', memberId)
-      .single()
-
-    if (memberError) throw memberError
-    if (!currentMember) throw new Error('Участник отдела не найден')
-
-    const member = currentMember as Pick<
-      DepartmentMember,
-      'department_id' | 'user_id' | 'is_department_head'
-    >
-
-    if (parsed.reports_to_user_id && parsed.reports_to_user_id === member.user_id) {
-      return { success: false, error: 'Сотрудник не может подчиняться самому себе' }
-    }
-
-    if (parsed.is_department_head === true && !member.is_department_head) {
-      const { error: clearHeadError } = await db
-        .from('department_members')
-        .update({ is_department_head: false })
-        .eq('department_id', member.department_id)
-        .eq('is_department_head', true)
-
-      if (clearHeadError) throw clearHeadError
-
-      const { error: departmentError } = await db
-        .from('departments')
-        .update({ head_user_id: member.user_id })
-        .eq('id', member.department_id)
-
-      if (departmentError) throw departmentError
-    }
-
-    if (parsed.is_department_head === false && member.is_department_head) {
-      const { error: departmentError } = await db
-        .from('departments')
-        .update({ head_user_id: null })
-        .eq('id', member.department_id)
-        .eq('head_user_id', member.user_id)
-
-      if (departmentError) throw departmentError
-    }
-
-    const { error } = await db
-      .from('department_members')
-      .update(parsed)
-      .eq('id', memberId)
-
-    if (error) throw error
-
-    revalidatePath(ROUTES.ADMIN_DEPARTMENTS)
-    return { success: true, error: null }
-  } catch (error: unknown) {
-    return { success: false, error: getErrorMessage(error) }
-  }
+  void memberId; void data
+  return {success:false,error:'Откройте раздел «Пользователи и структура» и повторите изменение с актуальными данными'}
 }
 
 // ──────────────────────────────────────
 // removeMember
 // ──────────────────────────────────────
 export async function removeMember(memberId: string): Promise<DepartmentMemberActionResult> {
-  try {
-    await requirePermission('departments', 'manage')
-    const db = getOrganizationDb()
-
-    const { data: currentMember, error: memberError } = await db
-      .from('department_members')
-      .select('department_id, user_id, is_department_head')
-      .eq('id', memberId)
-      .single()
-
-    if (memberError) throw memberError
-    if (!currentMember) throw new Error('Участник отдела не найден')
-
-    const member = currentMember as Pick<
-      DepartmentMember,
-      'department_id' | 'user_id' | 'is_department_head'
-    >
-
-    if (member.is_department_head) {
-      const { error: departmentError } = await db
-        .from('departments')
-        .update({ head_user_id: null })
-        .eq('id', member.department_id)
-
-      if (departmentError) throw departmentError
-    }
-
-    const { error: reportsToError } = await db
-      .from('department_members')
-      .update({ reports_to_user_id: null })
-      .eq('department_id', member.department_id)
-      .eq('reports_to_user_id', member.user_id)
-
-    if (reportsToError) throw reportsToError
-
-    const { error } = await db
-      .from('department_members')
-      .delete()
-      .eq('id', memberId)
-
-    if (error) throw error
-
-    revalidatePath(ROUTES.ADMIN_DEPARTMENTS)
-    return { success: true, error: null }
-  } catch (error: unknown) {
-    return { success: false, error: getErrorMessage(error) }
-  }
+  void memberId
+  return {success:false,error:'Откройте раздел «Пользователи и структура» и повторите изменение с актуальными данными'}
 }
 
 // ──────────────────────────────────────

@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { CreditCard } from 'lucide-react'
 import { PaymentCompaniesList } from '@/components/features/payments/PaymentCompaniesList'
 import { getPaymentCompanies } from '@/lib/actions/client-payments'
@@ -5,7 +6,7 @@ import { getPaymentCompanies } from '@/lib/actions/client-payments'
 export const metadata = { title: 'Оплаты — CRM Завода' }
 export const dynamic = 'force-dynamic'
 
-export default async function PaymentsPage() {
+async function PaymentsPage() {
   const data = await getPaymentCompanies()
   return (
     <div className="space-y-6">
@@ -17,3 +18,5 @@ export default async function PaymentsPage() {
     </div>
   )
 }
+
+export default withPagePermission('/sales/payments', PaymentsPage)

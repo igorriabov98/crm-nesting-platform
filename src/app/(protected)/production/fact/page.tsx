@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { redirect } from 'next/navigation'
 import { ProductionFactPage } from '@/components/features/production/ProductionFactPage'
 import { getProductionFactWorkspaceData } from '@/lib/actions/production-fact'
@@ -8,7 +9,7 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Неизвестная ошибка'
 }
 
-export default async function ProductionFactRoute({
+async function ProductionFactRoute({
   searchParams,
 }: {
   searchParams?: Promise<{
@@ -46,3 +47,5 @@ export default async function ProductionFactRoute({
     )
   }
 }
+
+export default withPagePermission('/production/fact', ProductionFactRoute)

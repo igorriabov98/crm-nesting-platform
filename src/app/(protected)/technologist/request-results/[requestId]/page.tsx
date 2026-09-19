@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { ArrowLeft, History } from 'lucide-react'
 import { notFound } from 'next/navigation'
@@ -17,7 +18,7 @@ import {
 const stateLabels: Record<string, string> = {
   pending: 'На согласовании', returned: 'Возвращена', superseded: 'Заменена', approved: 'Одобрена',
 }
-export default async function RequestResultDetailPage({ params }: { params: Promise<{ requestId: string }> }) {
+async function RequestResultDetailPage({ params }: { params: Promise<{ requestId: string }> }) {
   const { requestId } = await params
   const result = await getTechnologistApprovalDetail(requestId)
   if (!result.data) {
@@ -46,3 +47,5 @@ export default async function RequestResultDetailPage({ params }: { params: Prom
     </CardContent></Card>
   </main>
 }
+
+export default withPagePermission('/technologist/request-results/sample-id', RequestResultDetailPage)

@@ -1,9 +1,10 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { TransportWorkspacePage } from '@/components/features/supply/TransportWorkspacePage'
 import { getTransportWorkspace } from '@/lib/actions/transport-trips'
 
 export const metadata = { title: 'Транспорт | CRM Завода' }
 
-export default async function SupplyTransportPage() {
+async function SupplyTransportPage() {
   const { data, error } = await getTransportWorkspace()
 
   if (error) {
@@ -17,3 +18,5 @@ export default async function SupplyTransportPage() {
 
   return <TransportWorkspacePage workspace={data} />
 }
+
+export default withPagePermission('/supply/transport', SupplyTransportPage)

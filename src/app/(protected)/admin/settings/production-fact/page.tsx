@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { ProductionFactSettingsPage } from '@/components/features/production/ProductionFactSettingsPage'
 import { getProductionFactSettingsData } from '@/lib/actions/production-fact'
@@ -10,7 +11,7 @@ function isAccessError(error: unknown) {
   return error instanceof Error && error.message.includes('Недостаточно прав')
 }
 
-export default async function ProductionFactSettingsRoute({
+async function ProductionFactSettingsRoute({
   searchParams,
 }: {
   searchParams?: Promise<{ factory?: string }>
@@ -25,3 +26,5 @@ export default async function ProductionFactSettingsRoute({
     throw error
   }
 }
+
+export default withPagePermission('/admin/settings/production-fact', ProductionFactSettingsRoute)

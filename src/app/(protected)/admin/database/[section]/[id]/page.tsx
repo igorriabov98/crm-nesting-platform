@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { ArrowLeft, Building2 } from 'lucide-react'
 import { notFound } from 'next/navigation'
@@ -10,7 +11,7 @@ import {
   isSupplierDirectorySection,
 } from '@/lib/suppliers/directory'
 
-export default async function EditSupplierPage({ params }: { params: Promise<{ section: string; id: string }> }) {
+async function EditSupplierPage({ params }: { params: Promise<{ section: string; id: string }> }) {
   const { section, id } = await params
   if (!isSupplierDirectorySection(section)) notFound()
   await requirePermission('suppliers', 'manage')
@@ -46,3 +47,5 @@ export default async function EditSupplierPage({ params }: { params: Promise<{ s
     </div>
   )
 }
+
+export default withPagePermission('/admin/database/sample-id/sample-id', EditSupplierPage)

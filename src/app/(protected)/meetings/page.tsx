@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { Metadata } from "next";
 import { MeetingsOperationsDashboard } from "@/components/features/meetings-v2/MeetingsOperationsDashboard";
 import { getMeetingDashboardV2 } from "./v2-actions";
@@ -8,7 +9,7 @@ export const metadata: Metadata = {
   description: "Операционный штаб совещаний, вопросов и решений",
 };
 
-export default async function MeetingsPage({
+async function MeetingsPage({
   searchParams,
 }: {
   searchParams: Promise<{ page?: string }>;
@@ -31,3 +32,5 @@ export default async function MeetingsPage({
     />
   );
 }
+
+export default withPagePermission('/meetings', MeetingsPage)

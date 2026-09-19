@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { InventoryHistoryPage } from '@/components/features/inventory/InventoryHistoryPage'
 import { getTransactions } from '@/lib/actions/inventory'
@@ -7,7 +8,7 @@ export const metadata = {
   title: 'История склада - CRM Завода',
 }
 
-export default async function InventoryHistoryRoute({
+async function InventoryHistoryRoute({
   params,
   searchParams,
 }: {
@@ -45,3 +46,5 @@ export default async function InventoryHistoryRoute({
     </div>
   )
 }
+
+export default withPagePermission('/inventory/sample-id/history', InventoryHistoryRoute)

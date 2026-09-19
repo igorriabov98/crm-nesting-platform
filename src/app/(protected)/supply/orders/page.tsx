@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { ArrowLeft, ChartNoAxesColumnIncreasing, ClipboardList, History } from 'lucide-react'
 import { SupplyOrderHistoryPage } from '@/components/features/supply-orders/SupplyOrderHistoryPage'
@@ -20,7 +21,7 @@ export const metadata = {
   title: 'Заказы снабжения — CRM Завода',
 }
 
-export default async function SupplyOrdersRoute({
+async function SupplyOrdersRoute({
   searchParams,
 }: {
   searchParams?: Promise<{ page?: string; view?: string; factory?: string; request?: string; focus?: string }>
@@ -242,3 +243,5 @@ function supplyOrdersViewHref(view: 'details' | 'summary' | 'history', factoryId
   if (factoryId) params.set('factory', factoryId)
   return `${ROUTES.SUPPLY_ORDERS}?${params.toString()}`
 }
+
+export default withPagePermission('/supply/orders', SupplyOrdersRoute)

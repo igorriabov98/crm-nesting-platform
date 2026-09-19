@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { ProductProjectDetailClient } from '@/components/features/products/ProductProjectDetailClient'
 import { ProductProjectForm } from '@/components/features/products/ProductProjectForm'
@@ -16,7 +17,7 @@ export const metadata = {
   title: 'Проект изделия — CRM Завода',
 }
 
-export default async function ProductProjectDetailPage({
+async function ProductProjectDetailPage({
   params,
   searchParams,
 }: {
@@ -77,3 +78,5 @@ export default async function ProductProjectDetailPage({
     </div>
   )
 }
+
+export default withPagePermission('/product-projects/sample-id', ProductProjectDetailPage)

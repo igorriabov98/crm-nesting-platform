@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 ﻿import { getSupplyDashboard } from './actions'
 import { SupplyDashboard } from '@/components/features/supply/SupplyDashboard'
 import { getOrdersSummary } from '@/lib/actions/supply-orders'
@@ -6,7 +7,7 @@ import { SUPPLY_DASHBOARD_MACHINE_LIMIT } from '@/lib/constants/performance-limi
 
 export const metadata = { title: 'Дашборд снабжения — CRM Завода' }
 
-export default async function SupplyPage({
+async function SupplyPage({
   searchParams,
 }: {
   searchParams?: Promise<{ factory?: string }>
@@ -55,3 +56,5 @@ export default async function SupplyPage({
   )
 }
 
+
+export default withPagePermission('/supply', SupplyPage)

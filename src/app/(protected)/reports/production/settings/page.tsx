@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { ArrowLeft, Settings2 } from 'lucide-react'
 
@@ -9,7 +10,7 @@ import { ROUTES } from '@/lib/constants/routes'
 export const metadata = { title: 'Настройки производственной аналитики — CRM Завода' }
 export const dynamic = 'force-dynamic'
 
-export default async function ProductionReportSettingsPage({ searchParams }: { searchParams?: Promise<{ factory?: string }> }) {
+async function ProductionReportSettingsPage({ searchParams }: { searchParams?: Promise<{ factory?: string }> }) {
   const params = await searchParams
   const data = await getProductionReportSettingsData(params?.factory)
   return (
@@ -25,3 +26,5 @@ export default async function ProductionReportSettingsPage({ searchParams }: { s
     </div>
   )
 }
+
+export default withPagePermission('/reports/production/settings', ProductionReportSettingsPage)

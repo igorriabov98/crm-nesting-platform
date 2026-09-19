@@ -189,7 +189,7 @@ const migrationFiles = readdirSync(join(root, 'supabase/migrations'))
   .filter((file) => /^\d{14}_.+\.sql$/.test(file))
   .sort()
 assert.deepEqual(
-  migrationFiles.slice(-6),
+  migrationFiles.filter(file=>file >= '20260916090000_department_rls_matrix_cutover.sql'),
   [
     '20260916090000_department_rls_matrix_cutover.sql',
     '20260916103000_fix_technologist_request_draft_visibility.sql',
@@ -197,6 +197,18 @@ assert.deepEqual(
     '20260917115900_technologist_revision_task_type.sql',
     '20260917120000_technologist_approval_personal_workflow.sql',
     '20260917180000_approval_revision_contract_scope.sql',
+    '20260918130000_finance_approval_jwt_context.sql',
+    '20260918160000_finance_approval_draft_cleanup_actor.sql',
+    '20260919120000_organization_access_foundation.sql',
+    '20260919121000_organization_access_evaluator.sql',
+    '20260919121500_organization_admin_callers.sql',
+    '20260919122000_organization_commands.sql',
+    '20260919123000_organization_handoff.sql',
+    '20260919124000_organization_snapshot.sql',
+    '20260919124500_organization_auth_sync_leases.sql',
+    '20260919125000_finance_inventory_view_only.sql',
+    '20260919125500_organization_rls_administrator.sql',
+
   ],
   'После cutover разрешены только проверенные follow-up миграции',
 )
@@ -232,7 +244,7 @@ for (const forbidden of [
 }
 
 assert(!factoryScope.includes('DIRECTOR_ACCESS_ROLES'), 'Legacy-роль директора не должна обходить factory scope')
-assert.match(accessActions, /fn_save_department_access_permissions/)
+assert.match(accessActions, /crm_save_matrix/)
 assert.match(accessPage, /setPermissions\(savedPermissions\)[\s\S]*setPersistedPermissions\(savedPermissions\)/,
   'После успешного сохранения UI должен принять server-normalized state и обнулить diff')
 

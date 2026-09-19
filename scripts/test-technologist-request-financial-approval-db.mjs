@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const databaseUrl = new URL(process.env.FULL_SCHEMA_TEST_DATABASE_URL ?? 'postgresql://localhost/crm_full_schema_test')
+assert.ok(process.env.FULL_SCHEMA_TEST_DATABASE_URL, 'Set FULL_SCHEMA_TEST_DATABASE_URL explicitly: this test rebuilds the selected local database')
+const databaseUrl = new URL(process.env.FULL_SCHEMA_TEST_DATABASE_URL)
 
 assert.equal(databaseUrl.protocol, 'postgresql:', 'FULL_SCHEMA_TEST_DATABASE_URL must use postgresql://')
 assert.ok(['localhost', '127.0.0.1'].includes(databaseUrl.hostname), 'Approval DB tests only use localhost')
@@ -29,8 +30,8 @@ const version = sql(`
     ('${ids.author}','${ids.author}@approval.test','Автор гонки','technologist','${ids.factory}',true),
     ('${ids.reviewer}','${ids.reviewer}@approval.test','Начальник финансового отдела гонки','engineer','${ids.factory}',true);
   insert into departments(id,name,factory_id,head_user_id) values
-    ('${ids.authorDepartment}','Технический отдел','${ids.factory}','${ids.author}'),
-    ('${ids.reviewerDepartment}','Финансовый отдел','${ids.factory}','${ids.reviewer}');
+    ('${ids.authorDepartment}','Технический отдел','${ids.factory}',NULL),
+    ('${ids.reviewerDepartment}','Финансовый отдел','${ids.factory}',NULL);
   insert into department_members(user_id,department_id,is_department_head) values
     ('${ids.author}','${ids.authorDepartment}',false),
     ('${ids.reviewer}','${ids.reviewerDepartment}',true);

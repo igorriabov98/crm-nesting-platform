@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { ArrowRight, ClipboardCheck } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -26,7 +27,7 @@ function machine(row: ApprovalListRow) {
 
 export const metadata = { title: 'Итог по заявкам | CRM Завода' }
 
-export default async function TechnologistRequestResultsPage() {
+async function TechnologistRequestResultsPage() {
   const result = await getTechnologistApprovalList()
   if (result.error) return <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-red-700">{result.error}</div>
   const rows = result.data as ApprovalListRow[]
@@ -69,3 +70,5 @@ export default async function TechnologistRequestResultsPage() {
     </>}
   </main>
 }
+
+export default withPagePermission('/technologist/request-results', TechnologistRequestResultsPage)

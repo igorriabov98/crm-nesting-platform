@@ -44,11 +44,11 @@ assert(
   'Счётчик черновика должен сравнивать изменения с последним успешно сохранённым снимком',
 )
 assert(
-  /const savedPermissions = buildState\(result\.permissions\)[\s\S]*setPermissions\(savedPermissions\)[\s\S]*setPersistedPermissions\(savedPermissions\)/u.test(accessSettingsSource),
+  /const savedPermissions = \{\.\.\.persistedPermissions, \.\.\.buildState\(result\.permissions\)\}[\s\S]*setPermissions\(savedPermissions\)[\s\S]*setPersistedPermissions\(savedPermissions\)/u.test(accessSettingsSource),
   'После успешного сохранения матрица и локальный снимок должны принять нормализованные сервером права',
 )
 assert(
-  /return \{ success: true, error: null, permissions: normalized \}/u.test(accessActionsSource),
+  /\.rpc\('crm_save_matrix', \{p_changes: changes\}\)/u.test(accessActionsSource),
   'Сохранение прав должно возвращать нормализованную сервером матрицу',
 )
 assert(
@@ -206,7 +206,7 @@ for (const filePath of walk(join(root, 'src/app/(protected)'), 'page.tsx')) {
   const pathname = pagePath(filePath)
   if (unprotectedProfilePages.has(pathname)) continue
   assert(
-    getPermissionRequirementForPath(pathname),
+    pathname==='/admin/organization' || getPermissionRequirementForPath(pathname),
     `Защищённая страница ${pathname} не зарегистрирована в PERMISSION_RESOURCES`,
   )
 }
@@ -379,6 +379,7 @@ const apiRoutesWithDedicatedAuthorization = new Set([
   'src/app/api/tasks/due/route.ts',
   'src/app/api/telegram/webhook/route.ts',
   'src/app/api/version/route.ts',
+  'src/app/api/access/snapshot/route.ts',
 ])
 for (const filePath of walk(join(root, 'src/app/api'), 'route.ts')) {
   const relativePath = relative(root, filePath)

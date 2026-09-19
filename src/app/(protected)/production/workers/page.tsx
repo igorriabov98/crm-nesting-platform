@@ -1,9 +1,10 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { WorkersWorkspace } from '@/components/features/production/WorkersWorkspace'
 import { getWorkersWorkspace } from '@/lib/actions/people-planning'
 
 export const metadata = { title: 'Работники — CRM LEDA' }
 
-export default async function WorkersPage({
+async function WorkersPage({
   searchParams,
 }: {
   searchParams?: Promise<{ factory?: string }>
@@ -20,3 +21,5 @@ export default async function WorkersPage({
     )
   }
 }
+
+export default withPagePermission('/production/workers', WorkersPage)

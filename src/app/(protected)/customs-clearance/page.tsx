@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { CustomsClearanceWorkspace } from '@/components/features/customs-clearance/CustomsClearanceWorkspace'
 import { loadCustomsClearanceWorkspace } from '@/lib/actions/customs-clearance'
@@ -15,8 +16,10 @@ async function loadPageData() {
   }
 }
 
-export default async function CustomsClearancePage() {
+async function CustomsClearancePage() {
   const result = await loadPageData()
   if (result.denied) return <AccessDenied />
   return <CustomsClearanceWorkspace {...result.workspace} />
 }
+
+export default withPagePermission('/customs-clearance', CustomsClearancePage)

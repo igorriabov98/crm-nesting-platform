@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { ClientPricesPage } from '@/components/features/client-prices/ClientPricesPage'
 import { getClientPricesPageData } from '@/lib/actions/client-product-prices'
@@ -6,7 +7,7 @@ export const metadata = {
   title: 'Цены клиентов — CRM Завода',
 }
 
-export default async function SalesPlanPricesPage({
+async function SalesPlanPricesPage({
   searchParams,
 }: {
   searchParams?: Promise<{ clientId?: string }>
@@ -32,3 +33,5 @@ export default async function SalesPlanPricesPage({
     />
   )
 }
+
+export default withPagePermission('/sales-plan/prices', SalesPlanPricesPage)

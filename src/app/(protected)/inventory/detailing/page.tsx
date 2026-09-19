@@ -1,9 +1,10 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { DetailingWarehousePage } from '@/components/features/inventory/DetailingWarehousePage'
 import { getDetailingWarehouse } from '@/lib/actions/detailing'
 
 export const metadata = { title: 'Деталировка - CRM Завода' }
 
-export default async function DetailingInventoryRoute({
+async function DetailingInventoryRoute({
   searchParams,
 }: {
   searchParams?: Promise<{ factory?: string }>
@@ -28,3 +29,5 @@ export default async function DetailingInventoryRoute({
     </div>
   )
 }
+
+export default withPagePermission('/inventory/detailing', DetailingInventoryRoute)

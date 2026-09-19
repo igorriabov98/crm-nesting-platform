@@ -4,6 +4,11 @@ begin;
 
 -- Match Supabase's authenticated table grants in the minimal local bootstrap.
 grant select on all tables in schema public to authenticated;
+-- This legacy workflow regression deliberately constructs already-inactive
+-- assignees to exercise fallback. Offboarding protection is tested separately.
+-- Disable only status-transition guards in this rolled-back fixture setup.
+alter table public.users disable trigger organization_guard_user_status;
+alter table public.users disable trigger protect_last_administrator;
 
 do $$
 declare
@@ -40,14 +45,15 @@ begin
     (v_inactive_technologist, v_inactive_technologist || '@approval.test', 'Технолог для fallback', 'technologist', v_factory, true),
     (v_admin, v_admin || '@approval.test', 'Администратор теста', 'technologist', v_factory, true),
     (v_supply, v_supply || '@approval.test', 'Снабжение теста', 'supply_manager', v_factory, true);
+  insert into public.user_system_roles(user_id,role) values(v_admin,'crm_admin');
   select id into v_admin_position from public.positions where name = 'Администратор CRM';
   if v_admin_position is null then
     insert into public.positions(name, is_active) values ('Администратор CRM', true) returning id into v_admin_position;
   end if;
   insert into public.departments(id, name, factory_id, head_user_id) values
-    (v_department, 'Технический отдел', v_factory, v_admin),
-    (v_finance_department, 'Финансовый отдел', v_factory, v_finance_one);
-  insert into public.department_members(user_id, department_id, position_id) values (v_admin, v_department, v_admin_position);
+    (v_department, 'Технический отдел', v_factory, NULL),
+    (v_finance_department, 'Финансовый отдел', v_factory, NULL);
+  insert into public.department_members(user_id, department_id, position_id,is_department_head) values (v_admin, v_department, v_admin_position,true);
   insert into public.department_members(user_id, department_id, is_department_head) values
     (v_technologist, v_department, false),
     (v_inactive_technologist, v_department, false),
@@ -290,7 +296,8 @@ begin
   end if;
 
   update public.users set is_active = false where id in (v_finance_one, v_finance_two);
-  update public.departments set head_user_id = v_admin where id = v_finance_department;
+  update public.department_members set is_department_head=false where department_id=v_finance_department;
+  insert into public.department_members(user_id,department_id,is_department_head) values(v_admin,v_finance_department,true);
   perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   select public.fn_submit_technologist_request_for_approval(
     v_second_request, v_technologist,
@@ -370,7 +377,8 @@ begin
     if v_error not like '%Не назначен действующий начальник Финансового отдела%' then raise; end if;
   end;
   update public.users set is_active = true where id = v_finance_one;
-  update public.departments set head_user_id = v_finance_one where id = v_finance_department;
+  update public.department_members set is_department_head=false where department_id=v_finance_department;
+  update public.department_members set is_department_head=true where department_id=v_finance_department and user_id=v_finance_one;
   perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   select public.fn_submit_technologist_request_for_approval(v_request,v_technologist,
     jsonb_build_object('decision','none','enteredPlasmaMinutes',0,'wasteItems','[]'::jsonb,'futureItems','[]'::jsonb,'archives','[]'::jsonb),

@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { ProductProjectForm } from '@/components/features/products/ProductProjectForm'
 import { getEngineerOptions } from '@/lib/actions/products'
@@ -13,7 +14,7 @@ export const metadata = {
   title: 'Новый проект изделия — CRM Завода',
 }
 
-export default async function NewProductProjectPage({
+async function NewProductProjectPage({
   searchParams,
 }: {
   searchParams: Promise<{ mailKind?: string; mailId?: string }>
@@ -61,3 +62,5 @@ export default async function NewProductProjectPage({
     </div>
   )
 }
+
+export default withPagePermission('/product-projects/new', NewProductProjectPage)

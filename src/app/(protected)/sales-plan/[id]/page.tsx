@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { notFound } from 'next/navigation'
 import { MachineDetail } from '@/components/features/machines/MachineDetail'
 import { getMachine } from '@/app/(protected)/sales-plan/actions'
@@ -18,7 +19,7 @@ export const metadata = {
   title: 'Карточка машины | CRM Завода',
 }
 
-export default async function MachineDetailPage({
+async function MachineDetailPage({
   params
 }: {
   params: Promise<{ id: string }>
@@ -93,3 +94,5 @@ export default async function MachineDetailPage({
     </div>
   )
 }
+
+export default withPagePermission('/sales-plan/sample-id', MachineDetailPage)

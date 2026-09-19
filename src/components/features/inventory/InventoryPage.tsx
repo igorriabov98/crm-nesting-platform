@@ -1,5 +1,6 @@
 'use client'
 
+import { usePermissions } from '@/components/providers/PermissionProvider'
 import { useId, useMemo, useState, useTransition } from 'react'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
@@ -92,8 +93,10 @@ function formatInventoryDateTime(value: string) {
   }).format(new Date(value))
 }
 
-export function InventoryPage({ items, factories, activeFactoryId, suppliers, steelTypes, resultLimit, canManageInventory, initialStockMode = 'main' }: Props) {
+export function InventoryPage({ items, factories, activeFactoryId, suppliers, steelTypes, resultLimit, canManageInventory: initialCanManageInventory, initialStockMode = 'main' }: Props) {
   const router = useRouter()
+  const { can } = usePermissions()
+  const canManageInventory = initialCanManageInventory && can('inventory', 'manage')
   const rows = items
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState<string>('all')
@@ -199,6 +202,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
   }
 
   const saveNewMaterial = () => {
+    if (!canManageInventory) return
     if (!newMaterialDraft) return
     const validationError = validateDraft(newMaterialDraft)
     if (validationError) {
@@ -244,6 +248,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
   }
 
   const submitReceipt = () => {
+    if (!canManageInventory) return
     if (!activeFactoryId) return toast.error('Выберите завод склада')
     if (!receiptMaterial) return toast.error('Выберите материал')
     if (!receiptSupplierId) return toast.error('Выберите поставщика')
@@ -377,6 +382,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
   }
 
   const submitAdjust = () => {
+    if (!canManageInventory) return
     if (!adjustRow) return
     startTransition(async () => {
     const result = await adjustInventory({
@@ -397,6 +403,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
   }
 
   const deleteRow = (row: InventoryWithMaterial) => {
+    if (!canManageInventory) return
     const confirmed = window.confirm(`Удалить "${row.material?.name || 'материал'}" со склада? История останется, строка исчезнет из остатков.`)
     if (!confirmed) return
 
@@ -430,6 +437,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
   }
 
   const submitBusinessScrapConversion = () => {
+    if (!canManageInventory) return
     if (selectedBusinessScrapIds.length === 0) return
     startTransition(async () => {
       const result = await convertBusinessScrapToMetal(selectedBusinessScrapIds)
@@ -549,7 +557,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
         )}
       </div>
 
-      <div className="rounded-xl border border-[#E8ECF0] bg-white p-4">
+      {canManageInventory && <div className="rounded-xl border border-[#E8ECF0] bg-white p-4">
         <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold text-[#1B3A6B]">
           <PackagePlus className="h-5 w-5" />
           Приход на склад
@@ -682,7 +690,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
         ) : (
           <p className="mt-3 text-sm text-[#6B7280]">Выберите категорию и материал, чтобы увидеть характеристики и поля прихода.</p>
         )}
-      </div>
+      </div>}
 
       <div className="overflow-hidden rounded-xl border border-[#E8ECF0] bg-white">
         {resultLimit && rows.length >= resultLimit && (
@@ -864,17 +872,17 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                           </Button>
                         </>
                       )}
-                      <Button type="button" size="sm" variant="outline" onClick={() => openAdjust(row)}>
+                      {canManageInventory && <Button type="button" size="sm" variant="outline" onClick={() => openAdjust(row)}>
                         <SlidersHorizontal className="mr-1 h-4 w-4" />
                         Корректировка
-                      </Button>
+                      </Button>}
                       <Link href={`${ROUTES.INVENTORY}/${row.material_id}/history${historyFactoryQuery}`}>
                         <Button type="button" size="sm" variant="ghost">
                           <History className="mr-1 h-4 w-4" />
                           История
                         </Button>
                       </Link>
-                      <Button
+                      {canManageInventory && <Button
                         type="button"
                         size="sm"
                         variant="outline"
@@ -884,7 +892,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                       >
                         <Trash2 className="mr-1 h-4 w-4" />
                         Удалить
-                      </Button>
+                      </Button>}
                     </div>
                   </td>
                 </tr>
@@ -895,7 +903,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
         </div>
       </div>
 
-      <AlertDialog open={conversionDialogOpen} onOpenChange={(open) => {
+      <AlertDialog open={canManageInventory && conversionDialogOpen} onOpenChange={(open) => {
         if (!isPending) setConversionDialogOpen(open)
       }}>
         <AlertDialogContent className="max-h-[85vh] sm:max-w-lg">
@@ -957,7 +965,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
         reservations={reservationRow?.active_reservations || []}
       />
 
-      {adjustRow && (
+      {canManageInventory && adjustRow && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
             <h2 className="text-lg font-semibold text-[#1B3A6B]">Корректировка остатка</h2>

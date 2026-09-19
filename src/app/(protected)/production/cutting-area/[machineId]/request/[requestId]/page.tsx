@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { notFound } from 'next/navigation'
 import { TechnologistRequestPage } from '@/components/features/requests/TechnologistRequestPage'
 import { getProductionCuttingAreaRequest } from '@/lib/actions/production-cutting-area'
@@ -7,7 +8,7 @@ import type { SteelType } from '@/lib/types/database'
 export const metadata = { title: 'Заявка на материалы — Участок заготовки' }
 export const dynamic = 'force-dynamic'
 
-export default async function ProductionCuttingAreaRequestPage({
+async function ProductionCuttingAreaRequestPage({
   params,
 }: {
   params: Promise<{ machineId: string; requestId: string }>
@@ -29,3 +30,5 @@ export default async function ProductionCuttingAreaRequestPage({
     />
   )
 }
+
+export default withPagePermission('/production/cutting-area/sample-id/request/sample-id', ProductionCuttingAreaRequestPage)

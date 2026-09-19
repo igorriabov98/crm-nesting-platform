@@ -1,33 +1,189 @@
-'use client'
+"use client";
 
-import { createContext, useContext, type ReactNode } from 'react'
 import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { AccessVisibilityContext } from "./access-visibility";
+import { usePathname } from "next/navigation";
+import {
+  getPermissionRequirementForPath,
   hasPermission,
   type PermissionMap,
   type PermissionOperation,
   type ResourceKey,
-} from '@/lib/permissions/resources'
+} from "@/lib/permissions/resources";
+import { AccessDenied } from "@/components/ui/AccessDenied";
+import { Button } from "@/components/ui/button";
 
-const PermissionContext = createContext<{ permissions: PermissionMap; isAdminPosition: boolean }>({ permissions: {}, isAdminPosition: false })
+type Snapshot = {
+  permissions: PermissionMap;
+  isAdminPosition: boolean;
+  userId?: string;
+  version?: string;
+};
+type AccessState = Snapshot & {
+  status: "ready" | "loading" | "denied" | "error";
+  refresh: () => void;
+};
+const PermissionContext = createContext<AccessState>({
+  permissions: {},
+  isAdminPosition: false,
+  status: "loading",
+  refresh: () => {},
+});
+export const ACCESS_REFRESH_EVENT = "crm:access-refresh";
 
 export function PermissionProvider({
   permissions,
   isAdminPosition = false,
+  userId,
+  version,
   children,
-}: {
-  permissions: PermissionMap
-  isAdminPosition?: boolean
-  children: ReactNode
-}) {
-  return <PermissionContext.Provider value={{ permissions, isAdminPosition }}>{children}</PermissionContext.Provider>
+}: Snapshot & { children: ReactNode }) {
+  const pathname = usePathname();
+  const [requestNumber, setRequestNumber] = useState(0);
+  const [state, setState] = useState<
+    Snapshot & {
+      path: string;
+      requestNumber: number;
+      status: AccessState["status"];
+    }
+  >({
+    permissions,
+    isAdminPosition,
+    userId,
+    version,
+    path: pathname,
+    requestNumber,
+    status: "ready",
+  });
+  const sequence = useRef(0);
+  const refresh = () => setRequestNumber((n) => n + 1);
+  useEffect(() => {
+    const request = ++sequence.current;
+    const controller = new AbortController();
+    fetch("/api/access/snapshot", {
+      cache: "no-store",
+      credentials: "same-origin",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (request !== sequence.current) return;
+        if (response.status === 401 || response.status === 403) {
+          setState({
+            permissions: {},
+            isAdminPosition: false,
+            userId,
+            path: pathname,
+            requestNumber,
+            status: "denied",
+          });
+          return;
+        }
+        if (!response.ok) throw new Error("Access check failed");
+        const snapshot = (await response.json()) as Snapshot;
+        if (request !== sequence.current) return;
+        if (snapshot.userId !== userId) {
+          // A different session must never inherit the previous RSC payload.
+          window.location.reload();
+          return;
+        }
+        setState({
+          ...snapshot,
+          path: pathname,
+          requestNumber,
+          status: "ready",
+        });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted && request === sequence.current) {
+          setState((previous) => ({
+            ...previous,
+            path: pathname,
+            requestNumber,
+            status: "error",
+          }));
+        }
+      });
+    return () => {
+      sequence.current += 1;
+      controller.abort();
+    };
+  }, [pathname, requestNumber, userId]);
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    window.addEventListener("focus", refresh);
+    window.addEventListener(ACCESS_REFRESH_EVENT, refresh);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener(ACCESS_REFRESH_EVENT, refresh);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+  const status =
+    state.userId === userId && state.path === pathname && state.requestNumber === requestNumber
+      ? state.status
+      : "loading";
+  return (
+    <PermissionContext.Provider value={{ ...state, status, refresh }}>
+      {children}
+    </PermissionContext.Provider>
+  );
+}
+
+export function RouteAccessBoundary({ children }: { children: ReactNode }) {
+  const { permissions, status, refresh } = useContext(PermissionContext);
+  const pathname = usePathname();
+  const requirement = getPermissionRequirementForPath(pathname);
+  const organizationAllowed =
+    pathname === "/admin/organization" &&
+    (hasPermission(permissions, "admin_users", "view") ||
+      hasPermission(permissions, "departments", "view"));
+  const denied =
+    status === "denied" ||
+    (pathname === "/admin/organization" && !organizationAllowed) ||
+    (requirement &&
+      !hasPermission(
+        permissions,
+        requirement.resourceKey,
+        requirement.operation,
+      ));
+  const visible = status === "ready" && !denied;
+  // Keep an already mounted editor alive while rechecking access. Hidden content
+  // cannot be operated; server page/action guards remain the authorization boundary.
+  return (
+    <>
+      {status === "loading" && <div role="status" aria-live="polite" className="p-8 text-muted-foreground">Проверяем доступ…</div>}
+      {status === "error" && <div role="alert" className="space-y-4 rounded-xl border bg-white p-8">
+        <h2 className="text-xl font-semibold">Не удалось проверить доступ</h2>
+        <p>Проверка временно недоступна. Повторите попытку.</p>
+        <Button onClick={refresh}>Повторить проверку</Button>
+      </div>}
+      {(status === "denied" || (status === "ready" && denied)) && <AccessDenied />}
+      <AccessVisibilityContext.Provider value={visible}>
+        <div hidden={!visible} inert={!visible}>{status === "denied" || (status === "ready" && denied) ? null : children}</div>
+      </AccessVisibilityContext.Provider>
+    </>
+  );
 }
 
 export function usePermissions() {
-  const { permissions, isAdminPosition } = useContext(PermissionContext)
+  const { permissions, isAdminPosition, status, refresh } =
+    useContext(PermissionContext);
   return {
     permissions,
     isAdminPosition,
+    status,
+    refresh,
     can: (resourceKey: ResourceKey, operation: PermissionOperation) =>
-      hasPermission(permissions, resourceKey, operation),
-  }
+      status === "ready" && hasPermission(permissions, resourceKey, operation),
+  };
 }

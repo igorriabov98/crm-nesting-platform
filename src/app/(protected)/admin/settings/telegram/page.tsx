@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { TelegramSettingsPage } from '@/components/features/settings/TelegramSettingsPage'
 import { getTelegramStatus, getUsersWithTelegram } from '@/lib/actions/telegram-settings'
@@ -7,7 +8,7 @@ export const metadata = {
   title: 'Настройки Telegram - CRM Завода',
 }
 
-export default async function TelegramSettingsRoute() {
+async function TelegramSettingsRoute() {
   const allowed = await requirePermission('telegram_settings', 'view')
     .then(() => true)
     .catch(() => false)
@@ -29,3 +30,5 @@ export default async function TelegramSettingsRoute() {
     />
   )
 }
+
+export default withPagePermission('/admin/settings/telegram', TelegramSettingsRoute)

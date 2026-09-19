@@ -1,8 +1,8 @@
 "use client"
 
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Building2,
   Check,
@@ -27,6 +27,11 @@ import {
   type DepartmentAccessSubjectScope,
   type RolePermissionsPageData,
 } from '@/lib/actions/role-permissions'
+import { equalMatrixCell, reconcileMatrixDraft } from '@/lib/permissions/matrix-draft'
+import { resolveDepartmentPermissions } from '@/lib/permissions/resolve'
+import { ACCESS_REFRESH_EVENT } from '@/components/providers/PermissionProvider'
+import { UserAccessPreview } from './UserAccessPreview'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { startUserImpersonation } from '@/lib/actions/impersonation'
 import type { CompanyAccessScope, FactoryAccessScope, ResourceKey } from '@/lib/permissions/resources'
 import { cn } from '@/lib/utils'
@@ -195,8 +200,14 @@ function MetricCard({
 
 export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
   const router = useRouter()
-  const [selectedDepartmentId, setSelectedDepartmentId] = useState(data.departments[0]?.id || '')
-  const [selectedPreviewUserId, setSelectedPreviewUserId] = useState(data.previewUsers[0]?.id || '')
+  const searchParams = useSearchParams()
+  const [showPreview, setShowPreview] = useState(false)
+  const [showReview, setShowReview] = useState(false)
+  const [conflicts, setConflicts] = useState<string[]>([])
+  const [revisions, setRevisions] = useState(() => Object.fromEntries(data.permissions.map(row => [permissionKey(row.departmentId,row.subjectScope,row.resourceKey), row.revision || '0'])))
+  const lastIncoming = useRef(data.permissions)
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState(searchParams.get('department') || data.departments[0]?.id || '')
+  const [selectedPreviewUserId, setSelectedPreviewUserId] = useState(searchParams.get('user') || data.previewUsers[0]?.id || '')
   const [permissions, setPermissions] = useState(() => buildState(data.permissions))
   const [persistedPermissions, setPersistedPermissions] = useState(() => buildState(data.permissions))
   const [isSaving, setIsSaving] = useState(false)
@@ -204,6 +215,37 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [activeGroup, setActiveGroup] = useState('all')
   const [showAllAudit, setShowAllAudit] = useState(false)
+
+  useEffect(() => {
+    if (lastIncoming.current === data.permissions) return
+    lastIncoming.current = data.permissions
+    const incoming = buildState(data.permissions)
+    const reconciled = reconcileMatrixDraft(persistedPermissions, permissions, incoming)
+    setPermissions(reconciled.draft)
+    setPersistedPermissions(incoming)
+    setConflicts(previous => Array.from(new Set([...previous, ...reconciled.conflicts])))
+    setRevisions(Object.fromEntries(data.permissions.map(row => [permissionKey(row.departmentId,row.subjectScope,row.resourceKey), row.revision || '0'])))
+  }, [data.permissions, permissions, persistedPermissions])
+
+  const changes = data.permissions.flatMap(row => {
+    const key = permissionKey(row.departmentId,row.subjectScope,row.resourceKey)
+    const next = permissions[key] || EMPTY_PERMISSION
+    return equalMatrixCell(persistedPermissions[key], next) ? [] : [{...row,...next,expectedRevision: revisions[key] || '0'}]
+  })
+  const accessDescription = (cell: {canView?: boolean; canManage?: boolean} | undefined) =>
+    cell?.canManage ? 'Просмотр и управление' : cell?.canView ? 'Просмотр' : 'Нет доступа'
+  const scopeDescription = (cell: PermissionState) => `Заводы: ${cell.factoryScope === 'all' ? 'все' : 'свой'}; компании: просмотр ${cell.companyViewScope === 'all' ? 'все' : 'свои'}, управление ${cell.companyManageScope === 'all' ? 'все' : 'свои'}`
+  const affectedUsers = data.previewUsers.filter(user => user.isActive && !user.isAdminPosition).flatMap(user => {
+    const memberships = data.memberships.filter(member => member.userId === user.id && data.departments.some(d=>d.id===member.departmentId && d.isActive)).map(member => ({...member, departmentName: data.departments.find(d => d.id === member.departmentId)?.name || null}))
+    const resolve = (state: PermissionStateMap) => resolveDepartmentPermissions(memberships, data.permissions.map(row => {
+      const cell = state[permissionKey(row.departmentId,row.subjectScope,row.resourceKey)] || EMPTY_PERMISSION
+      return {department_id: row.departmentId, subject_scope: row.subjectScope, resource_key: row.resourceKey,
+        can_view: cell.canView,can_manage: cell.canManage,factory_scope:cell.factoryScope,company_view_scope:cell.companyViewScope,company_manage_scope:cell.companyManageScope}
+    }))
+    const before = resolve(persistedPermissions), after = resolve(permissions)
+    const changed = data.resources.filter(resource => JSON.stringify([before.permissions[resource.key],before.factoryScopes[resource.key],before.companyScopes[resource.key]]) !== JSON.stringify([after.permissions[resource.key],after.factoryScopes[resource.key],after.companyScopes[resource.key]]))
+    return changed.length ? [{user,changed,before,after}] : []
+  })
 
   const selectedDepartment = data.departments.find((department) => department.id === selectedDepartmentId)
     || data.departments[0]
@@ -350,45 +392,30 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
 
   function resetChanges() {
     setPermissions(persistedPermissions)
+    setConflicts([])
     toast.info('Несохранённые изменения отменены')
   }
 
-  async function onSave() {
+  function onSave() {
+    if (data.canManage && conflicts.length === 0) setShowReview(true)
+  }
+  async function commitSave() {
     setIsSaving(true)
     try {
-      const submittedPermissions = permissions
-      const payload: DepartmentAccessPermissionInput[] = data.departments.flatMap((department) =>
-        SUBJECT_SCOPES.flatMap((subjectScope) =>
-          data.resources.map((resource) => {
-            const state = getState(submittedPermissions, department.id, subjectScope, resource.key)
-            return {
-              departmentId: department.id,
-              subjectScope,
-              resourceKey: resource.key,
-              canView: state.canView || state.canManage,
-              canManage: state.canManage,
-              factoryScope: state.factoryScope,
-              companyViewScope: state.companyViewScope,
-              companyManageScope: state.companyManageScope,
-            }
-          })
-        )
-      )
-
-      const result = await saveDepartmentAccessPermissions(payload)
-      if (!result.success || !result.permissions) {
-        throw new Error(result.error || 'Не удалось сохранить права доступа')
-      }
-      const savedPermissions = buildState(result.permissions)
+      const result = await saveDepartmentAccessPermissions(changes)
+      if (!result.success || !result.permissions) throw new Error(result.error || 'Не удалось сохранить права доступа')
+      const savedPermissions = {...persistedPermissions, ...buildState(result.permissions)}
       setPermissions(savedPermissions)
       setPersistedPermissions(savedPermissions)
+      setRevisions(previous => ({...previous, ...Object.fromEntries(result.permissions!.map(row => [permissionKey(row.departmentId,row.subjectScope,row.resourceKey),row.revision || '0']))}))
+      setShowReview(false)
       toast.success('Права доступа сохранены')
+      window.dispatchEvent(new Event(ACCESS_REFRESH_EVENT))
       router.refresh()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Неизвестная ошибка')
-    } finally {
-      setIsSaving(false)
-    }
+      router.refresh()
+    } finally { setIsSaving(false) }
   }
 
   async function onStartUserSession() {
@@ -418,7 +445,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
         scope={scope}
         field={field}
         checked={field === 'view' ? state.canView : state.canManage}
-        disabled={isSaving}
+        disabled={isSaving || !data.canManage}
         onCheckedChange={(checked) => updatePermission(selectedDepartment.id, scope, resource.key, field, checked)}
       />
     )
@@ -439,7 +466,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
         </label>
         <Select
           value={state.factoryScope}
-          disabled={isSaving || !state.canView}
+          disabled={isSaving || !data.canManage || !state.canView}
           onValueChange={(value) => updateFactoryScope(
             selectedDepartment.id,
             scope,
@@ -481,7 +508,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
         </label>
         <Select
           value={value}
-          disabled={isSaving || !enabled}
+          disabled={isSaving || !data.canManage || !enabled}
           onValueChange={(nextValue) => updateCompanyScope(
             selectedDepartment.id,
             scope,
@@ -511,6 +538,17 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
       'mx-auto w-full max-w-[1680px] space-y-4 md:pb-8',
       changeCount > 0 ? 'pb-24' : 'pb-8',
     )}>
+      <Dialog open={showPreview} onOpenChange={setShowPreview}><DialogContent className="max-h-[90vh] overflow-auto sm:max-w-4xl"><DialogHeader><DialogTitle>Фактические права</DialogTitle><DialogDescription>Разрешения по всем назначениям пользователя.</DialogDescription></DialogHeader>{selectedPreviewUserId && <UserAccessPreview userId={selectedPreviewUserId} />}</DialogContent></Dialog>
+      <Dialog open={showReview} onOpenChange={open => { if (!isSaving) setShowReview(open) }}><DialogContent className="max-h-[90vh] overflow-auto sm:max-w-3xl"><DialogHeader><DialogTitle>Проверьте изменения доступа</DialogTitle><DialogDescription>Будут сохранены только перечисленные изменения.</DialogDescription></DialogHeader>
+        <div className="space-y-3">{changes.map(row => {
+          const key = permissionKey(row.departmentId,row.subjectScope,row.resourceKey)
+          return <div key={key} className="rounded-lg border p-3 text-sm"><strong>{data.departments.find(d => d.id === row.departmentId)?.name} · {subjectLabel(row.subjectScope)} · {data.resources.find(r => r.key === row.resourceKey)?.label}</strong><p>{accessDescription(persistedPermissions[key])} → {accessDescription(row)}</p><p className="text-muted-foreground">{[data.resources.find(r=>r.key===row.resourceKey)?.supportsFactoryScope?`Заводы: ${factoryScopeLabel((persistedPermissions[key] || EMPTY_PERMISSION).factoryScope)} → ${factoryScopeLabel(row.factoryScope)}`:'',data.resources.find(r=>r.key===row.resourceKey)?.supportsCompanyScope?`Компании: просмотр ${companyScopeLabel((persistedPermissions[key] || EMPTY_PERMISSION).companyViewScope)} → ${companyScopeLabel(row.companyViewScope)}; управление ${companyScopeLabel((persistedPermissions[key] || EMPTY_PERMISSION).companyManageScope)} → ${companyScopeLabel(row.companyManageScope)}`:''].filter(Boolean).join('; ')}</p></div>
+        })}</div>
+        <h3 className="font-semibold">У кого изменится доступ</h3>
+        {affectedUsers.length === 0 ? <p>Фактические права активных пользователей не изменятся.</p> : affectedUsers.map(({user,changed,before,after}) => <div key={user.id} className="text-sm"><strong>{user.fullName || user.email}</strong>{changed.map(resource => <p key={resource.key}>{resource.label}: {accessDescription(before.permissions[resource.key])} → {accessDescription(after.permissions[resource.key])}</p>)}</div>)}
+        <Button disabled={isSaving || conflicts.length > 0} onClick={commitSave}>{isSaving ? 'Сохраняем…' : 'Применить изменения'}</Button>
+      </DialogContent></Dialog>
+      {conflicts.length > 0 && <div role="alert" className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4"><h2 className="font-semibold">Матрица изменена другим пользователем</h2><p>Проверьте каждое пересечение с вашим черновиком.</p>{conflicts.map(key => <div key={key} className="space-y-2 border-t pt-2 text-sm"><p>{data.departments.find(d => d.id === key.split(':')[0])?.name} · {data.resources.find(r => r.key === key.split(':')[2])?.label}</p><p>На сервере: {accessDescription(persistedPermissions[key])}; {scopeDescription(persistedPermissions[key] || EMPTY_PERMISSION)}</p><p>Ваш черновик: {accessDescription(permissions[key])}; {scopeDescription(permissions[key] || EMPTY_PERMISSION)}</p><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setConflicts(rows => rows.filter(value => value !== key))}>Оставить мой вариант</Button><Button variant="outline" onClick={() => {setPermissions(rows => ({...rows,[key]: persistedPermissions[key]}));setConflicts(rows => rows.filter(value => value !== key))}}>Принять серверный вариант</Button></div></div>)}</div>}
       <section className="relative overflow-hidden rounded-2xl border bg-card shadow-sm">
         <div className="absolute inset-y-0 left-0 w-1 bg-primary" />
         <div className="flex flex-col gap-5 p-5 lg:flex-row lg:items-center lg:justify-between lg:p-6">
@@ -522,7 +560,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Управление доступом</h1>
                 <Badge variant="outline" className="border-primary/20 bg-primary/5 text-primary">
-                  {data.resources.length} ресурс
+                  Разделов: {data.resources.length}
                 </Badge>
               </div>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
@@ -548,7 +586,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
               <span className="hidden sm:inline">Обновить</span>
             </Button>
             {changeCount > 0 && (
-              <Button variant="ghost" size="lg" onClick={resetChanges} disabled={isSaving}>
+              <Button variant="ghost" size="lg" onClick={resetChanges} disabled={isSaving || !data.canManage}>
                 <RotateCcw className="size-4" />
                 Отменить
               </Button>
@@ -558,7 +596,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
               onClick={onSave}
               loading={isSaving}
               loadingText="Сохраняем…"
-              disabled={changeCount === 0}
+              disabled={changeCount === 0 || conflicts.length > 0 || !data.canManage}
             >
               <Save className="size-4" />
               Сохранить{changeCount > 0 ? ` · ${changeCount}` : ''}
@@ -603,15 +641,15 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
 
         <MetricCard
           icon={UserCheck}
-          label="Начальник отдела"
+          label="Разделы с управлением · руководитель"
           value={selectedDepartmentStats.head.manage}
-          detail={`${selectedDepartmentStats.head.view} доступно для просмотра`}
+          detail={`${selectedDepartmentStats.head.view} разделов доступны для просмотра`}
         />
         <MetricCard
           icon={Users}
-          label="Сотрудники"
+          label="Разделы с управлением · сотрудники"
           value={selectedDepartmentStats.member.manage}
-          detail={`${selectedDepartmentStats.member.view} доступно для просмотра`}
+          detail={`${selectedDepartmentStats.member.view} разделов доступны для просмотра`}
         />
         <MetricCard
           icon={UserCog}
@@ -887,7 +925,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                 <UserCheck className="size-4.5 text-primary" />
                 Проверить доступ
               </CardTitle>
-              <CardDescription>Открывает CRM так, как её видит выбранный сотрудник.</CardDescription>
+              <CardDescription>Показывает разрешения и их источники без смены аккаунта.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="space-y-2">
@@ -907,16 +945,17 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                   </SelectContent>
                 </Select>
               </div>
-              <LoadingButton
+              <Button className="min-h-11 w-full" disabled={!selectedPreviewUserId} onClick={() => setShowPreview(true)}>Показать фактические права</Button>
+              {data.canImpersonate && <LoadingButton
                 className="h-10 w-full"
                 onClick={onStartUserSession}
                 loading={isStartingUserSession}
                 loadingText="Открываем CRM…"
-                disabled={!selectedPreviewUserId}
+                disabled={!selectedPreviewUserId || !selectedPreviewUser?.isActive || selectedPreviewUserId===data.currentUserId}
               >
                 <UserCheck className="size-4" />
-                Проверить доступ
-              </LoadingButton>
+                Войти от лица пользователя
+              </LoadingButton>}
 
               {selectedPreviewUser && (
                 <div className="space-y-3 rounded-xl border bg-muted/35 p-3">
@@ -937,7 +976,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                     )}
                   </div>
                   <p className="border-t pt-3 text-xs leading-5 text-muted-foreground">
-                    Откроется настоящая сессия сотрудника с его задачами и данными. Все действия будут записаны от его имени. Вернуться можно через тонкую панель сверху.
+                    При выборе «Войти от лица пользователя» откроется настоящая сессия сотрудника с его задачами и данными. Все действия будут записаны от его имени. Вернуться можно через тонкую панель сверху.
                   </p>
                 </div>
               )}
@@ -1026,7 +1065,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                 <div className="min-w-0">
                   <div className="text-sm font-semibold text-foreground">Администратор CRM вне матрицы</div>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    Эта должность всегда имеет полный доступ. Переключатели выше на неё не влияют.
+                    Этот защищённый статус даёт активному аккаунту полный доступ. Переключатели выше на него не влияют.
                   </p>
                   {data.adminUsers.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1.5">

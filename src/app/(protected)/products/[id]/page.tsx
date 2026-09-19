@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import {
@@ -58,7 +59,7 @@ function SummaryMetric({ icon, label, value }: { icon: React.ReactNode; label: s
   )
 }
 
-export default async function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
+async function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const { data, error } = await getProduct(id)
   if (!data && !error) notFound()
@@ -204,3 +205,5 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     </div>
   )
 }
+
+export default withPagePermission('/products/sample-id', ProductDetailPage)

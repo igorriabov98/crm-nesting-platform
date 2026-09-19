@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
@@ -405,7 +406,7 @@ async function getDashboardData(
   }
 }
 
-export default async function DashboardPage({
+async function DashboardPage({
   searchParams
 }: {
   searchParams?: Promise<{ factory?: string; month?: string }>
@@ -681,3 +682,5 @@ export default async function DashboardPage({
     </div>
   )
 }
+
+export default withPagePermission('/dashboard', DashboardPage)

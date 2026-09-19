@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { ArrowLeft, Plus } from 'lucide-react'
 import { notFound } from 'next/navigation'
@@ -9,7 +10,7 @@ import {
   isSupplierDirectorySection,
 } from '@/lib/suppliers/directory'
 
-export default async function NewSupplierPage({ params }: { params: Promise<{ section: string }> }) {
+async function NewSupplierPage({ params }: { params: Promise<{ section: string }> }) {
   const { section } = await params
   if (!isSupplierDirectorySection(section)) notFound()
   await requirePermission('suppliers', 'manage')
@@ -42,3 +43,5 @@ export default async function NewSupplierPage({ params }: { params: Promise<{ se
     </div>
   )
 }
+
+export default withPagePermission('/admin/database/sample-id/new', NewSupplierPage)

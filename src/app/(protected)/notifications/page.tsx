@@ -1,9 +1,10 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { getNotifications } from './actions'
 import { NotificationList } from '@/components/features/notifications/NotificationList'
 
 export const metadata = { title: 'Уведомления — CRM Завода' }
 
-export default async function NotificationsPage({
+async function NotificationsPage({
   searchParams
 }: {
   searchParams?: Promise<{ factory?: string }>
@@ -18,3 +19,5 @@ export default async function NotificationsPage({
     </div>
   )
 }
+
+export default withPagePermission('/notifications', NotificationsPage)

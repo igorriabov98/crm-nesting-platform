@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import { Factory, MapPin } from 'lucide-react'
 import { FactoryLocationsForm } from '@/components/features/settings/FactoryLocationsForm'
 import { requirePermission } from '@/lib/permissions/server'
@@ -5,7 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 
 export const metadata = { title: 'Площадки и заводы — CRM Завода' }
 
-export default async function FactoryLocationsPage() {
+async function FactoryLocationsPage() {
   await requirePermission('company_settings', 'view')
   const { data, error } = await createAdminClient().from('factories').select('id, name, city, address').order('name')
   if (error) throw new Error(error.message || 'Не удалось загрузить площадки')
@@ -21,3 +22,5 @@ export default async function FactoryLocationsPage() {
     <FactoryLocationsForm factories={factories} />
   </div>
 }
+
+export default withPagePermission('/admin/settings/factories', FactoryLocationsPage)

@@ -1,3 +1,4 @@
+import { synchronizeUserAuth } from '@/lib/organization/auth-sync'
 import { NextResponse } from 'next/server'
 import { syncDueTransportCostTasks } from '@/lib/actions/transport-cost-tasks'
 import { syncDueCustomsClearanceTasks } from '@/lib/actions/customs-clearance-tasks'
@@ -27,10 +28,11 @@ async function syncDueTasks(request: Request) {
 
   try {
     const admin = createAdminClient()
-    const [shipping, customs, clientDelivery] = await Promise.all([
+    const [shipping, customs, clientDelivery, authSync] = await Promise.all([
       syncDueTransportCostTasks(admin),
       syncDueCustomsClearanceTasks(admin),
       syncDueClientDeliveryDateTasks(admin),
+      synchronizeUserAuth(),
     ])
     const machineIds = Array.from(new Set([
       ...shipping.machineIds,
@@ -46,6 +48,7 @@ async function syncDueTasks(request: Request) {
       result: shipping,
       customsResult: customs,
       clientDeliveryResult: clientDelivery,
+      authSync,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

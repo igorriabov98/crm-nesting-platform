@@ -1,3 +1,4 @@
+import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -10,7 +11,7 @@ import type { SteelType } from '@/lib/types/database'
 
 export const metadata = { title: 'Детали раскладки — CRM Завода' }
 
-export default async function NestingPartsPage({
+async function NestingPartsPage({
   params,
 }: {
   params: Promise<{ id: string }>
@@ -48,3 +49,5 @@ export default async function NestingPartsPage({
 
   return <NestingPartsClient project={project} steelTypes={steelTypes} machineContext={machineContext} />
 }
+
+export default withPagePermission('/nesting/sample-id/parts', NestingPartsPage)
