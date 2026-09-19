@@ -146,7 +146,7 @@ begin
   values (v_reviewer, v_reviewer || '@approval.test', 'Финансовый директор теста', 'financial_director', v_factory, true);
   insert into public.departments(id, name, factory_id, head_user_id) values
     (v_technology_department, 'CUTTING RACE TECHNOLOGY', v_factory, null),
-    (v_finance_department, 'Финансовый отдел', v_factory, v_reviewer);
+    (v_finance_department, 'Финансовый отдел', v_factory, null);
   insert into public.department_members(user_id, department_id, is_department_head) values
     (v_actor, v_technology_department, false),
     (v_reviewer, v_finance_department, true);

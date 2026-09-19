@@ -1,5 +1,4 @@
 -- Preserve business rules while replacing all title-based administrator checks.
-BEGIN;
 
 CREATE OR REPLACE FUNCTION public.consumables_is_crm_admin()
  RETURNS boolean
@@ -184,5 +183,3 @@ AS $function$
       )
   );
 $function$;
-
-COMMIT;

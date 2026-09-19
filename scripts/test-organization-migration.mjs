@@ -22,7 +22,7 @@ try{
  const memberIds=sql('SELECT string_agg(id::text,\',\' ORDER BY id) FROM department_members')
  const rights=sql(`SET request.jwt.claim.sub='${employee}'; SELECT private.crm_has_permission('inventory','view'),private.crm_has_permission('inventory','manage');`)
  run('pg_dump',['-Fc','--no-owner','-f',join(backupDir,'before.dump'),url])
- for(const migration of readdirSync('supabase/migrations').filter(f=>/^20260919.*\.sql$/.test(f)).sort())sql(readFileSync(join('supabase/migrations',migration),'utf8'))
+ for(const migration of readdirSync('supabase/migrations').filter(f=>/^20260919.*\.sql$/.test(f)).sort())sql('BEGIN;\n'+readFileSync(join('supabase/migrations',migration),'utf8')+'\nCOMMIT;')
  assert.equal(sql(`SELECT crm_user_is_admin('${admin}')`),adminBefore,'Admin cutover changed authority')
  assert.equal(sql('SELECT string_agg(id::text,\',\' ORDER BY id) FROM department_members'),memberIds,'Membership IDs changed')
  assert.equal(sql(`SET request.jwt.claim.sub='${employee}'; SELECT private.crm_has_permission('inventory','view'),private.crm_has_permission('inventory','manage');`),rights,'Ordinary rights changed')

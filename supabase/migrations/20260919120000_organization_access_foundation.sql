@@ -1,5 +1,4 @@
 -- Organization cutover. Run scripts/organization-preflight.ts before release.
-BEGIN;
 SET LOCAL lock_timeout = '5s';
 SELECT pg_advisory_xact_lock(hashtextextended('crm:organization', 0));
 
@@ -201,5 +200,3 @@ USING(private.crm_has_permission('admin_users','view') OR private.crm_has_permis
 REVOKE ALL ON FUNCTION private.organization_changed(), private.matrix_revision_changed(), private.organization_assert_version(bigint), private.protect_last_administrator() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.crm_set_administrator(uuid,boolean,bigint) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.crm_set_administrator(uuid,boolean,bigint) TO authenticated;
-
-COMMIT;

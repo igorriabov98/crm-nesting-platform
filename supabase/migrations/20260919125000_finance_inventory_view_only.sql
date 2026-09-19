@@ -1,5 +1,4 @@
 -- Separately approved business change: Finance may read inventory, never manage it.
-BEGIN;
 DO $migration$
 DECLARE finance_id uuid; matched integer;
 BEGIN
@@ -14,4 +13,3 @@ BEGIN
   ON CONFLICT(department_id,subject_scope,resource_key) DO UPDATE SET can_view=true,can_manage=false,updated_at=now();
 END;
 $migration$;
-COMMIT;

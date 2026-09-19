@@ -1,4 +1,3 @@
-BEGIN;
 ALTER TABLE public.user_auth_sync ADD COLUMN lease_token uuid, ADD COLUMN lease_until timestamptz;
 CREATE FUNCTION public.crm_claim_auth_sync(p_token uuid,p_user_id uuid DEFAULT NULL) RETURNS SETOF public.user_auth_sync
 LANGUAGE sql SECURITY DEFINER SET search_path='' AS $function$
@@ -21,4 +20,3 @@ END;
 $function$;
 REVOKE ALL ON FUNCTION public.crm_claim_auth_sync(uuid,uuid),public.crm_finish_auth_sync(uuid,uuid,uuid,text) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.crm_claim_auth_sync(uuid,uuid),public.crm_finish_auth_sync(uuid,uuid,uuid,text) TO service_role;
-COMMIT;

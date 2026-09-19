@@ -1,4 +1,3 @@
-BEGIN;
 
 CREATE FUNCTION private.organization_validate_member() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $function$
@@ -205,4 +204,3 @@ REVOKE INSERT, UPDATE, DELETE ON public.departments, public.positions, public.de
 REVOKE ALL ON FUNCTION private.organization_validate_member(),private.organization_sync_head(),private.organization_validate_department(),private.organization_validate_position(),private.organization_audit() FROM PUBLIC,anon,authenticated;
 REVOKE ALL ON FUNCTION public.crm_change_organization(text,uuid,jsonb,bigint) FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.crm_change_organization(text,uuid,jsonb,bigint) TO authenticated;
-COMMIT;

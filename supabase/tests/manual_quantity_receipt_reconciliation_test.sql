@@ -170,6 +170,9 @@ begin
   end if;
 
   begin
+    -- Reproduce a legacy missing-owner state; the enclosing subtransaction rolls back.
+    alter table public.departments disable trigger organization_validate_department;
+    alter table public.users disable trigger organization_guard_user_status;
     update public.departments
     set is_active = false
     where lower(btrim(name)) in ('снабжение', 'отдел снабжения');

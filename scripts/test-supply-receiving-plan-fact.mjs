@@ -166,7 +166,10 @@ async function testConcurrentBatchReceipt() {
       END IF;
       -- This fixture is committed so two sessions can race. Keep it from
       -- participating in later role-based recipient selection in the same DB.
+      -- Fixture cleanup only: exercise receiving independently of offboarding.
+      ALTER TABLE public.users DISABLE TRIGGER organization_guard_user_status;
       UPDATE public.users SET is_active = false WHERE id = '${fixture.actor}';
+      ALTER TABLE public.users ENABLE TRIGGER organization_guard_user_status;
     END;
     $$;
   `
@@ -259,7 +262,10 @@ async function testConcurrentManualQuantityReceipt() {
           WHERE factory_id = v_factory AND material_id = '${fixture.material}' AND material_variant_id IS NULL AND is_business_scrap = false) <> 5 THEN
         RAISE EXCEPTION 'Конкурентный повтор ручной приёмки изменил склад более одного раза';
       END IF;
+      -- Fixture cleanup only: exercise receiving independently of offboarding.
+      ALTER TABLE public.users DISABLE TRIGGER organization_guard_user_status;
       UPDATE public.users SET is_active = false WHERE id = '${fixture.actor}';
+      ALTER TABLE public.users ENABLE TRIGGER organization_guard_user_status;
     END;
     $$;
   `

@@ -1,4 +1,3 @@
-BEGIN;
 
 CREATE FUNCTION private.crm_subject_permission(p_user_id uuid, p_resource text, p_operation text)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $function$
@@ -115,5 +114,3 @@ REVOKE ALL ON FUNCTION private.crm_subject_permission(uuid,text,text) FROM PUBLI
 GRANT EXECUTE ON FUNCTION private.crm_subject_permission(uuid,text,text) TO authenticated, service_role;
 REVOKE ALL ON FUNCTION public.crm_access_snapshot(uuid), public.crm_save_matrix(jsonb) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.crm_access_snapshot(uuid), public.crm_save_matrix(jsonb) TO authenticated, service_role;
-
-COMMIT;

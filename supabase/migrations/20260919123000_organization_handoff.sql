@@ -1,4 +1,3 @@
-BEGIN;
 CREATE TABLE private.organization_obligation_sources (
   key text PRIMARY KEY, table_name text NOT NULL, id_column text NOT NULL DEFAULT 'id',
   owner_column text NOT NULL, active_where text NOT NULL, title_column text,
@@ -206,4 +205,3 @@ $function$;
 REVOKE ALL ON FUNCTION private.organization_obligations(uuid),private.organization_active_assignee(),private.organization_guard_user_status(),private.organization_queue_auth_sync() FROM PUBLIC,anon,authenticated;
 REVOKE ALL ON FUNCTION public.crm_preview_offboarding(uuid),public.crm_handoff_obligation(uuid,uuid,uuid,text,text,uuid),public.crm_change_user_status(uuid,boolean,bigint) FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.crm_preview_offboarding(uuid),public.crm_handoff_obligation(uuid,uuid,uuid,text,text,uuid),public.crm_change_user_status(uuid,boolean,bigint) TO authenticated;
-COMMIT;

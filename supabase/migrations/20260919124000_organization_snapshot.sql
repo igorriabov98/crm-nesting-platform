@@ -1,4 +1,3 @@
-BEGIN;
 CREATE FUNCTION public.crm_organization_snapshot() RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $function$
 DECLARE can_users boolean; can_departments boolean;
@@ -21,4 +20,3 @@ END;
 $function$;
 REVOKE ALL ON FUNCTION public.crm_organization_snapshot() FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.crm_organization_snapshot() TO authenticated;
-COMMIT;

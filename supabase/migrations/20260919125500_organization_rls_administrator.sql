@@ -1,5 +1,4 @@
 -- Replace the remaining inline title checks in RLS; preserve all other predicates.
-BEGIN;
 ALTER POLICY "business_scrap_correction_holds_select" ON "public"."business_scrap_correction_holds" USING ((private.crm_has_permission('business_scrap_reservations'::text, 'view'::text) AND (EXISTS ( SELECT 1
    FROM business_scrap_correction_requests request
   WHERE ((request.id = business_scrap_correction_holds.correction_request_id) AND ((request.requested_by = ( SELECT auth.uid() AS uid)) OR (request.approver_id = ( SELECT auth.uid() AS uid)) OR (public.crm_user_is_admin(auth.uid()))))))));
@@ -84,4 +83,3 @@ ALTER POLICY "Catalog managers update product storage" ON storage.objects USING 
 ALTER POLICY "Catalog managers delete product storage" ON storage.objects USING (bucket_id='product-files' AND private.crm_can_access_product_storage());
 CREATE POLICY organization_active_account ON storage.objects AS RESTRICTIVE FOR ALL TO authenticated
  USING (private.crm_account_is_active()) WITH CHECK (private.crm_account_is_active());
-COMMIT;
