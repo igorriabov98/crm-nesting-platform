@@ -19,7 +19,12 @@ export async function synchronizeUserAuth(userId?: string) {
     try {
       const { error: authError } = await client.auth.admin.updateUserById(
         row.user_id,
-        { ban_duration: row.desired_active ? "none" : "876600h" },
+        {
+          ban_duration: row.desired_active ? "none" : "876600h",
+          ...(row.desired_email
+            ? { email: row.desired_email, email_confirm: true }
+            : {}),
+        },
       );
       if (authError) failure = "Сервис авторизации временно недоступен";
     } catch {

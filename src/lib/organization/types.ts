@@ -11,6 +11,7 @@ export type OrganizationUser = {
   factory_id: string | null;
   telegram_chat_id: string | null;
   is_active: boolean;
+  archived_at?: string | null;
   is_admin: boolean;
   auth_sync_pending: boolean;
 };
@@ -36,6 +37,7 @@ export type OrganizationChange = {
     | "position"
     | "assignment"
     | "remove_assignment"
+    | "consolidate_assignment"
     | "head";
   id: string | null;
   data: Record<string, string | number | boolean | null>;

@@ -105,7 +105,7 @@
     "smoke:prod": "tsx scripts/prod-smoke.ts",
     "smoke:user:create": "tsx scripts/create-smoke-user.ts",
     "supabase:migrate": "tsx scripts/apply-supabase-migrations.ts",
-    "test:organization": "node --test scripts/test-background-access-refresh.mjs && tsx --test scripts/test-organization-auth-cron.ts src/lib/auth/service-error.test.ts src/lib/permissions/matrix-draft.test.ts scripts/test-organization-inventory-ui.tsx && npm run test:access-control && npm run test:rls-matrix-cutover",
+    "test:organization": "node --test scripts/test-background-access-refresh.mjs scripts/test-organization-workspace.mjs && tsx --test scripts/test-organization-auth-cron.ts scripts/test-organization-auth-email.ts src/lib/auth/service-error.test.ts src/lib/permissions/matrix-draft.test.ts scripts/test-organization-inventory-ui.tsx && npm run test:access-control && npm run test:rls-matrix-cutover",
     "test:organization:db": "node scripts/test-organization-db.mjs && node scripts/test-organization-races.mjs",
     "test:organization:migration": "node scripts/test-organization-migration.mjs",
     "ops:organization:preflight": "tsx scripts/organization-preflight.ts"

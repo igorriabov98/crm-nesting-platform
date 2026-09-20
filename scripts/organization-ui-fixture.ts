@@ -28,13 +28,14 @@ const departments = [
     id: department,
     name: "Финансовый отдел",
     is_active: true,
-    parent_id: null,
+    parent_id: null as string | null,
     head_user_id: employee,
     factory_id: factory,
     sort_order: 0,
     description: "Синтетический отдел для проверки интерфейса",
   },
 ];
+departments.push({...departments[0],id:"c0000000-0000-4000-8000-000000000011",name:"Планирование",parent_id:department,head_user_id:admin});
 const positions = [
   {
     id: position,
