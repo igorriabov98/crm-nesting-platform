@@ -25,13 +25,13 @@ test('verified access refreshes without hiding pages, drafts or portals; errors 
   function load(file) {
     const absolute = path.resolve(file)
     if (modules.has(absolute)) return modules.get(absolute).exports
-    const module = { exports: {} }
-    modules.set(absolute, module)
+    const loadedModule = { exports: {} }
+    modules.set(absolute, loadedModule)
     const source = ts.transpileModule(readFileSync(absolute, 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
     }).outputText
     vm.runInNewContext(source, {
-      module, exports: module.exports, AbortController, document: dom.window.document,
+      module: loadedModule, exports: loadedModule.exports, AbortController, document: dom.window.document,
       window: { location: { reload() { reloads++ } }, addEventListener: dom.window.addEventListener.bind(dom.window), removeEventListener: dom.window.removeEventListener.bind(dom.window) },
       fetch(url, options) {
         assert.equal(url, '/api/access/snapshot')
@@ -48,7 +48,7 @@ test('verified access refreshes without hiding pages, drafts or portals; errors 
         return require(name)
       },
     })
-    return module.exports
+    return loadedModule.exports
   }
   const { PermissionProvider, RouteAccessBoundary, usePermissions, ACCESS_REFRESH_EVENT } = load('src/components/providers/PermissionProvider.tsx')
   const { AccessVisibilityContext } = load('src/components/providers/access-visibility.ts')
