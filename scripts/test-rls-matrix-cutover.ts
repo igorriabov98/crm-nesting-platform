@@ -208,6 +208,7 @@ assert.deepEqual(
     '20260919124500_organization_auth_sync_leases.sql',
     '20260919125000_finance_inventory_view_only.sql',
     '20260919125500_organization_rls_administrator.sql',
+    '20260920120000_organization_member_management.sql',
 
   ],
   'После cutover разрешены только проверенные follow-up миграции',

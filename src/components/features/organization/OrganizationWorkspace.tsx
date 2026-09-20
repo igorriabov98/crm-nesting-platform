@@ -4,9 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
-  Building2,
   Users,
   Network,
+  Settings,
+  Trash2,
   Briefcase,
   Plus,
   ShieldCheck,
@@ -43,7 +44,7 @@ import type {
   OrganizationMembership,
   OrganizationUser,
 } from "@/lib/organization/types";
-import { flattenOrganizationTree } from "@/lib/organization/tree";
+import { DepartmentTree } from "./DepartmentTree";
 import { OffboardingWizard } from "./OffboardingWizard";
 
 type Editor = {
@@ -63,8 +64,7 @@ const criticalDepartments = new Set([
 ]);
 const tabs = [
   ["users", "Пользователи", Users],
-  ["departments", "Отделы", Building2],
-  ["structure", "Структура", Network],
+  ["departments", "Отделы и структура", Network],
   ["positions", "Должности", Briefcase],
 ] as const;
 
@@ -220,12 +220,15 @@ export function OrganizationWorkspace({ data }: { data: OrganizationData }) {
   const visibleTabs = tabs.filter(([key]) =>
     key === "users" ? canUsers : canDepartments,
   );
-  const requestedTab = query.get("tab") || "users";
+  const requestedTab =
+    query.get("tab") === "structure"
+      ? "departments"
+      : query.get("tab") || "users";
   const tab = visibleTabs.some(([key]) => key === requestedTab)
     ? requestedTab
     : visibleTabs[0]?.[0] || "users";
   const [search, setSearch] = useState(""),
-    [showBlocked, setShowBlocked] = useState(false);
+    [userFilter, setUserFilter] = useState("active");
   const selectedId = query.get("user") || "";
   const [editor, setEditor] = useState<Editor | null>(() =>
       query.get("create") === "user" && manageUsers
@@ -233,6 +236,9 @@ export function OrganizationWorkspace({ data }: { data: OrganizationData }) {
         : null,
     ),
     [busy, setBusy] = useState(false);
+  const [offboardingMode, setOffboardingMode] = useState<"block" | "archive">(
+    "block",
+  );
   const [offboarding, setOffboarding] = useState<OrganizationUser | null>(null);
   const [review, setReview] = useState<{
     label: string;
@@ -241,7 +247,11 @@ export function OrganizationWorkspace({ data }: { data: OrganizationData }) {
     run: () => Promise<void>;
   } | null>(null);
   const verifyRestoration = useCallback((version: string | null) => {
-    setReview((previous) => previous?.previewUserId ? { ...previous, previewVersion: version } : previous);
+    setReview((previous) =>
+      previous?.previewUserId
+        ? { ...previous, previewVersion: version }
+        : previous,
+    );
   }, []);
   const selected = data.users.find((user) => user.id === selectedId);
   const name = (id: string | null | undefined) =>
@@ -316,7 +326,19 @@ export function OrganizationWorkspace({ data }: { data: OrganizationData }) {
         is_primary: member.is_primary,
         is_department_head: member.is_department_head,
         reports_to_membership_id: member.reports_to_membership_id,
+        reports_to_user_id: member.reports_to_user_id,
       },
+    });
+  }
+
+  function removeMember(member: OrganizationMembership) {
+    setReview({
+      label: `Удалить ${name(member.user_id)} из отдела «${departmentName(member.department_id)}»? Снимется только это назначение. Права по нему перестанут действовать; аккаунт и другие назначения сохранятся.`,
+      run: () =>
+        run(
+          () => change("remove_assignment", member.id, {}),
+          "Назначение удалено из отдела",
+        ),
     });
   }
 
@@ -400,13 +422,17 @@ export function OrganizationWorkspace({ data }: { data: OrganizationData }) {
         />
         <div className="flex flex-wrap gap-2">
           {tab === "users" && (
-            <Button
-              variant="outline"
-              aria-pressed={showBlocked}
-              onClick={() => setShowBlocked((value) => !value)}
+            <select
+              aria-label="Состояние пользователей"
+              className="min-h-10 rounded-md border bg-background px-3 text-sm"
+              value={userFilter}
+              onChange={(event) => setUserFilter(event.target.value)}
             >
-              {showBlocked ? "Показать активных" : "Показать заблокированных"}
-            </Button>
+              <option value="active">Активные пользователи</option>
+              <option value="blocked">Заблокированные</option>
+              <option value="archived">Удалённые в архив</option>
+              <option value="all">Все пользователи</option>
+            </select>
           )}
           {((tab === "users" && manageUsers) ||
             (tab !== "users" && manageDepartments)) && (
@@ -440,8 +466,9 @@ export function OrganizationWorkspace({ data }: { data: OrganizationData }) {
             <section className="rounded-lg border border-amber-300 bg-amber-50 p-4">
               <h2 className="font-semibold">Нужно уточнить подчинение</h2>
               <p className="mt-1 text-sm">
-                Выберите конкретное назначение руководителя. Существующие связи
-                сохранены.
+                У этих назначений сохранилась старая связь с руководителем.
+                Нажмите «Уточнить», выберите назначение руководителя или явно
+                укажите «Без непосредственного руководителя», затем сохраните.
               </p>
               {unresolvedSupervisors.map((member) => (
                 <div
@@ -478,7 +505,15 @@ export function OrganizationWorkspace({ data }: { data: OrganizationData }) {
               </thead>
               <tbody>
                 {data.users
-                  .filter((user) => user.is_active !== showBlocked)
+                  .filter(
+                    (user) =>
+                      userFilter === "all" ||
+                      (userFilter === "archived"
+                        ? !!user.archived_at
+                        : userFilter === "blocked"
+                          ? !user.is_active && !user.archived_at
+                          : user.is_active),
+                  )
                   .filter((user) =>
                     `${user.full_name} ${user.email} ${membersOf(user.id)
                       .map((m) => membershipLabel(m))
@@ -538,10 +573,28 @@ export function OrganizationWorkspace({ data }: { data: OrganizationData }) {
                             ))}
                         </td>
                         <td className="space-y-1 p-4">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="float-right"
+                            aria-label={`Настройки пользователя ${user.full_name || user.email}`}
+                            onClick={() =>
+                              router.replace(
+                                `/admin/organization?tab=users&user=${user.id}`,
+                                { scroll: false },
+                              )
+                            }
+                          >
+                            <Settings className="size-4" />
+                          </Button>
                           <Badge
                             variant={user.is_active ? "secondary" : "outline"}
                           >
-                            {user.is_active ? "Активен" : "Заблокирован"}
+                            {user.archived_at
+                              ? "В архиве"
+                              : user.is_active
+                                ? "Активен"
+                                : "Заблокирован"}
                           </Badge>
                           {user.is_admin && (
                             <p>
@@ -564,422 +617,331 @@ export function OrganizationWorkspace({ data }: { data: OrganizationData }) {
             </table>
           </div>
           {selected && (
-            <section
-              className="space-y-5 rounded-xl border bg-card p-5"
-              aria-label={`Карточка пользователя ${selected.full_name}`}
+            <Dialog
+              open
+              onOpenChange={(open) => {
+                if (!open)
+                  router.replace("/admin/organization?tab=users", {
+                    scroll: false,
+                  });
+              }}
             >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-xl font-semibold">
-                    {selected.full_name || selected.email}
-                  </h2>
-                  <p className="text-sm text-muted-foreground">
-                    {selected.email}
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {manageUsers && (
-                    <Button
-                      variant="outline"
-                      onClick={() =>
-                        setEditor({
-                          kind: "profile",
-                          id: selected.id,
-                          values: {
-                            full_name: selected.full_name,
-                            telegram_chat_id: selected.telegram_chat_id,
-                            factory_id: selected.factory_id,
-                          },
-                        })
-                      }
-                    >
-                      Редактировать профиль
-                    </Button>
-                  )}
-                  {manageDepartments && selected.is_active && (
-                    <Button
-                      variant="outline"
-                      onClick={() =>
-                        setEditor({
-                          kind: "assignment",
-                          id: null,
-                          userId: selected.id,
-                          values: {
-                            is_primary: membersOf(selected.id).length === 0,
-                          },
-                        })
-                      }
-                    >
-                      Добавить назначение
-                    </Button>
-                  )}
-                </div>
-              </div>
-              {!selected.is_active && (
-                <p className="rounded-lg bg-muted p-3 text-sm">
-                  Аккаунт заблокирован. Назначения сохранены для истории и
-                  проверки при восстановлении.
-                </p>
-              )}
-              <div className="grid gap-3 md:grid-cols-2">
-                {membersOf(selected.id).map((member) => (
-                  <div
-                    key={member.id}
-                    className="space-y-2 rounded-lg border p-4"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <strong>{departmentName(member.department_id)}</strong>
-                      {member.is_primary && (
-                        <Badge variant="secondary">Основное</Badge>
-                      )}
-                      {member.is_department_head && (
-                        <Badge variant="outline">
-                          <Crown className="mr-1 size-3" />
-                          Руководитель отдела
-                        </Badge>
-                      )}
-                    </div>
-                    <p>
-                      {data.positions.find(
-                        (position) => position.id === member.position_id,
-                      )?.name || "Без должности"}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      Подчинение:{" "}
-                      {member.reports_to_membership_id
-                        ? membershipLabel(
-                            data.memberships.find(
-                              (row) =>
-                                row.id === member.reports_to_membership_id,
-                            )!,
-                          )
-                        : member.reports_to_user_id
-                          ? "Требует уточнения назначения руководителя"
-                          : "Не задано"}
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {manageDepartments && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => editAssignment(member)}
-                        >
-                          Изменить
-                        </Button>
-                      )}
-                      {manageDepartments && !member.is_primary && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() =>
-                            run(() =>
-                              change("assignment", member.id, {
-                                is_primary: true,
-                              }),
-                            )
-                          }
-                        >
-                          Сделать основным
-                        </Button>
-                      )}
-                      {manageDepartments && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() =>
-                            setReview({
-                              label: `Снять назначение «${departmentName(member.department_id)}» у ${selected.full_name}? Это может изменить доступ.`,
-                              run: () =>
-                                run(
-                                  () =>
-                                    change("remove_assignment", member.id, {}),
-                                  "Назначение снято",
-                                ),
-                            })
-                          }
-                        >
-                          Снять назначение
-                        </Button>
-                      )}
-                      {canMatrix && (
-                        <Link
-                          className="inline-flex min-h-9 items-center gap-1 px-2 text-sm text-primary underline"
-                          href={`/admin/settings/access?department=${member.department_id}`}
-                        >
-                          Матрица отдела
-                          <ArrowRight className="size-3" />
-                        </Link>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {!selected.is_admin && membersOf(selected.id).length === 0 && (
-                <p className="rounded-lg border border-amber-300 bg-amber-50 p-3">
-                  Назначения отсутствуют. Права через матрицу не выдаются.
-                </p>
-              )}
-              <details className="rounded-lg border p-4">
-                <summary className="min-h-8 cursor-pointer font-semibold">
-                  Фактические права
-                </summary>
-                <div className="mt-3">
-                  <UserAccessPreview userId={selected.id} />
-                </div>
-              </details>
-              <details className="rounded-lg border p-4">
-                <summary className="min-h-8 cursor-pointer font-semibold">
-                  История изменений
-                </summary>
-                <div className="mt-3">
-                  <History userId={selected.id} data={data} />
-                </div>
-              </details>
-              <div className="flex flex-wrap gap-2 border-t pt-4">
-                {data.isAdmin &&
-                  selected.id !== data.currentUserId &&
-                  selected.is_active && (
-                    <Button
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() =>
-                        setReview({
-                          label: selected.is_admin
-                            ? `Снять статус администратора CRM у ${selected.full_name}? Доступ будет определяться назначениями и матрицей.`
-                            : `Назначить ${selected.full_name} администратором CRM с полным доступом ко всем разделам?`,
-                          run: () =>
-                            run(() =>
-                              setOrganizationAdministrator(
-                                selected.id,
-                                !selected.is_admin,
-                                data.version,
-                              ),
-                            ),
-                        })
-                      }
-                    >
-                      {selected.is_admin
-                        ? "Снять статус администратора"
-                        : "Назначить администратором CRM"}
-                    </Button>
-                  )}
-                {manageUsers && selected.id !== data.currentUserId && (
-                  <Button
-                    variant={selected.is_active ? "outline" : "default"}
-                    onClick={() =>
-                      selected.is_active
-                        ? setOffboarding(selected)
-                        : setReview({
-                            label: `Восстановить вход для ${selected.full_name}? Проверьте права, которые будут действовать после восстановления.`,
-                            previewUserId: selected.id,
-                            run: () =>
-                              run(
-                                () =>
-                                  changeOrganizationUserStatus(
-                                    selected.id,
-                                    true,
-                                    data.version,
-                                  ),
-                                "Восстановление доступа сохранено",
-                              ),
-                          })
-                    }
-                  >
-                    {selected.is_active
-                      ? "Передать дела и заблокировать"
-                      : "Восстановить доступ"}
-                  </Button>
-                )}
-                {manageUsers && selected.auth_sync_pending && (
-                  <Button
-                    variant="outline"
-                    onClick={() =>
-                      run(
-                        () => retryOrganizationAuthSync(selected.id),
-                        "Вход синхронизирован",
-                      )
-                    }
-                  >
-                    Повторить синхронизацию входа
-                  </Button>
-                )}
-              </div>
-            </section>
-          )}
-        </>
-      )}
-      {(tab === "departments" || tab === "structure") && (
-        <div className="space-y-3">
-          {(tab === "structure"
-            ? flattenOrganizationTree(data.departments)
-            : data.departments
-          )
-            .filter((department) =>
-              department.name.toLowerCase().includes(search.toLowerCase()),
-            )
-            .map((department) => {
-              const members = data.memberships.filter(
-                  (member) => member.department_id === department.id,
-                ),
-                active = members.filter(
-                  (member) =>
-                    data.users.find((user) => user.id === member.user_id)
-                      ?.is_active,
-                );
-              const parents: string[] = [];
-              let parent = department.parent_id;
-              while (parent && !parents.includes(parent)) {
-                parents.push(parent);
-                parent =
-                  data.departments.find((row) => row.id === parent)
-                    ?.parent_id || null;
-              }
-              return (
+              <DialogContent className="max-h-[90vh] overflow-auto sm:max-w-4xl">
+                <DialogHeader>
+                  <DialogTitle>Настройки пользователя</DialogTitle>
+                  <DialogDescription>
+                    Профиль, назначения, фактические права и состояние аккаунта.
+                  </DialogDescription>
+                </DialogHeader>
                 <section
-                  key={department.id}
-                  id={`department-${department.id}`}
-                  className="rounded-xl border bg-card p-4"
-                  style={
-                    tab === "structure"
-                      ? {
-                          marginInlineStart: `${Math.min(parents.length, 4) * 16}px`,
-                        }
-                      : undefined
-                  }
+                  className="space-y-5 rounded-xl border bg-card p-5"
+                  aria-label={`Карточка пользователя ${selected.full_name}`}
                 >
-                  <div className="flex flex-wrap justify-between gap-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <h2 className="font-semibold">
-                        {department.name}{" "}
-                        {!department.is_active && (
-                          <Badge variant="outline">Архив</Badge>
-                        )}
+                      <h2 className="text-xl font-semibold">
+                        {selected.full_name || selected.email}
                       </h2>
                       <p className="text-sm text-muted-foreground">
-                        {department.parent_id
-                          ? `Подразделение: ${departmentName(department.parent_id)} · `
-                          : ""}
-                        {data.factories.find(
-                          (factory) => factory.id === department.factory_id,
-                        )?.name || "Завод не указан"}
-                      </p>
-                      <p className="mt-2 text-sm">
-                        Руководитель:{" "}
-                        <strong>{name(department.head_user_id)}</strong>
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        Сотрудников:{" "}
-                        {new Set(active.map((member) => member.user_id)).size} ·
-                        Назначений: {active.length}
+                        {selected.email}
                       </p>
                     </div>
-                    <div className="flex flex-wrap items-start gap-2">
-                      {canMatrix && (
-                        <Link
-                          href={`/admin/settings/access?department=${department.id}`}
-                        >
-                          <Button variant="outline">Матрица отдела</Button>
-                        </Link>
-                      )}
-                      {manageDepartments && (
+                    <div className="flex flex-wrap gap-2">
+                      {manageUsers && (
                         <Button
                           variant="outline"
                           onClick={() =>
                             setEditor({
-                              kind: "department",
-                              id: department.id,
+                              kind: "profile",
+                              id: selected.id,
                               values: {
-                                name: department.name,
-                                description: department.description,
-                                parent_id: department.parent_id,
-                                factory_id: department.factory_id,
+                                full_name: selected.full_name,
+                                email: selected.email,
+                                telegram_chat_id: selected.telegram_chat_id,
+                                factory_id: selected.factory_id,
                               },
                             })
                           }
                         >
-                          Изменить
+                          Редактировать пользователя
                         </Button>
                       )}
-                      {manageDepartments && (
+                      {manageDepartments && selected.is_active && (
                         <Button
-                          variant="ghost"
+                          variant="outline"
                           onClick={() =>
-                            setReview({
-                              label: `${department.is_active ? "Архивировать" : "Восстановить"} отдел «${department.name}»?`,
-                              run: () =>
-                                run(() =>
-                                  change("department", department.id, {
-                                    is_active: !department.is_active,
-                                  }),
-                                ),
+                            setEditor({
+                              kind: "assignment",
+                              id: null,
+                              userId: selected.id,
+                              values: {
+                                is_primary: membersOf(selected.id).length === 0,
+                              },
                             })
                           }
                         >
-                          {department.is_active ? "В архив" : "Восстановить"}
+                          Добавить назначение
                         </Button>
                       )}
                     </div>
                   </div>
-                  {!department.head_user_id && department.is_active && (
-                    <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-                      Руководитель не назначен. Проверьте автоматические задачи
-                      этого отдела.
+                  {!selected.is_active && (
+                    <p className="rounded-lg bg-muted p-3 text-sm">
+                      Аккаунт заблокирован. Назначения сохранены для истории и
+                      проверки при восстановлении.
                     </p>
                   )}
-                  {tab === "structure" ? (
-                    <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                      {active.map((member) => (
-                        <div
-                          key={member.id}
-                          className="rounded-lg bg-muted/40 p-3 text-sm"
-                        >
-                          <p className="font-medium">
-                            {name(member.user_id)}{" "}
-                            {member.is_department_head ? "· Руководитель" : ""}
-                          </p>
-                          <p className="text-muted-foreground">
-                            {data.positions.find(
-                              (p) => p.id === member.position_id,
-                            )?.name || "Без должности"}
-                          </p>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {membersOf(selected.id).map((member) => (
+                      <div
+                        key={member.id}
+                        className="space-y-2 rounded-lg border p-4"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <strong>
+                            {departmentName(member.department_id)}
+                          </strong>
+                          {member.is_primary && (
+                            <Badge variant="secondary">Основное</Badge>
+                          )}
+                          {member.is_department_head && (
+                            <Badge variant="outline">
+                              <Crown className="mr-1 size-3" />
+                              Руководитель отдела
+                            </Badge>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <details className="mt-3 border-t pt-3">
-                      <summary className="min-h-9 cursor-pointer text-sm font-medium">
-                        Сотрудники и назначения
-                      </summary>
-                      <div className="space-y-2">
-                        {active.map((member) => (
-                          <div
-                            key={member.id}
-                            className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/40 p-3 text-sm"
-                          >
-                            <span>
-                              {membershipLabel(member)}{" "}
-                              {member.is_department_head && (
-                                <Badge variant="outline">Руководитель</Badge>
-                              )}
-                            </span>
-                            {manageDepartments && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => editAssignment(member)}
-                              >
-                                Изменить назначение
-                              </Button>
-                            )}
-                          </div>
-                        ))}
+                        <p>
+                          {data.positions.find(
+                            (position) => position.id === member.position_id,
+                          )?.name || "Без должности"}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          Подчинение:{" "}
+                          {member.reports_to_membership_id
+                            ? membershipLabel(
+                                data.memberships.find(
+                                  (row) =>
+                                    row.id === member.reports_to_membership_id,
+                                )!,
+                              )
+                            : member.reports_to_user_id
+                              ? "Требует уточнения назначения руководителя"
+                              : "Не задано"}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {manageDepartments && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => editAssignment(member)}
+                            >
+                              Изменить
+                            </Button>
+                          )}
+                          {manageDepartments && !member.is_primary && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() =>
+                                run(() =>
+                                  change("assignment", member.id, {
+                                    is_primary: true,
+                                  }),
+                                )
+                              }
+                            >
+                              Сделать основным
+                            </Button>
+                          )}
+                          {manageDepartments && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() =>
+                                setReview({
+                                  label: `Снять назначение «${departmentName(member.department_id)}» у ${selected.full_name}? Это может изменить доступ.`,
+                                  run: () =>
+                                    run(
+                                      () =>
+                                        change(
+                                          "remove_assignment",
+                                          member.id,
+                                          {},
+                                        ),
+                                      "Назначение снято",
+                                    ),
+                                })
+                              }
+                            >
+                              Снять назначение
+                            </Button>
+                          )}
+                          {canMatrix && (
+                            <Link
+                              className="inline-flex min-h-9 items-center gap-1 px-2 text-sm text-primary underline"
+                              href={`/admin/settings/access?department=${member.department_id}`}
+                            >
+                              Матрица отдела
+                              <ArrowRight className="size-3" />
+                            </Link>
+                          )}
+                        </div>
                       </div>
-                    </details>
-                  )}
+                    ))}
+                  </div>
+                  {!selected.is_admin &&
+                    membersOf(selected.id).length === 0 && (
+                      <p className="rounded-lg border border-amber-300 bg-amber-50 p-3">
+                        Назначения отсутствуют. Права через матрицу не выдаются.
+                      </p>
+                    )}
+                  <details className="rounded-lg border p-4">
+                    <summary className="min-h-8 cursor-pointer font-semibold">
+                      Фактические права
+                    </summary>
+                    <div className="mt-3">
+                      <UserAccessPreview userId={selected.id} />
+                    </div>
+                  </details>
+                  <details className="rounded-lg border p-4">
+                    <summary className="min-h-8 cursor-pointer font-semibold">
+                      История изменений
+                    </summary>
+                    <div className="mt-3">
+                      <History userId={selected.id} data={data} />
+                    </div>
+                  </details>
+                  <div className="flex flex-wrap gap-2 border-t pt-4">
+                    {data.isAdmin &&
+                      selected.id !== data.currentUserId &&
+                      selected.is_active && (
+                        <Button
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() =>
+                            setReview({
+                              label: selected.is_admin
+                                ? `Снять статус администратора CRM у ${selected.full_name}? Доступ будет определяться назначениями и матрицей.`
+                                : `Назначить ${selected.full_name} администратором CRM с полным доступом ко всем разделам?`,
+                              run: () =>
+                                run(() =>
+                                  setOrganizationAdministrator(
+                                    selected.id,
+                                    !selected.is_admin,
+                                    data.version,
+                                  ),
+                                ),
+                            })
+                          }
+                        >
+                          {selected.is_admin
+                            ? "Снять статус администратора"
+                            : "Назначить администратором CRM"}
+                        </Button>
+                      )}
+                    {manageUsers && selected.id !== data.currentUserId && (
+                      <Button
+                        variant={selected.is_active ? "outline" : "default"}
+                        onClick={() =>
+                          selected.is_active
+                            ? (setOffboardingMode("block"),
+                              setOffboarding(selected))
+                            : setReview({
+                                label: `Восстановить вход для ${selected.full_name}? Проверьте права, которые будут действовать после восстановления.`,
+                                previewUserId: selected.id,
+                                run: () =>
+                                  run(
+                                    () =>
+                                      changeOrganizationUserStatus(
+                                        selected.id,
+                                        true,
+                                        data.version,
+                                      ),
+                                    "Восстановление доступа сохранено",
+                                  ),
+                              })
+                        }
+                      >
+                        {selected.is_active
+                          ? "Передать дела и заблокировать"
+                          : "Восстановить доступ"}
+                      </Button>
+                    )}
+                    {manageUsers &&
+                      selected.id !== data.currentUserId &&
+                      !selected.archived_at && (
+                        <Button
+                          variant="outline"
+                          className="text-destructive"
+                          onClick={() => {
+                            setOffboardingMode("archive");
+                            setOffboarding(selected);
+                          }}
+                        >
+                          <Trash2 className="size-4" />
+                          Удалить пользователя
+                        </Button>
+                      )}
+                    {manageUsers && selected.auth_sync_pending && (
+                      <Button
+                        variant="outline"
+                        onClick={() =>
+                          run(
+                            () => retryOrganizationAuthSync(selected.id),
+                            "Вход синхронизирован",
+                          )
+                        }
+                      >
+                        Повторить синхронизацию входа
+                      </Button>
+                    )}
+                  </div>
                 </section>
-              );
-            })}
-        </div>
+              </DialogContent>
+            </Dialog>
+          )}
+        </>
+      )}
+      {tab === "departments" && (
+        <DepartmentTree
+          data={data}
+          search={search}
+          canMatrix={canMatrix}
+          canManage={manageDepartments}
+          edit={(department) =>
+            setEditor({
+              kind: "department",
+              id: department.id,
+              values: {
+                name: department.name,
+                description: department.description,
+                parent_id: department.parent_id,
+                factory_id: department.factory_id,
+              },
+            })
+          }
+          create={(parentId) =>
+            setEditor({
+              kind: "department",
+              id: null,
+              values: { parent_id: parentId },
+            })
+          }
+          archive={(department) =>
+            setReview({
+              label: `${department.is_active ? "Архивировать" : "Восстановить"} отдел «${department.name}»?`,
+              run: () =>
+                run(() =>
+                  change("department", department.id, {
+                    is_active: !department.is_active,
+                  }),
+                ),
+            })
+          }
+          editMember={editAssignment}
+          removeMember={removeMember}
+        />
       )}
       {tab === "positions" && (
         <div className="grid gap-3 md:grid-cols-2">
@@ -1079,10 +1041,17 @@ export function OrganizationWorkspace({ data }: { data: OrganizationData }) {
             <DialogDescription>{review?.label}</DialogDescription>
           </DialogHeader>
           {review?.previewUserId && (
-            <UserAccessPreview userId={review.previewUserId} afterRestore onVerified={verifyRestoration} />
+            <UserAccessPreview
+              userId={review.previewUserId}
+              afterRestore
+              onVerified={verifyRestoration}
+            />
           )}
           {review?.previewVersion && review.previewVersion !== data.version && (
-            <p role="alert">Структура или права изменились. Закройте окно и обновите данные перед восстановлением.</p>
+            <p role="alert">
+              Структура или права изменились. Закройте окно и обновите данные
+              перед восстановлением.
+            </p>
           )}
           <div className="flex justify-end gap-2">
             <Button
@@ -1092,7 +1061,14 @@ export function OrganizationWorkspace({ data }: { data: OrganizationData }) {
             >
               Отмена
             </Button>
-            <Button disabled={busy || (!!review?.previewUserId && review.previewVersion !== data.version)} onClick={() => review?.run()}>
+            <Button
+              disabled={
+                busy ||
+                (!!review?.previewUserId &&
+                  review.previewVersion !== data.version)
+              }
+              onClick={() => review?.run()}
+            >
               {busy ? "Применяем…" : "Применить"}
             </Button>
           </div>
@@ -1101,6 +1077,7 @@ export function OrganizationWorkspace({ data }: { data: OrganizationData }) {
       {offboarding && (
         <OffboardingWizard
           user={offboarding}
+          mode={offboardingMode}
           data={data}
           onClose={() => {
             setOffboarding(null);
@@ -1150,7 +1127,37 @@ function OrganizationEditor({
       values.is_department_head = form.get("is_department_head") === "on";
       values.department_id = departmentId;
     }
-    if (isAssignment) values.is_primary = form.get("is_primary") === "on";
+    if (isAssignment) {
+      values.is_primary = form.get("is_primary") === "on";
+      if (values.reports_to_membership_id === "unresolved") {
+        setError(
+          "Выберите назначение руководителя или явно укажите «Без непосредственного руководителя».",
+        );
+        return;
+      }
+      const duplicate = data.memberships.find(
+        (m) =>
+          m.id !== editor.id &&
+          m.user_id === editor.userId &&
+          m.department_id === departmentId &&
+          m.position_id === values.position_id,
+      );
+      if (duplicate) {
+        if (!editor.id) {
+          setError(
+            "Такое назначение уже существует. Откройте его в карточке пользователя.",
+          );
+          return;
+        }
+        setReview({
+          kind: "consolidate_assignment",
+          id: editor.id,
+          data: { target_membership_id: duplicate.id },
+          expectedVersion: data.version,
+        });
+        return;
+      }
+    }
     if (isAssignment && !editor.id) values.user_id = editor.userId || "";
     if (editor.kind === "position")
       values.level = Number(form.get("level") || 0);
@@ -1165,8 +1172,7 @@ function OrganizationEditor({
           position_id: String(values.position_id),
           factory_id: values.factory_id as string | null,
           reports_to_membership_id: values.reports_to_membership_id as
-            | string
-            | null,
+            string | null,
           is_department_head: values.is_department_head === true,
           expectedVersion: data.version,
         });
@@ -1224,9 +1230,15 @@ function OrganizationEditor({
               : "Изменения сохраняются вместе с записью в журнале организации."}
           </DialogDescription>
         </DialogHeader>
-        {isUser && data.departments.find((department) => department.id === departmentId)?.head_user_id && (
-          <p className="rounded-lg bg-muted p-3 text-sm">У этого отдела уже есть руководитель. Если отметить нового пользователя руководителем, прежний станет сотрудником; его права изменятся по матрице отдела.</p>
-        )}
+        {isUser &&
+          data.departments.find((department) => department.id === departmentId)
+            ?.head_user_id && (
+            <p className="rounded-lg bg-muted p-3 text-sm">
+              У этого отдела уже есть руководитель. Если отметить нового
+              пользователя руководителем, прежний станет сотрудником; его права
+              изменятся по матрице отдела.
+            </p>
+          )}
         {error && (
           <p
             role="alert"
@@ -1235,18 +1247,22 @@ function OrganizationEditor({
             {error}
           </p>
         )}
-        {review ? (
+        {review && (
           <div className="space-y-4">
             <h3 className="font-semibold">Проверьте перед сохранением</h3>
             <p className="text-sm">
-              {isAssignment
-                ? "Изменение отдела или признака руководителя влияет на доступ по матрице. При назначении руководителем прежний руководитель отдела станет сотрудником."
-                : "Будут применены значения, указанные в форме."}
+              {review.kind === "consolidate_assignment"
+                ? "Такое назначение уже существует в выбранном отделе. При объединении исходное назначение будет удалено, а должность, руководитель и права существующего назначения сохранятся. Если исходное было основным, основным станет оставшееся. Перед объединением необходимо передать руководство и подчинённых."
+                : isAssignment
+                  ? "Изменение отдела или признака руководителя влияет на доступ по матрице. При назначении руководителем прежний руководитель отдела станет сотрудником."
+                  : "Будут применены значения, указанные в форме."}
             </p>
             <dl className="space-y-2 text-sm">
               {Object.entries(review.data).map(([key, val]) => {
                 const labels: Record<string, string> = {
                   full_name: "Имя",
+                  email: "Email",
+                  target_membership_id: "Существующее назначение",
                   telegram_chat_id: "Telegram",
                   factory_id: "Завод",
                   name: "Название",
@@ -1260,8 +1276,13 @@ function OrganizationEditor({
                   is_department_head: "Руководитель отдела",
                   user_id: "Пользователь",
                 };
-                const label =
-                  key === "department_id" || key === "parent_id"
+                const target =
+                  key === "target_membership_id"
+                    ? data.memberships.find((m) => m.id === val)
+                    : undefined;
+                const label = target
+                  ? `${data.departments.find((d) => d.id === target.department_id)?.name} · ${data.positions.find((p) => p.id === target.position_id)?.name || "Без должности"}`
+                  : key === "department_id" || key === "parent_id"
                     ? data.departments.find((d) => d.id === val)?.name
                     : key === "position_id"
                       ? data.positions.find((p) => p.id === val)?.name
@@ -1308,201 +1329,96 @@ function OrganizationEditor({
                 Вернуться
               </Button>
               <Button disabled={busy} onClick={apply}>
-                {busy ? "Сохраняем…" : "Сохранить изменения"}
+                {busy
+                  ? "Сохраняем…"
+                  : review.kind === "consolidate_assignment"
+                    ? "Объединить назначения"
+                    : "Сохранить изменения"}
               </Button>
             </div>
           </div>
-        ) : (
-          <form onSubmit={save} className="space-y-4">
-            {(isUser || isProfile) && (
-              <Field label="Имя">
+        )}
+        <form onSubmit={save} className="space-y-4" hidden={!!review}>
+          {(isUser || isProfile) && (
+            <Field label="Имя">
+              <Input
+                name="full_name"
+                required
+                minLength={2}
+                defaultValue={value("full_name")}
+              />
+            </Field>
+          )}
+          {isUser && (
+            <>
+              <Field label="Email">
+                <Input name="email" type="email" autoComplete="off" required />
+              </Field>
+              <Field label="Первоначальный пароль">
                 <Input
-                  name="full_name"
+                  name="password"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={12}
                   required
-                  minLength={2}
-                  defaultValue={value("full_name")}
                 />
+                <span className="text-xs text-muted-foreground">
+                  Не менее 12 символов.
+                </span>
               </Field>
-            )}
-            {isUser && (
-              <>
-                <Field label="Email">
-                  <Input
-                    name="email"
-                    type="email"
-                    autoComplete="off"
-                    required
-                  />
-                </Field>
-                <Field label="Первоначальный пароль">
-                  <Input
-                    name="password"
-                    type="password"
-                    autoComplete="new-password"
-                    minLength={12}
-                    required
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Не менее 12 символов.
-                  </span>
-                </Field>
-              </>
-            )}
-            {(isUser || isProfile || editor.kind === "department") && (
-              <Field label="Завод">
+            </>
+          )}
+          {(isUser || isProfile || editor.kind === "department") && (
+            <Field label="Завод">
+              <select
+                className={selectClass}
+                name="factory_id"
+                defaultValue={value("factory_id")}
+              >
+                <option value="">Не указан</option>
+                {data.factories.map((factory) => (
+                  <option key={factory.id} value={factory.id}>
+                    {factory.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+          {isProfile && (
+            <Field label="Email для входа">
+              <Input
+                type="email"
+                name="email"
+                required
+                defaultValue={value("email")}
+              />
+              <span className="text-xs text-muted-foreground">
+                Изменение синхронизируется с сервисом входа. При задержке в
+                карточке появится статус синхронизации.
+              </span>
+            </Field>
+          )}
+          {isProfile && (
+            <Field label="Telegram Chat ID">
+              <Input
+                name="telegram_chat_id"
+                defaultValue={value("telegram_chat_id")}
+              />
+            </Field>
+          )}
+          {(isUser || isAssignment) && (
+            <>
+              <Field label="Отдел">
                 <select
                   className={selectClass}
-                  name="factory_id"
-                  defaultValue={value("factory_id")}
+                  name="department_id"
+                  required
+                  value={departmentId}
+                  onChange={(event) => setDepartmentId(event.target.value)}
                 >
-                  <option value="">Не указан</option>
-                  {data.factories.map((factory) => (
-                    <option key={factory.id} value={factory.id}>
-                      {factory.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            )}
-            {isProfile && (
-              <Field label="Telegram Chat ID">
-                <Input
-                  name="telegram_chat_id"
-                  defaultValue={value("telegram_chat_id")}
-                />
-              </Field>
-            )}
-            {(isUser || isAssignment) && (
-              <>
-                <Field label="Отдел">
-                  <select
-                    className={selectClass}
-                    name="department_id"
-                    required
-                    value={departmentId}
-                    onChange={(event) => setDepartmentId(event.target.value)}
-                  >
-                    <option value="">Выберите отдел</option>
-                    {data.departments
-                      .filter((d) => d.is_active)
-                      .map((d) => (
-                        <option key={d.id} value={d.id}>
-                          {d.name}
-                        </option>
-                      ))}
-                  </select>
-                </Field>
-                <Field label="Должность">
-                  <select
-                    className={selectClass}
-                    name="position_id"
-                    required={isUser}
-                    defaultValue={value("position_id")}
-                  >
-                    <option value="">
-                      {isUser ? "Выберите должность" : "Без должности"}
-                    </option>
-                    {data.positions
-                      .filter((p) => p.is_active)
-                      .map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                  </select>
-                </Field>
-                <Field label="Непосредственный руководитель">
-                  <select
-                    key={departmentId}
-                    className={selectClass}
-                    name="reports_to_membership_id"
-                    defaultValue={
-                      departmentId === value("department_id")
-                        ? value("reports_to_membership_id")
-                        : ""
-                    }
-                  >
-                    <option value="">Не задан</option>
-                    {data.memberships
-                      .filter(
-                        (m) =>
-                          m.department_id === departmentId &&
-                          m.user_id !== editor.userId &&
-                          data.users.find((u) => u.id === m.user_id)?.is_active,
-                      )
-                      .map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {
-                            data.users.find((u) => u.id === m.user_id)
-                              ?.full_name
-                          }{" "}
-                          ·{" "}
-                          {data.positions.find((p) => p.id === m.position_id)
-                            ?.name || "Без должности"}
-                        </option>
-                      ))}
-                  </select>
-                </Field>
-                <label className="flex min-h-11 items-center gap-3 text-sm">
-                  <input
-                    type="checkbox"
-                    name="is_department_head"
-                    defaultChecked={editor.values.is_department_head === true}
-                  />
-                  Руководитель отдела
-                </label>
-                {isAssignment && (
-                  <label className="flex min-h-11 items-center gap-3 text-sm">
-                    <input
-                      type="checkbox"
-                      name="is_primary"
-                      defaultChecked={editor.values.is_primary === true}
-                    />
-                    Основное назначение
-                  </label>
-                )}
-              </>
-            )}
-            {(editor.kind === "department" || editor.kind === "position") && (
-              <>
-                <Field label="Название">
-                  <Input
-                    name="name"
-                    required
-                    minLength={2}
-                    defaultValue={value("name")}
-                    readOnly={
-                      editor.kind === "department" &&
-                      !!editor.id &&
-                      criticalDepartments.has(value("name"))
-                    }
-                  />
-                  {editor.kind === "department" &&
-                    criticalDepartments.has(value("name")) && (
-                      <span className="text-xs text-muted-foreground">
-                        Название используется в маршрутизации автоматических
-                        задач.
-                      </span>
-                    )}
-                </Field>
-                <Field label="Описание">
-                  <Input
-                    name="description"
-                    defaultValue={value("description")}
-                  />
-                </Field>
-              </>
-            )}
-            {editor.kind === "department" && (
-              <Field label="Родительский отдел">
-                <select
-                  name="parent_id"
-                  className={selectClass}
-                  defaultValue={value("parent_id")}
-                >
-                  <option value="">Корневой отдел</option>
+                  <option value="">Выберите отдел</option>
                   {data.departments
-                    .filter((d) => d.id !== editor.id && d.is_active)
+                    .filter((d) => d.is_active)
                     .map((d) => (
                       <option key={d.id} value={d.id}>
                         {d.name}
@@ -1510,40 +1426,161 @@ function OrganizationEditor({
                     ))}
                 </select>
               </Field>
-            )}
-            {editor.kind === "position" && (
-              <Field label="Уровень в структуре">
-                <Input
-                  name="level"
-                  type="number"
-                  min={0}
-                  max={10}
-                  defaultValue={value("level") || "0"}
-                />
-                <span className="text-xs text-muted-foreground">
-                  Уровень не выдаёт разрешения доступа.
-                </span>
+              <Field label="Должность">
+                <select
+                  className={selectClass}
+                  name="position_id"
+                  required={isUser}
+                  defaultValue={value("position_id")}
+                >
+                  <option value="">
+                    {isUser ? "Выберите должность" : "Без должности"}
+                  </option>
+                  {data.positions
+                    .filter((p) => p.is_active)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                </select>
               </Field>
-            )}
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={busy}
-                onClick={onClose}
+              <Field label="Непосредственный руководитель">
+                <select
+                  key={departmentId}
+                  className={selectClass}
+                  name="reports_to_membership_id"
+                  defaultValue={
+                    departmentId === value("department_id")
+                      ? value("reports_to_membership_id") ||
+                        (value("reports_to_user_id") ? "unresolved" : "")
+                      : ""
+                  }
+                >
+                  {value("reports_to_user_id") &&
+                    !value("reports_to_membership_id") && (
+                      <option value="unresolved" disabled>
+                        Уточните:{" "}
+                        {data.users.find(
+                          (u) => u.id === value("reports_to_user_id"),
+                        )?.full_name || "Прежний руководитель"}
+                      </option>
+                    )}
+                  <option value="">Без непосредственного руководителя</option>
+                  {data.memberships
+                    .filter(
+                      (m) =>
+                        m.department_id === departmentId &&
+                        m.user_id !== editor.userId &&
+                        data.users.find((u) => u.id === m.user_id)?.is_active,
+                    )
+                    .map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {data.users.find((u) => u.id === m.user_id)?.full_name}{" "}
+                        ·{" "}
+                        {data.positions.find((p) => p.id === m.position_id)
+                          ?.name || "Без должности"}
+                      </option>
+                    ))}
+                </select>
+              </Field>
+              <label className="flex min-h-11 items-center gap-3 text-sm">
+                <input
+                  type="checkbox"
+                  name="is_department_head"
+                  defaultChecked={editor.values.is_department_head === true}
+                />
+                Руководитель отдела
+              </label>
+              {isAssignment && (
+                <label className="flex min-h-11 items-center gap-3 text-sm">
+                  <input
+                    type="checkbox"
+                    name="is_primary"
+                    defaultChecked={editor.values.is_primary === true}
+                  />
+                  Основное назначение
+                </label>
+              )}
+            </>
+          )}
+          {(editor.kind === "department" || editor.kind === "position") && (
+            <>
+              <Field label="Название">
+                <Input
+                  name="name"
+                  required
+                  minLength={2}
+                  defaultValue={value("name")}
+                  readOnly={
+                    editor.kind === "department" &&
+                    !!editor.id &&
+                    criticalDepartments.has(value("name"))
+                  }
+                />
+                {editor.kind === "department" &&
+                  criticalDepartments.has(value("name")) && (
+                    <span className="text-xs text-muted-foreground">
+                      Название используется в маршрутизации автоматических
+                      задач.
+                    </span>
+                  )}
+              </Field>
+              <Field label="Описание">
+                <Input name="description" defaultValue={value("description")} />
+              </Field>
+            </>
+          )}
+          {editor.kind === "department" && (
+            <Field label="Родительский отдел">
+              <select
+                name="parent_id"
+                className={selectClass}
+                defaultValue={value("parent_id")}
               >
-                Отмена
-              </Button>
-              <Button type="submit" disabled={busy}>
-                {busy
-                  ? "Сохраняем…"
-                  : isUser
-                    ? "Создать пользователя"
-                    : "Проверить изменения"}
-              </Button>
-            </div>
-          </form>
-        )}
+                <option value="">Корневой отдел</option>
+                {data.departments
+                  .filter((d) => d.id !== editor.id && d.is_active)
+                  .map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+              </select>
+            </Field>
+          )}
+          {editor.kind === "position" && (
+            <Field label="Уровень в структуре">
+              <Input
+                name="level"
+                type="number"
+                min={0}
+                max={10}
+                defaultValue={value("level") || "0"}
+              />
+              <span className="text-xs text-muted-foreground">
+                Уровень не выдаёт разрешения доступа.
+              </span>
+            </Field>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={onClose}
+            >
+              Отмена
+            </Button>
+            <Button type="submit" disabled={busy}>
+              {busy
+                ? "Сохраняем…"
+                : isUser
+                  ? "Создать пользователя"
+                  : "Проверить изменения"}
+            </Button>
+          </div>
+        </form>
       </DialogContent>
     </Dialog>
   );

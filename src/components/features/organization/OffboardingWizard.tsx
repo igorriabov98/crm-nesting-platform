@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   changeOrganizationUserStatus,
+  archiveOrganizationUser,
   handoffObligation,
   previewOffboarding,
 } from "@/lib/actions/organization";
@@ -24,10 +25,12 @@ import type {
 
 export function OffboardingWizard({
   user,
+  mode = "block",
   data,
   onClose,
 }: {
   user: OrganizationUser;
+  mode?: "block" | "archive";
   data: OrganizationData;
   onClose: () => void;
 }) {
@@ -146,11 +149,10 @@ export function OffboardingWizard({
         throw new Error(
           "Обнаружены действующие обязанности. Передайте их перед блокировкой.",
         );
-      const result = await changeOrganizationUserStatus(
-        user.id,
-        false,
-        latest.version,
-      );
+      const result =
+        mode === "archive"
+          ? await archiveOrganizationUser(user.id, latest.version)
+          : await changeOrganizationUserStatus(user.id, false, latest.version);
       if (!result.success)
         throw new Error(result.error || "Блокировка не выполнена");
       setBlocked({ authPending: result.authPending });
@@ -171,10 +173,15 @@ export function OffboardingWizard({
     >
       <DialogContent className="max-h-[90vh] overflow-auto sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Передача дел: {user.full_name}</DialogTitle>
+          <DialogTitle>
+            {mode === "archive" ? "Удаление пользователя" : "Передача дел"}:{" "}
+            {user.full_name}
+          </DialogTitle>
           <DialogDescription>
             Проверьте обязанности, назначьте преемников и повторно проверьте
-            результат перед блокировкой.
+            результат перед {mode === "archive" ? "удалением" : "блокировкой"}.
+            {mode === "archive" &&
+              " Пользователь будет перемещён в архив, вход закрыт. История, авторство и назначения сохранятся. Восстановление доступно из списка «Удалённые в архив»."}
           </DialogDescription>
         </DialogHeader>
         {error && (
@@ -188,7 +195,9 @@ export function OffboardingWizard({
         {blocked ? (
           <div className="space-y-4">
             <p role="status">
-              Аккаунт заблокирован в CRM.{" "}
+              {mode === "archive"
+                ? "Пользователь удалён в архив."
+                : "Аккаунт заблокирован в CRM."}{" "}
               {blocked.authPending
                 ? "Закрытие входа ожидает синхронизации. Доступ к данным уже закрыт."
                 : "Вход в систему закрыт."}
@@ -302,7 +311,11 @@ export function OffboardingWizard({
                 }
                 onClick={block}
               >
-                {busy ? "Выполняем…" : "Проверить и заблокировать"}
+                {busy
+                  ? "Выполняем…"
+                  : mode === "archive"
+                    ? "Проверить и удалить в архив"
+                    : "Проверить и заблокировать"}
               </Button>
             </div>
           </>

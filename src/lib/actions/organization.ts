@@ -66,6 +66,7 @@ export async function applyOrganizationChange(input: OrganizationChange) {
           "position",
           "assignment",
           "remove_assignment",
+          "consolidate_assignment",
           "head",
         ]),
         id: uuid.nullable(),
@@ -85,6 +86,13 @@ export async function applyOrganizationChange(input: OrganizationChange) {
         p_expected_version: parsed.expectedVersion,
       },
     );
+    if (parsed.kind === "profile" && parsed.id && parsed.data.email) {
+      try {
+        await synchronizeUserAuth(parsed.id);
+      } catch {
+        /* Durable outbox retries. */
+      }
+    }
     refreshOrganization();
     return { success: true, data: result, error: null };
   } catch (error) {
@@ -281,5 +289,27 @@ export async function createOrganizationUser(input: {
       authPending: false,
       error: errorText(error),
     };
+  }
+}
+
+export async function archiveOrganizationUser(
+  userId: string,
+  expectedVersion: string,
+) {
+  try {
+    await rpc("crm_archive_user", {
+      p_user_id: uuid.parse(userId),
+      p_expected_version: version.parse(expectedVersion),
+    });
+    let authPending = true;
+    try {
+      authPending = (await synchronizeUserAuth(userId)).pending > 0;
+    } catch {
+      /* Durable outbox. */
+    }
+    refreshOrganization();
+    return { success: true, authPending, error: null };
+  } catch (error) {
+    return { success: false, authPending: false, error: errorText(error) };
   }
 }
