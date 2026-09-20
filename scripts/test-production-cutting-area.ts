@@ -135,7 +135,7 @@ assert(cuttingPlanRoute.includes("disposition: 'inline'"), 'Карта долж�
 assert(!cuttingPlanRoute.includes('renderToBuffer'), 'Скачивание не должно пересобирать PDF')
 
 const accessPage = read('src/components/features/settings/RolePermissionsPage.tsx')
-for (const label of ['Охват заказов', 'Свой завод', 'Все заводы']) {
+for (const label of ['Доступ по заводам', 'Свой завод', 'Все заводы']) {
   assert(accessPage.includes(label), `Матрица доступа не содержит ${label}`)
 }
 assert(accessPage.includes('supportsFactoryScope'))
