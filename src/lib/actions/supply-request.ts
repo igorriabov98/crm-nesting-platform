@@ -6,13 +6,14 @@ import { reserveForMachine, unreserveFromMachine } from '@/lib/actions/inventory
 import {
   filterReservationsByStockScope,
 } from '@/lib/inventory/reservation-stock-scope'
-import { requirePermission } from '@/lib/permissions/server'
+import { requireAnyPermission, requirePermission } from '@/lib/permissions/server'
 import { hasPermission, type PermissionMap, type PermissionOperation } from '@/lib/permissions/resources'
 import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import { sheetMetalVariantMatchesRequest } from '@/lib/supply-request-sheet-metal'
 import { summarizeDisplayedStockCoverage } from '@/lib/supply-request-stock-coverage'
+import { evaluateReservationCapability } from '@/lib/supply-request-access'
 import {
   assertManualSupplyRequestReservationAllowed,
   getReservationStockSourceForStatus,
@@ -48,7 +49,10 @@ type LooseQuery = PromiseLike<DbResult> & {
   maybeSingle: () => Promise<DbResult>
   single: () => Promise<DbResult>
 }
-type LooseDb = { from: (table: string) => LooseQuery }
+type LooseDb = {
+  from: (table: string) => LooseQuery
+  rpc: (name: string, args?: Record<string, unknown>) => Promise<DbResult>
+}
 
 type RequestItemTable = SupplyRequestItemTable
 
@@ -69,6 +73,25 @@ export type SupplyRequestRow<T> = T & {
   reserved_quantity: number
   covered_quantity: number
   reserved_secondary_quantity: number | null
+  layout_coverage: LayoutCoverage | null
+}
+
+export type LayoutCoverage = {
+  request_item_table: RequestItemTable
+  request_item_id: string
+  plan_id: string
+  plan_number: number
+  version_id: string | null
+  version_number: number | null
+  status: 'approved' | 'needs_recalculation' | 'not_approved'
+  warehouse_mm: number
+  business_scrap_mm: number
+  purchase_covered_mm: number
+  purchase_total_mm: number
+  purchase_bars: Array<{ length_mm: number; quantity: number }>
+  source_factories: string[]
+  warehouse_factories: string[]
+  business_scrap_factories: string[]
 }
 
 export type SupplyStockItem = {
@@ -99,6 +122,9 @@ export type SupplyRequestSectionSummary = {
 
 export type SupplyRequestPayload = {
   can_reserve: boolean
+  can_unreserve: boolean
+  can_complete_reservation: boolean
+  reservation_block_reason: string | null
   can_manage_detailing: boolean
   request: RequestWithRelations
   positionRevision?: SupplyPositionRevisionSummary | null
@@ -181,6 +207,34 @@ const REQUEST_TABLES: RequestItemTable[] = [
 async function requireAccess(operation: PermissionOperation = 'view') {
   const permission = await requirePermission('supply', operation)
   return { ...permission, db: permission.supabase as unknown as LooseDb }
+}
+
+async function requireReservationAccess() {
+  const permission = await requireAnyPermission([
+    { resourceKey: 'supply', operation: 'manage' },
+    { resourceKey: 'technologist_requests', operation: 'manage' },
+    { resourceKey: 'business_scrap_reservations', operation: 'manage' },
+  ])
+  if (!hasPermission(permission.permissions, 'inventory', 'manage')) {
+    throw new Error('Для бронирования требуется право управления складом')
+  }
+  return { ...permission, db: permission.supabase as unknown as LooseDb }
+}
+
+function assertReservationWorkflowPermission(
+  permissions: PermissionMap,
+  source: ReservationStockSource,
+) {
+  const allowed = hasPermission(permissions, 'supply', 'manage')
+    || hasPermission(permissions, 'technologist_requests', 'manage')
+    || (source === 'business_scrap' && hasPermission(permissions, 'business_scrap_reservations', 'manage'))
+  if (!allowed) {
+    throw new Error(
+      source === 'business_scrap'
+        ? 'Нет права бронировать деловой остаток'
+        : 'Нет права управлять складским этапом заявки технолога',
+    )
+  }
 }
 
 function reservationKey(table: string, id: string) {
@@ -623,6 +677,7 @@ function withStock<T extends { id: string; material_id: string | null; material_
   reservationMap: Map<string, ReservationRow>,
   steelTypeMap: Map<string, string>,
   reservationSource: ReservationStockSource,
+  layoutCoverageMap: Map<string, LayoutCoverage>,
 ) {
   return rows.map((row) => {
     const rowRecord = row as Record<string, unknown>
@@ -673,6 +728,7 @@ function withStock<T extends { id: string; material_id: string | null; material_
       reserved_quantity: reservation?.reserved_quantity ?? 0,
       covered_quantity: coveredQuantity,
       reserved_secondary_quantity: reservation?.reserved_secondary_quantity ?? null,
+      layout_coverage: layoutCoverageMap.get(reservationKey(table, row.id)) || null,
     }
   })
 }
@@ -771,7 +827,7 @@ async function loadRequestForStockSource(
       ...knives.map((row) => row.steel_type_id).filter(Boolean),
     ])) as string[]
 
-    const [inventoryRes, reservationsRes, steelTypesRes, factoriesRes] = await Promise.all([
+    const [inventoryRes, reservationsRes, steelTypesRes, factoriesRes, layoutCoverageRes] = await Promise.all([
       materialIds.length && request.machine.factory_id
         ? db.from('inventory').select('id, factory_id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at').in('material_id', materialIds)
         : Promise.resolve({ data: [], error: null } as DbResult),
@@ -782,13 +838,21 @@ async function loadRequestForStockSource(
         ? db.from('steel_types').select('id, name').in('id', steelTypeIds)
         : Promise.resolve({ data: [], error: null } as DbResult),
       db.from('factories').select('id, name').order('name', { ascending: true }),
+      db.rpc('crm_supply_request_layout_coverage', { p_request_id: requestId }),
     ])
     if (inventoryRes.error) throw new Error(inventoryRes.error.message || 'ÐÐµ ÑƒÐ´Ð°Ð»Ð¾ÑÑŒ Ð·Ð°Ð³Ñ€ÑƒÐ·Ð¸Ñ‚ÑŒ Ð¾ÑÑ‚Ð°Ñ‚ÐºÐ¸')
     if (reservationsRes.error) throw new Error(reservationsRes.error.message || 'ÐÐµ ÑƒÐ´Ð°Ð»Ð¾ÑÑŒ Ð·Ð°Ð³Ñ€ÑƒÐ·Ð¸Ñ‚ÑŒ Ð±Ñ€Ð¾Ð½Ð¸Ñ€Ð¾Ð²Ð°Ð½Ð¸Ñ')
     if (steelTypesRes.error) throw new Error(steelTypesRes.error.message || 'Не удалось загрузить типы стали')
     if (factoriesRes.error) throw new Error(factoriesRes.error.message || 'Не удалось загрузить заводы складских остатков')
+    if (layoutCoverageRes.error) throw new Error(layoutCoverageRes.error.message || 'Не удалось загрузить обеспечение по раскладке')
     const steelTypeMap = new Map(((steelTypesRes.data || []) as { id: string; name: string }[]).map((steelType) => [steelType.id, steelType.name]))
     const factoryMap = new Map(((factoriesRes.data || []) as { id: string; name: string }[]).map((factory) => [factory.id, factory.name]))
+    const layoutCoverageMap = new Map(
+      ((layoutCoverageRes.data || []) as LayoutCoverage[]).map((coverage) => [
+        reservationKey(coverage.request_item_table, coverage.request_item_id),
+        coverage,
+      ]),
+    )
 
     const allInventoryRows = (inventoryRes.data || []) as InventoryRow[]
     const inventoryRows = allInventoryRows.filter((row) => !row.deleted_at && (row.business_scrap_state || 'available') !== 'future')
@@ -840,16 +904,16 @@ async function loadRequestForStockSource(
     )
     const reservationMap = buildReservationMap(scopedReservations)
     const sections = {
-      sheetMetal: withStock('request_sheet_metal', sheetMetal, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+      sheetMetal: withStock('request_sheet_metal', sheetMetal, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource, layoutCoverageMap),
       // @deprecated — round_tube excluded from new UI
-      roundTube: withStock('request_round_tube', roundTube, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-      circles: withStock('request_circle', circles.filter((row) => row.order_status !== 'cancelled'), inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-      pipes: withStock('request_pipe', pipes.filter((row) => row.order_status !== 'cancelled'), inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-      knives: withStock('request_knives', knives.filter((row) => row.order_status !== 'cancelled'), inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-      components: withStock('request_components', components, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-      paint: withStock('request_paint', paint, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-      meshItems: withStock('request_mesh', meshItems, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-      chainCords: withStock('request_chain_cord', chainCords, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+      roundTube: withStock('request_round_tube', roundTube, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource, layoutCoverageMap),
+      circles: withStock('request_circle', circles.filter((row) => row.order_status !== 'cancelled'), inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource, layoutCoverageMap),
+      pipes: withStock('request_pipe', pipes.filter((row) => row.order_status !== 'cancelled'), inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource, layoutCoverageMap),
+      knives: withStock('request_knives', knives.filter((row) => row.order_status !== 'cancelled'), inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource, layoutCoverageMap),
+      components: withStock('request_components', components, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource, layoutCoverageMap),
+      paint: withStock('request_paint', paint, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource, layoutCoverageMap),
+      meshItems: withStock('request_mesh', meshItems, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource, layoutCoverageMap),
+      chainCords: withStock('request_chain_cord', chainCords, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource, layoutCoverageMap),
     }
 
     const sectionRows = Object.values(sections).flat() as Array<SupplyRequestRow<Record<string, unknown>>>
@@ -865,6 +929,9 @@ async function loadRequestForStockSource(
     return {
       data: {
         can_reserve: hasPermission(permissions, 'supply', 'manage'),
+        can_unreserve: hasPermission(permissions, 'supply', 'manage'),
+        can_complete_reservation: hasPermission(permissions, 'technologist_requests', 'manage'),
+        reservation_block_reason: null,
         can_manage_detailing: hasPermission(permissions, 'inventory_detailing', 'manage'),
         request,
         positionRevision: ((revision.data || []) as SupplyPositionRevisionSummary[])[0] || null,
@@ -892,12 +959,34 @@ async function loadRequestForStockSource(
 
 export async function getRequestForSupply(requestId: string): Promise<{ data: SupplyRequestPayload | null; error: string | null }> {
   try {
-    const { db, permissions, userId, permissionDetails } = await requireAccess()
+    const permission = await requireAnyPermission([
+      { resourceKey: 'supply', operation: 'view' },
+      { resourceKey: 'technologist_requests', operation: 'view' },
+    ])
+    const { userId, permissions, permissionDetails, factoryId } = permission
+    const db = permission.supabase as unknown as LooseDb
     const request = await getRequestMeta(db, requestId)
     if (!['submitted_to_supply', 'completed'].includes(request.status)) {
       await assertActiveReservationActor(db, request, userId, permissionDetails.isAdminPosition)
     }
-    return await loadRequestForStockSource(db, permissions, requestId)
+    const result = await loadRequestForStockSource(db, permissions, requestId)
+    if (!result.data) return result
+    const canUseWorkflow = hasPermission(permissions, 'supply', 'manage')
+      || hasPermission(permissions, 'technologist_requests', 'manage')
+    const reservationCapability = evaluateReservationCapability({
+      hasWorkflowPermission: canUseWorkflow,
+      hasInventoryManage: hasPermission(permissions, 'inventory', 'manage'),
+      isAdmin: permissionDetails.isAdminPosition,
+      inventoryFactoryScope: permissionDetails.factoryScopes.inventory?.manage || 'own',
+      userFactoryId: factoryId,
+      targetFactoryId: request.machine.factory_id,
+      workflowDeniedReason: 'Нет права управлять заявкой технолога или снабжением',
+    })
+    result.data.can_reserve = reservationCapability.allowed
+    result.data.can_unreserve = reservationCapability.allowed
+    result.data.can_complete_reservation = hasPermission(permissions, 'technologist_requests', 'manage')
+    result.data.reservation_block_reason = reservationCapability.reason
+    return result
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить заявку' }
   }
@@ -906,7 +995,7 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
 export async function getRequestForBusinessScrap(requestId: string): Promise<{ data: SupplyRequestPayload | null; error: string | null }> {
   try {
     const permission = await requirePermission('business_scrap_reservations', 'view')
-    const { supabase, userId, permissions, permissionDetails } = permission
+    const { supabase, userId, permissions, permissionDetails, factoryId } = permission
     const db = supabase as unknown as LooseDb
     const request = await getRequestMeta(db, requestId)
     if (!permissionDetails.isAdminPosition) {
@@ -921,7 +1010,25 @@ export async function getRequestForBusinessScrap(requestId: string): Promise<{ d
       if (taskError) throw new Error(taskError.message || 'Не удалось проверить назначение машины')
       if (!Array.isArray(taskData) || taskData.length === 0) throw new Error('Машина не назначена текущему технологу')
     }
-    return await loadRequestForStockSource(db, permissions, requestId, 'business_scrap')
+    const result = await loadRequestForStockSource(db, permissions, requestId, 'business_scrap')
+    if (!result.data) return result
+    const canUseWorkflow = hasPermission(permissions, 'supply', 'manage')
+      || hasPermission(permissions, 'technologist_requests', 'manage')
+      || hasPermission(permissions, 'business_scrap_reservations', 'manage')
+    const reservationCapability = evaluateReservationCapability({
+      hasWorkflowPermission: canUseWorkflow,
+      hasInventoryManage: hasPermission(permissions, 'inventory', 'manage'),
+      isAdmin: permissionDetails.isAdminPosition,
+      inventoryFactoryScope: permissionDetails.factoryScopes.inventory?.manage || 'own',
+      userFactoryId: factoryId,
+      targetFactoryId: request.machine.factory_id,
+      workflowDeniedReason: 'Нет права бронировать деловой остаток или управлять заявкой технолога',
+    })
+    result.data.can_reserve = reservationCapability.allowed
+    result.data.can_unreserve = reservationCapability.allowed
+    result.data.can_complete_reservation = hasPermission(permissions, 'technologist_requests', 'manage')
+    result.data.reservation_block_reason = reservationCapability.reason
+    return result
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить деловой остаток' }
   }
@@ -939,12 +1046,13 @@ export async function reserveItemFromStock(data: {
   quantity: number
 }) {
   try {
-    const { db, userId, permissionDetails } = await requireAccess('manage')
+    const { db, userId, permissionDetails, permissions } = await requireReservationAccess()
     if (!REQUEST_TABLES.includes(data.request_item_table)) throw new Error('ÐÐµÐºÐ¾Ñ€Ñ€ÐµÐºÑ‚Ð½Ð°Ñ Ñ‚Ð°Ð±Ð»Ð¸Ñ†Ð° Ð¿Ð¾Ð·Ð¸Ñ†Ð¸Ð¸')
     const requestId = await getRequestIdForItem(db, data.request_item_table, data.request_item_id)
     const request = await getRequestMeta(db, requestId)
     await assertActiveReservationActor(db, request, userId, permissionDetails.isAdminPosition)
     const reservationSource = assertReservationAllowedForRequest(request)
+    assertReservationWorkflowPermission(permissions, reservationSource)
     const { data: rowData, error } = await db.from(data.request_item_table).select('*').eq('id', data.request_item_id).single()
     if (error || !rowData) throw new Error(error?.message || 'ÐŸÐ¾Ð·Ð¸Ñ†Ð¸Ñ Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½Ð°')
 
@@ -1033,12 +1141,13 @@ export async function reserveItemFromStock(data: {
 
 export async function unreserveItem(data: { request_item_table: RequestItemTable; request_item_id: string }) {
   try {
-    const { db, userId, permissionDetails } = await requireAccess('manage')
+    const { db, userId, permissionDetails, permissions } = await requireReservationAccess()
     if (!REQUEST_TABLES.includes(data.request_item_table)) throw new Error('ÐÐµÐºÐ¾Ñ€Ñ€ÐµÐºÑ‚Ð½Ð°Ñ Ñ‚Ð°Ð±Ð»Ð¸Ñ†Ð° Ð¿Ð¾Ð·Ð¸Ñ†Ð¸Ð¸')
     const requestId = await getRequestIdForItem(db, data.request_item_table, data.request_item_id)
     const request = await getRequestMeta(db, requestId)
     await assertActiveReservationActor(db, request, userId, permissionDetails.isAdminPosition)
     const reservationSource = assertReservationAllowedForRequest(request)
+    assertReservationWorkflowPermission(permissions, reservationSource)
     const { data: rowData, error: rowError } = await db.from(data.request_item_table).select('*').eq('id', data.request_item_id).single()
     if (rowError || !rowData) throw new Error(rowError?.message || 'Позиция заявки не найдена')
     assertManualSupplyRequestReservationAllowed(data.request_item_table, rowData as Record<string, unknown>)
@@ -1063,10 +1172,11 @@ export async function unreserveItem(data: { request_item_table: RequestItemTable
 
 export async function reserveAllAvailable(requestId: string, factoryId: string) {
   try {
-    const { db, userId, permissionDetails } = await requireAccess('manage')
+    const { db, userId, permissionDetails, permissions } = await requireReservationAccess()
     const { data, error } = await getRequestForSupply(requestId)
     if (error || !data) throw new Error(error || 'Ð—Ð°ÑÐ²ÐºÐ° Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½Ð°')
     await assertActiveReservationActor(db, data.request, userId, permissionDetails.isAdminPosition)
+    assertReservationWorkflowPermission(permissions, assertReservationAllowedForRequest(data.request))
     if (!data.factories.some((factory) => factory.id === factoryId)) throw new Error('Выбранный завод не найден')
 
     let reservedCount = 0

@@ -35,6 +35,7 @@ import {
   createOrganizationUser,
   getOrganizationHistory,
   retryOrganizationAuthSync,
+  sendOrganizationPasswordReset,
   setOrganizationAdministrator,
 } from "@/lib/actions/organization";
 import type {
@@ -1105,6 +1106,11 @@ function OrganizationEditor({
   const [departmentId, setDepartmentId] = useState(
     String(editor.values.department_id || ""),
   );
+  const savedProfileEmail = String(editor.values.email || "");
+  const [profileEmail, setProfileEmail] = useState(savedProfileEmail);
+  const profileUser = editor.id
+    ? data.users.find((user) => user.id === editor.id)
+    : undefined;
   const [review, setReview] = useState<OrganizationChange | null>(null);
   const isUser = editor.kind === "user",
     isProfile = editor.kind === "profile",
@@ -1117,6 +1123,23 @@ function OrganizationEditor({
     position: "Должность",
   };
   const value = (key: string) => String(editor.values[key] ?? "");
+  async function sendPasswordReset() {
+    if (!editor.id || !isProfile) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await sendOrganizationPasswordReset(editor.id);
+      if (!result.success)
+        throw new Error(result.error || "Не удалось отправить письмо");
+      toast.success(`Письмо для сброса пароля отправлено на ${result.email}`);
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Не удалось отправить письмо",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
@@ -1390,7 +1413,8 @@ function OrganizationEditor({
                 type="email"
                 name="email"
                 required
-                defaultValue={value("email")}
+                value={profileEmail}
+                onChange={(event) => setProfileEmail(event.target.value)}
               />
               <span className="text-xs text-muted-foreground">
                 Изменение синхронизируется с сервисом входа. При задержке в
@@ -1405,6 +1429,47 @@ function OrganizationEditor({
                 defaultValue={value("telegram_chat_id")}
               />
             </Field>
+          )}
+          {isProfile && (
+            <section className="space-y-3 rounded-lg border bg-muted/30 p-4">
+              <div>
+                <h3 className="font-semibold text-foreground">Сброс пароля</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Пользователь получит одноразовую ссылку и самостоятельно задаст новый пароль.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={
+                  busy ||
+                  !profileUser?.is_active ||
+                  Boolean(profileUser?.archived_at) ||
+                  Boolean(profileUser?.auth_sync_pending) ||
+                  profileEmail.trim().toLowerCase() !==
+                    savedProfileEmail.trim().toLowerCase()
+                }
+                onClick={sendPasswordReset}
+              >
+                Отправить письмо для сброса пароля
+              </Button>
+              {profileEmail.trim().toLowerCase() !==
+                savedProfileEmail.trim().toLowerCase() && (
+                <p className="text-xs text-amber-700">
+                  Сначала сохраните новый email и дождитесь синхронизации входа.
+                </p>
+              )}
+              {profileUser?.auth_sync_pending && (
+                <p className="text-xs text-amber-700">
+                  Отправка станет доступна после синхронизации email с сервисом входа.
+                </p>
+              )}
+              {profileUser && !profileUser.is_active && (
+                <p className="text-xs text-muted-foreground">
+                  Для заблокированного или архивного аккаунта письмо не отправляется.
+                </p>
+              )}
+            </section>
           )}
           {(isUser || isAssignment) && (
             <>

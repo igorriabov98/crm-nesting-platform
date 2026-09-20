@@ -11,14 +11,29 @@ import ts from 'typescript'
 
 const require = createRequire(import.meta.url), h = React.createElement
 
+test('password recovery uses an emailed Supabase recovery link and keeps the reset page public', () => {
+  const action = readFileSync('src/lib/actions/organization.ts', 'utf8')
+  const form = readFileSync('src/components/features/auth/ResetPasswordForm.tsx', 'utf8')
+  const proxy = readFileSync('src/proxy.ts', 'utf8')
+  assert.match(action, /crm_prepare_password_reset/)
+  assert.match(action, /resetPasswordForEmail\(email,[\s\S]*redirectTo/)
+  assert.match(action, /crm_finish_password_reset_request/)
+  assert.match(form, /PASSWORD_RECOVERY/)
+  assert.match(form, /updateUser\(\{ password \}\)/)
+  assert.match(form, /fatalError/)
+  assert.match(form, /formError/)
+  assert.match(proxy, /pathname === '\/reset-password'/)
+})
+
 test('assignment drafts survive review/errors, unresolved supervisors require a choice, duplicate moves require explicit consolidation, settings and tree expose actions', async () => {
   const dom = new JSDOM('<div id="root"></div>', { url: 'https://crm.test/admin/organization' })
   globalThis.window = dom.window; globalThis.document = dom.window.document; globalThis.IS_REACT_ACT_ENVIRONMENT = true
-  let query = new URLSearchParams('tab=users'), calls = [], fail = true
+  let query = new URLSearchParams('tab=users'), calls = [], resetCalls = [], fail = true
   const actions = {
     getOrganizationHistory: async () => ({data:[],error:null}),
     applyOrganizationChange: async input => { calls.push(input); return {success:!fail,error:fail ? 'Сохранение не выполнено' : null} },
     previewOffboarding: async () => ({data:{version:'1', obligations:[]},error:null}),
+    sendOrganizationPasswordReset: async userId => { resetCalls.push(userId); return {success:true,email:'member@example.test',error:null} },
   }
   const modules = new Map()
   const ui = tag => ({children, ...props}) => {
@@ -78,6 +93,9 @@ test('assignment drafts survive review/errors, unresolved supervisors require a 
     assert.ok(button('Редактировать пользователя')); assert.ok(button('Удалить пользователя')); assert.ok(button('Передать дела и заблокировать'))
     await click('Редактировать пользователя')
     assert.equal(document.querySelector('[name="email"]').value,'member@example.test')
+    assert.ok(button('Отправить письмо для сброса пароля'))
+    await click('Отправить письмо для сброса пароля')
+    assert.deepEqual(resetCalls,['member'])
     await click('Отмена')
     // Dismiss the selected user through route navigation; same component retains state.
     await click('Отделы и структура')

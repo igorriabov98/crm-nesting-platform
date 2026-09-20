@@ -620,6 +620,7 @@ export const PERMISSION_RESOURCES = [
     defaultManageRoles: SUPPLY_AND_DIRECTORS,
     routes: [{ path: ROUTES.INVENTORY, match: 'prefix', operation: 'view' }],
     sidebar: { section: 'inventory', icon: 'inventory', order: 10 },
+    supportsFactoryScope: true,
   },
   {
     key: 'inventory_history',

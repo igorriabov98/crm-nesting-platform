@@ -57,7 +57,7 @@ for (const file of ['SupplyCircleTable.tsx', 'SupplyKnivesTable.tsx']) {
   assert.ok(!source.includes('<UnreserveButton'), `${file} must not expose manual unreserve`)
 }
 const pipeTable = readFileSync('src/components/features/supply-request/SupplyPipeTable.tsx', 'utf8')
-assert.ok(pipeTable.includes('isWire && canReserve'))
+assert.ok(pipeTable.includes('isWire && (canReserve || (canUnreserve && row.reservation_id))'))
 assert.ok(pipeTable.includes('Деловой остаток'))
 
 const supplyResources = readFileSync('src/lib/permissions/resources.ts', 'utf8')
