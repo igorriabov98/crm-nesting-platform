@@ -174,13 +174,20 @@ export function NotificationBell({ userId }: NotificationBellProps) {
   )
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void Promise.all([fetchCount(), refreshPreview()])
-    }, 0)
+    const refresh = () => {
+      if (document.visibilityState === 'hidden') return
+      void fetchCount()
+      if (openRef.current) void refreshPreview().then(latest => { if (latest) void markVisibleAsRead(latest) })
+    }
+    const timer = window.setTimeout(() => { void Promise.all([fetchCount(), refreshPreview()]) }, 0)
+    // Reconcile missed Realtime events after sleep/offline and on long-open pages.
+    const fallback = window.setInterval(refresh, 30_000)
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
 
     const supabase = createClient()
     const channel = supabase
-      .channel('notifications_header')
+      .channel(`notifications_header:${userId}`)
       .on(
         'postgres_changes',
         {
@@ -198,10 +205,13 @@ export function NotificationBell({ userId }: NotificationBellProps) {
           }
         }
       )
-      .subscribe()
+      .subscribe(status => { if (status === 'SUBSCRIBED') refresh() })
 
     return () => {
       window.clearTimeout(timer)
+      window.clearInterval(fallback)
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
       supabase.removeChannel(channel)
     }
   }, [fetchCount, markVisibleAsRead, refreshPreview, userId])

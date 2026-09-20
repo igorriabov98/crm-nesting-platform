@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 
 export const NOTIFICATION_TYPES = {
+  task_assigned: { icon: Plus, color: 'text-blue-600', bg: 'bg-blue-50', label: 'Назначена задача' },
   // Новые задачи
   new_machine: {
     icon: Plus,
