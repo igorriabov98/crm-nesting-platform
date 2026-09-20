@@ -49,8 +49,6 @@ export function PermissionProvider({
   const [requestNumber, setRequestNumber] = useState(0);
   const [state, setState] = useState<
     Snapshot & {
-      path: string;
-      requestNumber: number;
       status: AccessState["status"];
     }
   >({
@@ -58,8 +56,6 @@ export function PermissionProvider({
     isAdminPosition,
     userId,
     version,
-    path: pathname,
-    requestNumber,
     status: "ready",
   });
   const sequence = useRef(0);
@@ -79,8 +75,6 @@ export function PermissionProvider({
             permissions: {},
             isAdminPosition: false,
             userId,
-            path: pathname,
-            requestNumber,
             status: "denied",
           });
           return;
@@ -90,13 +84,17 @@ export function PermissionProvider({
         if (request !== sequence.current) return;
         if (snapshot.userId !== userId) {
           // A different session must never inherit the previous RSC payload.
+          setState({
+            permissions: {},
+            isAdminPosition: false,
+            userId,
+            status: "denied",
+          });
           window.location.reload();
           return;
         }
         setState({
           ...snapshot,
-          path: pathname,
-          requestNumber,
           status: "ready",
         });
       })
@@ -104,8 +102,6 @@ export function PermissionProvider({
         if (!controller.signal.aborted && request === sequence.current) {
           setState((previous) => ({
             ...previous,
-            path: pathname,
-            requestNumber,
             status: "error",
           }));
         }
@@ -128,12 +124,20 @@ export function PermissionProvider({
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
-  const status =
-    state.userId === userId && state.path === pathname && state.requestNumber === requestNumber
-      ? state.status
-      : "loading";
+  // The server supplied a verified snapshot, and every page/action checks access
+  // independently. Navigation and focus refresh it in the background without
+  // hiding an already authorized page or its open editors.
+  const sameUser = state.userId === userId;
+  const status = sameUser ? state.status : "loading";
   return (
-    <PermissionContext.Provider value={{ ...state, status, refresh }}>
+    <PermissionContext.Provider value={{
+      ...state,
+      permissions: sameUser ? state.permissions : {},
+      isAdminPosition: sameUser && state.isAdminPosition,
+      userId,
+      status,
+      refresh,
+    }}>
       {children}
     </PermissionContext.Provider>
   );
@@ -157,8 +161,8 @@ export function RouteAccessBoundary({ children }: { children: ReactNode }) {
         requirement.operation,
       ));
   const visible = status === "ready" && !denied;
-  // Keep an already mounted editor alive while rechecking access. Hidden content
-  // cannot be operated; server page/action guards remain the authorization boundary.
+  // Preserve drafts on a verification error; confirmed denial removes the page.
+  // Server page/action guards remain the authorization boundary during refresh.
   return (
     <>
       {status === "loading" && <div role="status" aria-live="polite" className="p-8 text-muted-foreground">Проверяем доступ…</div>}
