@@ -9,7 +9,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { TASKS_LIST_LIMIT } from '@/lib/constants/performance-limits'
 import { ACTIVE_TASK_STATUSES, isMachineWorkVisible } from '@/lib/machine-work-visibility'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
-import type { ProductProject, ProductProjectFile, ProductProjectVersion, Task, TaskDelegation, TaskDelegationStatus, TaskStatus, TaskType } from '@/lib/types'
+import type { ProductProject, Task, TaskDelegation, TaskDelegationStatus, TaskStatus, TaskType } from '@/lib/types'
 
 type DbResult = {
   data: unknown
@@ -402,125 +402,6 @@ function revalidateCuttingRollbackTaskPaths(machineId: string | null) {
   revalidatePath(ROUTES.PRODUCTION_FACT)
   revalidatePath(ROUTES.INVENTORY)
   if (machineId) revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
-}
-
-function datePlusDays(days: number) {
-  const date = new Date()
-  date.setDate(date.getDate() + days)
-  return date.toISOString().slice(0, 10)
-}
-
-function drawingNumberFromFileName(name: string) {
-  return name.replace(/\.[^/.]+$/, '').trim()
-}
-
-async function loadLatestProjectVersion(db: LooseSupabaseClient, projectId: string) {
-  const { data, error } = await db
-    .from('product_project_versions')
-    .select('*')
-    .eq('project_id', projectId)
-    .order('version_number', { ascending: false })
-    .limit(1)
-
-  if (error) throw new Error(error.message || 'Не удалось загрузить версию проекта')
-  const version = ((data || []) as ProductProjectVersion[])[0]
-  if (!version) throw new TaskBusinessError('Версия проекта не найдена')
-  return version
-}
-
-async function getProjectVersionFiles(db: LooseSupabaseClient, projectId: string, versionId: string) {
-  const { data, error } = await db
-    .from('product_project_files')
-    .select('*')
-    .eq('project_id', projectId)
-
-  if (error) throw new Error(error.message || 'Не удалось загрузить файлы проекта')
-  return ((data || []) as ProductProjectFile[]).filter((file) => !file.version_id || file.version_id === versionId)
-}
-
-async function validateProjectEngineeringDeliverables(db: LooseSupabaseClient, projectId: string) {
-  const version = await loadLatestProjectVersion(db, projectId)
-  const files = await getProjectVersionFiles(db, projectId, version.id)
-  const drawingFile = files.find((file) => file.file_kind === 'drawing')
-  const photoFile = files.find((file) => file.file_kind === 'photo')
-  const missing: string[] = []
-
-  if (!drawingFile) missing.push('чертеж')
-  if (!photoFile) missing.push('фото изделия')
-  if (!version.description?.trim()) missing.push('описание инженера')
-  if (!Number(version.unit_weight_kg || 0)) missing.push('вес изделия')
-
-  if (missing.length > 0) {
-    throw new TaskBusinessError(
-      `Нельзя завершить задачу: заполните ${missing.join(', ')}.`,
-      'PROJECT_DELIVERABLES_REQUIRED',
-      projectId,
-    )
-  }
-
-  if (!version.drawing_number && drawingFile) {
-    const { error } = await db
-      .from('product_project_versions')
-      .update({ drawing_number: drawingNumberFromFileName(drawingFile.file_name) })
-      .eq('id', version.id)
-    if (error) throw new Error(error.message || 'Не удалось записать номер чертежа')
-    version.drawing_number = drawingNumberFromFileName(drawingFile.file_name)
-  }
-
-  return version
-}
-
-async function ensureSalesReviewTask(
-  db: LooseSupabaseClient,
-  projectId: string,
-  projectTitle: string,
-  assignedTo: string,
-) {
-  const { data: existing, error: existingError } = await db
-    .from('tasks')
-    .select('id')
-    .eq('product_project_id', projectId)
-    .eq('task_type', 'product_project_sales_review')
-    .in('status', ['pending', 'in_progress'])
-    .limit(1)
-
-  if (existingError) throw new Error(existingError.message || 'Не удалось проверить задачи проекта')
-  if (((existing || []) as Array<{ id: string }>).length > 0) return
-
-  const { error } = await db.from('tasks').insert({
-    product_project_id: projectId,
-    machine_id: null,
-    assigned_to: assignedTo,
-    task_type: 'product_project_sales_review',
-    title: `Согласовать изделие с клиентом: ${projectTitle}`,
-    description: 'Заполните цену, украинское и английское название, УКТЗЕД и утвердите модель с клиентом.',
-    status: 'pending',
-    start_date: new Date().toISOString().slice(0, 10),
-    deadline: datePlusDays(1),
-  })
-  if (error) throw new Error(error.message || 'Не удалось создать задачу менеджеру')
-}
-
-async function finishProjectEngineering(
-  db: LooseSupabaseClient,
-  project: Pick<ProductProject, 'id' | 'title' | 'created_by'>,
-  version: ProductProjectVersion,
-  fallbackUserId: string,
-) {
-  const now = new Date().toISOString()
-  const { error: versionError } = await db
-    .from('product_project_versions')
-    .update({ status: 'client_review' })
-    .eq('id', version.id)
-  if (versionError) throw new Error(versionError.message || 'Не удалось обновить версию проекта')
-
-  const { error: projectError } = await db
-    .from('product_projects')
-    .update({ status: 'client_review', updated_at: now })
-    .eq('id', project.id)
-  if (projectError) throw new Error(projectError.message || 'Не удалось обновить статус проекта')
-
-  await ensureSalesReviewTask(db, project.id, project.title, project.created_by || fallbackUserId)
 }
 
 async function createPlanningDirectorReasonTasks(
@@ -1159,6 +1040,21 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
       throw new Error('Задача ожидает принятия после делегирования. Сначала отмените делегирование или дождитесь ответа сотрудника.')
     }
 
+    if (status === 'completed' && taskRow.task_type === 'product_project_engineering') {
+      const { data: completion, error: completionError } = await db.rpc(
+        'crm_complete_product_project_engineering_task',
+        { p_task_id: taskId },
+      )
+      if (completionError) throw new TaskBusinessError(completionError.message || 'Не удалось завершить проект изделия')
+      const completed = completion as { project_id?: string; sales_assigned_to?: string } | null
+      if (completed?.sales_assigned_to) {
+        await dispatchPendingTelegramDeliveries({ userId: completed.sales_assigned_to })
+      }
+      revalidatePath(ROUTES.TASKS)
+      if (completed?.project_id) revalidatePath(`${ROUTES.PRODUCT_PROJECTS}/${completed.project_id}`)
+      return { success: true, error: null }
+    }
+
     if (
       taskRow.task_type === CUTTING_ROLLBACK_TASK_TYPE &&
       (status === 'in_progress' || status === 'completed')
@@ -1205,14 +1101,6 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
       )
     }
 
-    let completedEngineeringVersion: ProductProjectVersion | null = null
-    if (status === 'completed' && taskRow.task_type === 'product_project_engineering') {
-      if (!taskRow.product_project_id || !taskRow.product_project) {
-        throw new TaskBusinessError('Задача не привязана к проекту изделия')
-      }
-      completedEngineeringVersion = await validateProjectEngineeringDeliverables(db, taskRow.product_project_id)
-    }
-
     if (status === 'completed' && taskRow.task_type === 'product_project_sales_review') {
       if (!taskRow.product_project_id || !taskRow.product_project) {
         throw new TaskBusinessError('Задача не привязана к проекту изделия')
@@ -1244,17 +1132,6 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
         .update({ status: 'engineering', updated_at: new Date().toISOString() })
         .eq('id', taskRow.product_project_id)
       if (projectStatusError) throw projectStatusError
-    }
-
-    if (
-      status === 'completed' &&
-      taskRow.status !== 'completed' &&
-      taskRow.task_type === 'product_project_engineering' &&
-      taskRow.product_project &&
-      completedEngineeringVersion
-    ) {
-      await finishProjectEngineering(db, taskRow.product_project, completedEngineeringVersion, userId)
-      await dispatchPendingTelegramDeliveries({ userId: taskRow.product_project.created_by || userId })
     }
 
     if (status === 'completed' && taskRow.status !== 'completed' && taskRow.task_type === 'engineer_confirm') {

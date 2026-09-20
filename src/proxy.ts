@@ -48,6 +48,7 @@ export async function proxy(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   const allowsRouteLevelAuth =
+    pathname === '/reset-password' ||
     pathname === '/api/access/snapshot' ||
     pathname.startsWith('/api/version') ||
     pathname.startsWith('/api/documents/generate') ||

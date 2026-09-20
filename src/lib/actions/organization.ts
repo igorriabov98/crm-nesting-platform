@@ -10,6 +10,7 @@ import {
   requirePermission,
 } from "@/lib/permissions/server";
 import { synchronizeUserAuth } from "@/lib/organization/auth-sync";
+import { getAppUrl } from "@/lib/config";
 import type {
   OrganizationAudit,
   OrganizationChange,
@@ -214,6 +215,56 @@ export async function retryOrganizationAuthSync(userId: string) {
     };
   } catch (error) {
     return { success: false, error: errorText(error) };
+  }
+}
+
+export async function sendOrganizationPasswordReset(userId: string) {
+  let requestId: string | null = null;
+  try {
+    const id = uuid.parse(userId);
+    const prepared = await rpc<{ request_id: string; email: string }>(
+      "crm_prepare_password_reset",
+      { p_user_id: id },
+    );
+    requestId = uuid.parse(prepared.request_id);
+    const email = z.string().email().parse(prepared.email);
+    const admin = createAdminClient();
+    const { data: authData, error: authLookupError } =
+      await admin.auth.admin.getUserById(id);
+    if (authLookupError || !authData.user)
+      throw new Error(
+        authLookupError?.message || "Аккаунт не найден в сервисе входа",
+      );
+    if (authData.user.email?.toLowerCase() !== email.toLowerCase())
+      throw new Error(
+        "Email профиля ещё не синхронизирован с сервисом входа",
+      );
+    const redirectTo = `${getAppUrl().replace(/\/$/, "")}/reset-password`;
+    const { error } = await admin.auth.resetPasswordForEmail(email, {
+      redirectTo,
+    });
+    if (error) throw new Error(error.message);
+    const finish = await (admin as unknown as {
+      rpc: (name: string, args: Record<string, unknown>) => Promise<{ error: { message: string } | null }>;
+    }).rpc("crm_finish_password_reset_request", {
+      p_request_id: requestId,
+      p_sent: true,
+      p_error: null,
+    });
+    if (finish.error) throw new Error(finish.error.message);
+    return { success: true, email, error: null };
+  } catch (error) {
+    if (requestId) {
+      const admin = createAdminClient();
+      await (admin as unknown as {
+        rpc: (name: string, args: Record<string, unknown>) => Promise<{ error: { message: string } | null }>;
+      }).rpc("crm_finish_password_reset_request", {
+        p_request_id: requestId,
+        p_sent: false,
+        p_error: errorText(error),
+      });
+    }
+    return { success: false, email: null, error: errorText(error) };
   }
 }
 export async function createOrganizationUser(input: {

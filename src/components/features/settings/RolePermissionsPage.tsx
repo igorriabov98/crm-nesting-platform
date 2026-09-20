@@ -462,7 +462,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
     return (
       <div className="mx-auto w-full max-w-64 space-y-1.5 text-left">
         <label htmlFor={id} className="text-xs font-medium text-muted-foreground">
-          Охват заказов
+          Доступ по заводам
         </label>
         <Select
           value={state.factoryScope}
@@ -477,7 +477,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
           <SelectTrigger
             id={id}
             className="h-11 w-full bg-background text-foreground"
-            aria-label={`${resource.label}: ${subjectLabel(scope)}, охват заказов`}
+            aria-label={`${resource.label}: ${subjectLabel(scope)}, доступ по заводам`}
           >
             <SelectValue>{factoryScopeLabel(state.factoryScope)}</SelectValue>
           </SelectTrigger>

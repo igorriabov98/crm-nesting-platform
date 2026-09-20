@@ -3,6 +3,7 @@ import { PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
 import { ReserveButton } from './ReserveButton'
 import { UnreserveButton } from './UnreserveButton'
 import { StockCoverageValue } from './StockCoverageValue'
+import { LayoutCoveragePurchase, LayoutCoverageSources, LayoutCoverageState } from './LayoutCoverageSummary'
 import { EmptyRows, OrderStatusCell, formatAmount, stockText, stickyCellClass, tableClass, tdClass, thClass } from './SupplyRequestTableShared'
 import type { SupplyRequestRow } from '@/lib/actions/supply-request'
 import type { RequestPipe } from '@/lib/types'
@@ -11,15 +12,16 @@ type Props = {
   rows: SupplyRequestRow<RequestPipe>[]
   machineId: string
   canReserve?: boolean
+  canUnreserve?: boolean
 }
 
-export function SupplyPipeTable({ rows, machineId, canReserve = false }: Props) {
+export function SupplyPipeTable({ rows, machineId, canReserve = false, canUnreserve = false }: Props) {
   return (
     <Section title="Труба">
       <table className={tableClass}>
         <thead className="border-b border-[#E8ECF0] bg-[#F8F9FA]">
           <tr>
-            {['Материал', 'Подтип', 'Тип стали', 'Сечение, мм', 'Толщина стенки, мм', 'Диаметр, мм', 'Необходимо длина, мм', 'Необходимо, кг', 'Вес, кг', 'На складе', 'Забронировано', 'Статус', 'Действия'].map((header, index) => (
+            {['Материал', 'Подтип', 'Тип стали', 'Сечение, мм', 'Толщина стенки, мм', 'Диаметр, мм', 'Необходимо длина, мм', 'Необходимо, кг', 'Вес, кг', 'Обеспечение', 'Бронь / к закупке', 'Раскладка / статус', 'Действия'].map((header, index) => (
               <th key={header} className={`${thClass} ${index === 0 ? stickyCellClass : ''}`}>{header}</th>
             ))}
           </tr>
@@ -41,13 +43,25 @@ export function SupplyPipeTable({ rows, machineId, canReserve = false }: Props) 
                 <td className={tdClass}>{isWire ? '—' : formatAmount(row.remainder_length_mm)}</td>
                 <td className={tdClass}>{isWire ? formatAmount(row.remainder_kg) : '—'}</td>
                 <td className={tdClass}>{row.calculated_weight_kg ? `${formatAmount(row.calculated_weight_kg)} кг` : '—'}</td>
-                <td className={`${tdClass} ${Number(row.available_stock || 0) <= 0 ? 'text-red-700' : ''}`}>{stockBreakdown(row.stock_items, unit) || stockText(row.available_stock, unit)}</td>
-                <td className={tdClass}><StockCoverageValue reserved={reserved} covered={row.covered_quantity} unit={unit} showLayoutSource={!isWire} /></td>
-                <td className={tdClass}><OrderStatusCell table="request_pipe" status={row.order_status} needed={needed} reserved={reserved} covered={row.covered_quantity} pipeType={row.pipe_type} /></td>
+                <td className={`${tdClass} ${isWire && Number(row.available_stock || 0) <= 0 ? 'text-red-700' : ''}`}>
+                  {isWire
+                    ? stockBreakdown(row.stock_items, unit) || stockText(row.available_stock, unit)
+                    : <LayoutCoverageSources coverage={row.layout_coverage} />}
+                </td>
                 <td className={tdClass}>
-                  {isWire && canReserve ? <div className="flex items-center gap-2">
-                    <ReserveButton table="request_pipe" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} covered={row.covered_quantity} available={row.available_stock} unit={unit} stockItems={row.stock_items} />
-                    {row.reservation_id && <UnreserveButton table="request_pipe" itemId={row.id} />}
+                  {isWire
+                    ? <StockCoverageValue reserved={reserved} covered={row.covered_quantity} unit={unit} />
+                    : <LayoutCoveragePurchase coverage={row.layout_coverage} />}
+                </td>
+                <td className={tdClass}>
+                  {isWire
+                    ? <OrderStatusCell table="request_pipe" status={row.order_status} needed={needed} reserved={reserved} covered={row.covered_quantity} pipeType={row.pipe_type} />
+                    : <LayoutCoverageState coverage={row.layout_coverage} />}
+                </td>
+                <td className={tdClass}>
+                  {isWire && (canReserve || (canUnreserve && row.reservation_id)) ? <div className="flex items-center gap-2">
+                    {canReserve && <ReserveButton table="request_pipe" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} covered={row.covered_quantity} available={row.available_stock} unit={unit} stockItems={row.stock_items} />}
+                    {canUnreserve && row.reservation_id && <UnreserveButton table="request_pipe" itemId={row.id} />}
                   </div> : <span className="text-xs text-slate-500">{isWire ? 'Только просмотр' : 'Бронь по раскладке'}</span>}
                 </td>
               </tr>

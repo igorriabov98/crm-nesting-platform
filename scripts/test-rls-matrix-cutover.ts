@@ -32,6 +32,10 @@ const factoryScopeCompatibilityPath = join(
   root,
   'supabase/migrations/20260916083000_expand_department_access_factory_scope.sql',
 )
+const technologistReservationMigrationPath = join(
+  root,
+  'supabase/migrations/20260920220000_technologist_reservations_projects_password.sql',
+)
 const draftVisibilityFixPath = join(
   root,
   'supabase/migrations/20260916103000_fix_technologist_request_draft_visibility.sql',
@@ -165,6 +169,7 @@ const expectedFactoryScopeResources = [
   'customs_clearance',
   'production_fact',
   'production_cutting_area',
+  'inventory',
 ] as const
 const codeFactoryScopeResources = PERMISSION_RESOURCES
   .filter((resource) => 'supportsFactoryScope' in resource && resource.supportsFactoryScope === true)
@@ -176,11 +181,13 @@ const rollbackFactoryConstraint = rollback.slice(
   rollback.indexOf('ADD CONSTRAINT department_access_permissions_factory_scope_check'),
   rollback.indexOf('ADD CONSTRAINT department_access_permissions_company_view_scope_check'),
 )
+const technologistReservationMigration = readFileSync(technologistReservationMigrationPath, 'utf8')
 for (const resource of expectedFactoryScopeResources) {
-  assert.match(factoryScopeCompatibility, new RegExp(`'${resource}'`),
-    `Pre-cutover factory scope constraint должен разрешать ${resource}`)
-  assert.match(rollbackFactoryConstraint, new RegExp(`'${resource}'`),
-    `Rollback должен сохранять factory scope для ${resource}`)
+  const constraintSource = resource === 'inventory'
+    ? technologistReservationMigration
+    : `${factoryScopeCompatibility}\n${rollbackFactoryConstraint}`
+  assert.match(constraintSource, new RegExp(`'${resource}'`),
+    `Factory scope constraint должен разрешать ${resource}`)
 }
 assert.doesNotMatch(factoryScopeCompatibility, /'supply'/,
   'Ресурс supply не имеет однозначного factory ownership и не должен получать scope=all')
@@ -210,6 +217,7 @@ assert.deepEqual(
     '20260919125500_organization_rls_administrator.sql',
     '20260920120000_organization_member_management.sql',
     '20260920130000_task_notifications_material_type_access.sql',
+    '20260920220000_technologist_reservations_projects_password.sql',
 
   ],
   'После cutover разрешены только проверенные follow-up миграции',
@@ -247,6 +255,8 @@ for (const forbidden of [
 
 assert(!factoryScope.includes('DIRECTOR_ACCESS_ROLES'), 'Legacy-роль директора не должна обходить factory scope')
 assert.match(accessActions, /crm_save_matrix/)
+assert.match(accessPage, /Доступ по заводам/,
+  'Матрица должна явно называть выбор «Свой завод / Все заводы» доступом по заводам')
 assert.match(accessPage, /setPermissions\(savedPermissions\)[\s\S]*setPersistedPermissions\(savedPermissions\)/,
   'После успешного сохранения UI должен принять server-normalized state и обнулить diff')
 

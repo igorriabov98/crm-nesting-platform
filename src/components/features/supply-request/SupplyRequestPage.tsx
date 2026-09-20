@@ -60,7 +60,8 @@ export function SupplyRequestPage({ data, detailing }: Props) {
   const isWarehouseReservationMode = isSupplyWarehouseReservationStatus(request.status)
   const canReserveByRole = data.can_reserve
   const canReserve = (isStockCheckMode || isWarehouseReservationMode) && canReserveByRole
-  const canCompleteReservation = canReserve
+  const canUnreserve = (isStockCheckMode || isWarehouseReservationMode) && data.can_unreserve
+  const canCompleteReservation = (isStockCheckMode || isWarehouseReservationMode) && data.can_complete_reservation
   const canManageDetailing = isStockCheckMode && data.can_manage_detailing
   const totalWeight = [
     ...data.sections.sheetMetal,
@@ -169,6 +170,16 @@ export function SupplyRequestPage({ data, detailing }: Props) {
             Забронируйте доступный деловой остаток и завершите этап, чтобы перейти к проверке основного склада.
           </p>
         )}
+        {(isStockCheckMode || isWarehouseReservationMode) && data.reservation_block_reason && (
+          <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900" role="status">
+            Бронирование недоступно: {data.reservation_block_reason}
+          </p>
+        )}
+        {(isStockCheckMode || isWarehouseReservationMode) && !canCompleteReservation && (
+          <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700" role="status">
+            Завершение этапа недоступно: требуется право управления заявками технолога.
+          </p>
+        )}
         {isWarehouseReservationMode && (
           <p className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
             Проверьте основной склад. Незакрытый объём автоматически останется в колонке «К заказу» для снабжения.
@@ -235,14 +246,14 @@ export function SupplyRequestPage({ data, detailing }: Props) {
         </div>
       </div>
 
-      {activeTab === 'sheet_metal' && <SupplySheetMetalTable key={selectedFactoryId} rows={filteredSections.sheetMetal} machineId={request.machine_id} canReserve={canReserve} />}
+      {activeTab === 'sheet_metal' && <SupplySheetMetalTable key={selectedFactoryId} rows={filteredSections.sheetMetal} machineId={request.machine_id} canReserve={canReserve} canUnreserve={canUnreserve} />}
       {activeTab === 'circle' && <SupplyCircleTable key={selectedFactoryId} rows={filteredSections.circles} />}
-      {activeTab === 'pipe' && <SupplyPipeTable key={selectedFactoryId} rows={filteredSections.pipes} machineId={request.machine_id} canReserve={canReserve} />}
+      {activeTab === 'pipe' && <SupplyPipeTable key={selectedFactoryId} rows={filteredSections.pipes} machineId={request.machine_id} canReserve={canReserve} canUnreserve={canUnreserve} />}
       {activeTab === 'knives' && <SupplyKnivesTable key={selectedFactoryId} rows={filteredSections.knives} />}
-      {activeTab === 'paint' && <SupplyPaintTable key={selectedFactoryId} rows={filteredSections.paint} machineId={request.machine_id} canReserve={canReserve} />}
-      {activeTab === 'components' && <SupplyComponentsTable key={selectedFactoryId} rows={filteredSections.components} machineId={request.machine_id} canReserve={canReserve} />}
-      {activeTab === 'mesh' && <SupplyMeshTable key={selectedFactoryId} rows={filteredSections.meshItems} machineId={request.machine_id} canReserve={canReserve} />}
-      {activeTab === 'chain_cord' && <SupplyChainCordTable key={selectedFactoryId} rows={filteredSections.chainCords} machineId={request.machine_id} canReserve={canReserve} />}
+      {activeTab === 'paint' && <SupplyPaintTable key={selectedFactoryId} rows={filteredSections.paint} machineId={request.machine_id} canReserve={canReserve} canUnreserve={canUnreserve} />}
+      {activeTab === 'components' && <SupplyComponentsTable key={selectedFactoryId} rows={filteredSections.components} machineId={request.machine_id} canReserve={canReserve} canUnreserve={canUnreserve} />}
+      {activeTab === 'mesh' && <SupplyMeshTable key={selectedFactoryId} rows={filteredSections.meshItems} machineId={request.machine_id} canReserve={canReserve} canUnreserve={canUnreserve} />}
+      {activeTab === 'chain_cord' && <SupplyChainCordTable key={selectedFactoryId} rows={filteredSections.chainCords} machineId={request.machine_id} canReserve={canReserve} canUnreserve={canUnreserve} />}
     </div>
   )
 }
