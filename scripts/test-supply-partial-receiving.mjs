@@ -211,8 +211,13 @@ assert.match(
 )
 assert.match(
   circleTable,
-  /Старый количественный остаток[\s\S]*available_secondary_quantity/,
-  'circle stock UI must show legacy rows and physical piece availability',
+  /LayoutCoverageSources[\s\S]*LayoutCoveragePurchase[\s\S]*LayoutCoverageState/,
+  'layout-managed circle rows must show approved-layout sources and purchase bars',
+)
+assert.doesNotMatch(
+  circleTable,
+  /Старый количественный остаток|available_secondary_quantity/,
+  'layout-managed circle rows must not present free inventory as request coverage',
 )
 assert.match(
   wholeBarCirclePipeMigration,
