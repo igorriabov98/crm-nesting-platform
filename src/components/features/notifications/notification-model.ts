@@ -7,6 +7,7 @@ export type NotificationItem = {
   message: string
   created_at: string
   is_read: boolean
+  related_task_id?: string | null
   related_machine_id: string | null
   consumable_request_id: string | null
   related_mail_thread_id?: string | null
@@ -22,6 +23,9 @@ export function isConsumableNotification(type: string) {
 }
 
 export function getNotificationDestination(notification: NotificationItem) {
+  if (notification.type === 'task_assigned' && notification.related_task_id) {
+    return { href: `${ROUTES.TASKS}?task=${encodeURIComponent(notification.related_task_id)}`, label: 'Открыть задачу' }
+  }
   if (notification.related_meeting_id && notification.type === 'meeting_reminder') {
     return {
       href: `${ROUTES.MEETINGS}/${notification.related_meeting_id}`,

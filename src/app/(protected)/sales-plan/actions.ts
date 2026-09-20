@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { after } from 'next/server'
 import { z } from 'zod'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
@@ -1503,21 +1504,13 @@ export async function updateMachinePackingSettings(machineId: string, data: Mach
 
 export async function updateMachineMaterialType(machineId: string, materialType: MaterialType) {
   try {
-    const { supabase, db, user } = await requireSalesPlanPermission('manage')
-    requireMachineMutationAccess(user)
+    const { supabase } = await requirePermission('technologist_requests', 'manage')
     const parsedMachineId = machineIdSchema.parse(machineId)
     const parsedMaterialType = materialTypeActionSchema.parse(materialType)
-
-    await assertMachineNotArchived(db, parsedMachineId)
-
-    const { error } = await db
-      .from('machines')
-      .update({
-        material_type: parsedMaterialType,
-        updated_at: new Date().toISOString(),
-      } satisfies MachineUpdate)
-      .eq('id', parsedMachineId)
-
+    const { error } = await (supabase as unknown as SupabaseClient).rpc('crm_set_machine_material_type', {
+      p_machine_id: parsedMachineId,
+      p_material_type: parsedMaterialType,
+    })
     if (error) throw error
 
     await refreshMaterialUndefinedAgenda(supabase, parsedMaterialType)
