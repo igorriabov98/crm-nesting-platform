@@ -14,6 +14,13 @@ function formatNumber(value: unknown, maximumFractionDigits = 2) {
   return parsed === null ? null : parsed.toLocaleString('ru-RU', { maximumFractionDigits })
 }
 
+function formatPositiveNumber(value: unknown, maximumFractionDigits = 2) {
+  const parsed = numberValue(value)
+  return parsed !== null && parsed > 0
+    ? parsed.toLocaleString('ru-RU', { maximumFractionDigits })
+    : null
+}
+
 function detail(label: string, value: string | null, unit = '') {
   return value === null ? null : `${label}: ${value}${unit}`
 }
@@ -21,7 +28,7 @@ function detail(label: string, value: string | null, unit = '') {
 export function getTechnologistPositionDetails(item: ApprovalSummaryItem) {
   const attributes = item.attributes || {}
   const details: Array<string | null> = []
-  const weight = formatNumber(item.weightKg)
+  const weight = formatPositiveNumber(item.weightKg)
 
   switch (item.category) {
     case 'request_sheet_metal':
@@ -64,8 +71,8 @@ export function getTechnologistPositionDetails(item: ApprovalSummaryItem) {
       break
     case 'request_paint':
       details.push(
-        detail('Площадь', formatNumber(attributes.area_m2), ' м²'),
-        detail('Вес с запасом', formatNumber(attributes.weight_with_waste_kg), ' кг'),
+        detail('Площадь', formatPositiveNumber(attributes.area_m2), ' м²'),
+        detail('Вес с запасом', formatPositiveNumber(attributes.weight_with_waste_kg), ' кг'),
       )
       break
     case 'request_mesh':
