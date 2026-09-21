@@ -85,6 +85,19 @@ test('summary shows complete technical details that distinguish equal material n
   }
 })
 
+test('summary does not present empty paint measurements as real position data', () => {
+  const paintSnapshot = { ...snapshot, items: [{
+    key: 'request_paint:a', category: 'request_paint', categoryLabel: 'Краска', name: 'RAL 6050 · матовый',
+    quantity: 10, unit: 'кг', weightKg: 0, businessScrapReserved: 0, regularStockReserved: 0, wastePercent: null,
+    attributes: { area_m2: 0, weight_with_waste_kg: 0 },
+  }] }
+  const html = renderToStaticMarkup(<ApprovalSummary snapshot={paintSnapshot} />)
+  assert.ok(html.includes('10 кг'))
+  assert.ok(!html.includes('Площадь: 0 м²'))
+  assert.ok(!html.includes('Вес с запасом: 0 кг'))
+  assert.ok(!html.includes('Вес позиции: 0 кг'))
+})
+
 test('version comparison displays before and after values', () => {
   const next = { ...snapshot, items: snapshot.items.map((item) => ({ ...item, quantity: 7 })) }
   const html = renderToStaticMarkup(<ApprovalDiff diff={approval.compareApprovalSnapshots(snapshot, next)} />)
