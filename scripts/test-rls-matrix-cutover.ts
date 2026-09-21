@@ -219,6 +219,11 @@ assert.deepEqual(
     '20260920130000_task_notifications_material_type_access.sql',
     '20260920220000_technologist_reservations_projects_password.sql',
     '20260921082107_access_programs_admin_and_layouts.sql',
+    '20260921145900_revision_procurement_release_snapshot.sql',
+    '20260921150000_revision_position_groups.sql',
+    '20260921151000_atomic_supply_schedule_status.sql',
+    '20260921152000_supply_task_wording.sql',
+    '20260921153000_reconcile_civ19_ordered_status.sql',
 
   ],
   'После cutover разрешены только проверенные follow-up миграции',
