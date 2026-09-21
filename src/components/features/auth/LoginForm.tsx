@@ -10,6 +10,7 @@ import { toast } from 'sonner'
 import { Loader2, Factory } from 'lucide-react'
 
 import { createClient } from '@/lib/supabase/client'
+import { loginErrorMessage } from '@/lib/auth/login-error'
 import { ROUTES } from '@/lib/constants/routes'
 
 import { Button } from '@/components/ui/button'
@@ -54,7 +55,7 @@ export function LoginForm() {
 
     if (error) {
       toast.error('Ошибка входа', {
-        description: 'Неверный email или пароль. Проверьте данные и попробуйте снова.',
+        description: loginErrorMessage(error),
       })
       setIsLoading(false)
       return
