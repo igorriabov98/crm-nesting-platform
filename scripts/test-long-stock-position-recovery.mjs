@@ -25,7 +25,7 @@ for (const required of [
   'planItemId: string | null',
   "('supply_position_revisions')",
   ".eq('replacement_request_item_table', requestItem.table)",
-  ".eq('replacement_request_item_id', requestItem.id)",
+  ".eq('replacement_request_id', requestRow.request_id)",
   ".in('status', ['editing', 'stock_check'])",
   'source_request_item_table,source_request_item_id,assigned_to,status',
   'cancel_return_ref: genericCancelRef',
