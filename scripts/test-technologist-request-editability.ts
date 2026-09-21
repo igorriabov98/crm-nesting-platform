@@ -48,7 +48,7 @@ const root = process.cwd()
 const action = readFileSync(join(root, 'src/lib/actions/technologist-requests.ts'), 'utf8')
 assert((action.match(/assertTechnologistRequestEditable\(/g) || []).length >= 6, 'Все группы мутаций должны проверять статус заявки')
 assert(action.includes("request.status !== 'draft'"), 'Оформление должно выполняться только из черновика')
-assert(action.includes("request.status !== 'pending_stock_check' && request.status !== 'stock_checked'"), 'Проверка склада не должна менять закрытую заявку')
+assert(action.includes("allowedStatuses: ['pending_stock_check', 'stock_checked']"), 'Проверка склада не должна менять закрытую заявку')
 assert(action.includes('export async function deleteDraftRequest'), 'Должно быть серверное действие удаления черновика')
 assert(action.includes("rpc('fn_delete_technologist_request_draft_v1'"), 'Удаление должно проходить через атомарную защищённую функцию')
 
