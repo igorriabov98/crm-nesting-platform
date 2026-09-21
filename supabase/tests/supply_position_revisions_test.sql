@@ -91,6 +91,8 @@ declare
   v_finance_department uuid := gen_random_uuid();
   v_approval uuid;
   v_waste jsonb := '[]'::jsonb;
+  v_archive jsonb;
+  v_archives jsonb := '[]'::jsonb;
   v_department_request_id uuid;
   v_replacement_request_id uuid;
   v_replacement_item_id uuid;
@@ -280,6 +282,7 @@ begin
     department_id, subject_scope, resource_key, can_view, can_manage
   ) values
     (v_technology_department, 'member', 'technologist_requests', true, true),
+    (v_technology_department, 'member', 'inventory', true, true),
     (v_technology_department, 'member', 'inventory_detailing', true, true);
   if p_table in ('request_sheet_metal','request_pipe') then
     if p_table = 'request_sheet_metal' then
@@ -287,10 +290,25 @@ begin
     end if;
     v_waste := jsonb_build_array(jsonb_build_object('sourceTable',p_table,'sourceId',v_replacement_item_id,'wastePercent',10,'itemName','Металл','materialName','Металл'));
   end if;
+  if p_table = 'request_sheet_metal' then
+    v_archive := jsonb_build_object(
+      'requestId', v_replacement_request_id,
+      'completionId', null,
+      'objectPath', 'machine-cutting/' || v_machine || '/' || v_replacement_request_id
+        || '/1700000000000-' || gen_random_uuid() || '.zip',
+      'fileName', 'supply-position-revision.zip',
+      'mimeType', 'application/zip',
+      'fileSize', 128
+    );
+    v_archives := jsonb_build_array(v_archive);
+    insert into storage.objects(bucket_id,name,metadata)
+      values ('nesting-files', v_archive->>'objectPath', jsonb_build_object('size', 128, 'mimetype', 'application/zip'));
+  end if;
   perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   v_approval := public.fn_submit_technologist_request_for_approval(v_replacement_request_id,v_technologist,
-    jsonb_build_object('decision','none','enteredPlasmaMinutes',0,'wasteItems',v_waste,'futureItems','[]'::jsonb,'archives','[]'::jsonb),
-    jsonb_build_object('sourceData',public.fn_technologist_approval_source(v_replacement_request_id)));
+    jsonb_build_object('decision','none','enteredPlasmaMinutes',0,'wasteItems',v_waste,'futureItems','[]'::jsonb,'archives',v_archives),
+    jsonb_build_object('sourceData',public.fn_technologist_approval_source(v_replacement_request_id)),
+    v_archives);
   execute format('select to_jsonb(item) from public.%I item where id = $1',p_table) into v_row using v_source_item;
   if v_row->>'order_status' = 'cancelled' or (select status from public.supply_position_revisions where id = v_revision_id) = 'submitted' then
     raise exception 'Correction changed its source before financial approval';
