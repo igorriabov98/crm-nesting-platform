@@ -71,7 +71,7 @@ export async function buildTechnologistApprovalSnapshot(
     const part = (partsResult.data || []).find((row: any) => row.id === item.partId)
     return part ? { ...item, name: part.name, drawingNumber: part.drawing_number, unitWeightKg: part.unit_weight_kg } : item
   }) }
-  return snapshotFromSource(sourceResult.data, requestId, machine, enriched)
+  return (await withSheetSteelTypeNames(client, snapshotFromSource(sourceResult.data, requestId, machine, enriched)))!
 }
 
 export function snapshotFromSource(
@@ -113,4 +113,33 @@ export function snapshotFromSource(
     enteredPlasmaMinutes: completion.enteredPlasmaMinutes,
     archives: completion.archives,
   }
+}
+
+// Resolve legacy snapshots by their saved steel ID, never by the current request row.
+// Keep sourceData byte-for-byte equivalent for the SQL approval freshness check.
+export async function withSheetSteelTypeNames(
+  client: any,
+  snapshot: ApprovalSummarySnapshot | null,
+  storedSnapshot?: ApprovalSummarySnapshot | null,
+): Promise<ApprovalSummarySnapshot | null> {
+  if (!snapshot?.items) return snapshot
+  const saved = new Map((storedSnapshot?.items || []).map(item => [item.key, item]))
+  const items = snapshot.items.map(item => {
+    if (item.category !== 'request_sheet_metal') return item
+    const previous = saved.get(item.key)?.attributes
+    const current = item.attributes || {}
+    const name = current.steel_type_name || (current.steel_type_id === previous?.steel_type_id ? previous?.steel_type_name : null)
+    return name ? { ...item, attributes: { ...current, steel_type_name: name } } : item
+  })
+  const ids = [...new Set(items.flatMap(item => item.category === 'request_sheet_metal'
+    && !item.attributes?.steel_type_name && typeof item.attributes?.steel_type_id === 'string'
+    ? [item.attributes.steel_type_id] : []))]
+  const result = ids.length ? await client.from('steel_types').select('id,name').in('id', ids) : { data: [], error: null }
+  if (result.error) throw new Error('Не удалось загрузить типы стали для итогов заявки')
+  const names = new Map<string, string>((result.data || []).map((row: { id: string; name: string }) => [row.id, row.name]))
+  return { ...snapshot, items: items.map(item => {
+    if (item.category !== 'request_sheet_metal' || item.attributes?.steel_type_name) return item
+    const name = names.get(String(item.attributes?.steel_type_id))
+    return name ? { ...item, attributes: { ...item.attributes, steel_type_name: name } } : item
+  }) }
 }

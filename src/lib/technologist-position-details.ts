@@ -33,7 +33,7 @@ export function getTechnologistPositionDetails(item: ApprovalSummaryItem) {
   switch (item.category) {
     case 'request_sheet_metal':
       details.push(
-        detail('Марка стали', textValue(attributes.material_grade)),
+        detail('Тип стали', textValue(attributes.steel_type_name) || textValue(attributes.material_grade) || 'Не указан'),
         detail('Размер листа', textValue(attributes.sheet_size)),
         detail('Толщина', formatNumber(attributes.thickness_mm), ' мм'),
       )
