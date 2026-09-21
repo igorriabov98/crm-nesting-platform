@@ -10,7 +10,7 @@ import {
   requirePermission,
 } from "@/lib/permissions/server";
 import { synchronizeUserAuth } from "@/lib/organization/auth-sync";
-import { getAppUrl } from "@/lib/config";
+import { getPasswordResetRedirectUrl } from "@/lib/config";
 import type {
   OrganizationAudit,
   OrganizationChange,
@@ -239,7 +239,7 @@ export async function sendOrganizationPasswordReset(userId: string) {
       throw new Error(
         "Email профиля ещё не синхронизирован с сервисом входа",
       );
-    const redirectTo = `${getAppUrl().replace(/\/$/, "")}/reset-password`;
+    const redirectTo = getPasswordResetRedirectUrl();
     const { error } = await admin.auth.resetPasswordForEmail(email, {
       redirectTo,
     });

@@ -58,12 +58,31 @@ const snapshot: approval.ApprovalSummarySnapshot = {
   futureItems: [{ name: 'Заготовка', drawingNumber: 'Ч-001', quantity: 4, unitWeightKg: 2 }], enteredPlasmaMinutes: 20, archives: [],
 }
 
+const circleSnapshot: approval.ApprovalSummarySnapshot = {
+  ...snapshot,
+  items: [
+    { key: 'request_circle:a', category: 'request_circle', categoryLabel: 'Круг', name: 'Hardox', quantity: 6000, unit: 'мм', weightKg: 33.08,
+      businessScrapReserved: 0, regularStockReserved: 5532, wastePercent: null,
+      attributes: { steel_grade: 'Hardox', diameter_mm: 30, is_calibrated: false } },
+    { key: 'request_circle:b', category: 'request_circle', categoryLabel: 'Круг', name: 'Hardox', quantity: 6000, unit: 'мм', weightKg: 14.7,
+      businessScrapReserved: 0, regularStockReserved: 0, wastePercent: null,
+      attributes: { steel_grade: 'Hardox', diameter_mm: 20, is_calibrated: true } },
+  ],
+}
+
 test('summary renders desktop table, mobile cards, exact reservations, waste and future detailing', () => {
   const html = renderToStaticMarkup(<ApprovalSummary snapshot={snapshot} />)
   for (const text of ['Лист S235','Деловой склад','Обычный склад','10.0%','Заготовка','Ч-001','25 мин.','md:block','md:hidden']) assert.ok(html.includes(text), text)
   assert.ok(html.includes('1 шт.'))
   assert.ok(html.includes('2 шт.'))
   assert.ok(!html.includes('id="category-'), 'History summaries must not duplicate document IDs')
+})
+
+test('summary shows complete technical details that distinguish equal material names', () => {
+  const html = renderToStaticMarkup(<ApprovalSummary snapshot={circleSnapshot} />)
+  for (const text of ['Марка стали: Hardox', 'Диаметр: 30 мм', 'Диаметр: 20 мм', 'Калиброванный: нет', 'Калиброванный: да', 'Вес позиции: 33,08 кг', 'Вес позиции: 14,7 кг']) {
+    assert.ok(html.includes(text), text)
+  }
 })
 
 test('version comparison displays before and after values', () => {
