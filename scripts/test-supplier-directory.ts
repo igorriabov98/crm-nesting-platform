@@ -172,3 +172,6 @@ for (const [pathname, operation] of [
 }
 
 console.log(`supplier-directory: OK (${fixtures.length} сценариев, ${MATERIAL_CATEGORIES.length} категорий)`)
+
+assert.deepEqual(getSupplierDirectorySections({ categories: ['knives'] }), ['metal'])
+assert.deepEqual(getSupplierDirectorySections({ categories: ['mesh'] }), ['consumables'])

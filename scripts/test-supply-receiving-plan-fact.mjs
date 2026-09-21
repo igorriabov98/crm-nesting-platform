@@ -89,6 +89,7 @@ async function testConcurrentBatchReceipt() {
       INSERT INTO public.department_access_permissions(department_id, subject_scope, resource_key, can_view, can_manage, updated_by)
       VALUES ('${fixture.department}', 'member', 'inventory_receiving', true, true, '${fixture.actor}');
       INSERT INTO public.suppliers(id, name) VALUES ('${fixture.supplier}', 'Concurrent supplier ${fixture.supplier}');
+      INSERT INTO public.supplier_material_categories(supplier_id,category) VALUES ('${fixture.supplier}','paint');
       INSERT INTO public.machines(id, factory_id, name, created_by)
       VALUES ('${fixture.machine}', v_factory, 'Конкурентная пакетная приёмка', '${fixture.actor}');
       INSERT INTO public.technologist_requests(id, machine_id, created_by, status)
@@ -203,6 +204,7 @@ async function testConcurrentManualQuantityReceipt() {
       INSERT INTO public.department_access_permissions(department_id, subject_scope, resource_key, can_view, can_manage, updated_by)
       VALUES ('${fixture.department}', 'member', 'inventory_receiving', true, true, '${fixture.actor}');
       INSERT INTO public.suppliers(id, name) VALUES ('${fixture.supplier}', 'Manual concurrent supplier ${fixture.supplier}');
+      INSERT INTO public.supplier_material_categories(supplier_id,category) VALUES ('${fixture.supplier}','paint');
       INSERT INTO public.machines(id, factory_id, name, created_by)
       VALUES ('${fixture.machine}', v_factory, 'Конкурентная ручная приёмка', '${fixture.actor}');
       INSERT INTO public.technologist_requests(id, machine_id, created_by, status)

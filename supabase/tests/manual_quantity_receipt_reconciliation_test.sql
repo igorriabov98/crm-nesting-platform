@@ -66,6 +66,7 @@ begin
   values (v_department, 'member', 'inventory_receiving', true, true, v_actor);
   perform set_config('request.jwt.claim.sub', v_actor::text, true);
   insert into public.suppliers(id, name) values (v_supplier, 'Поставщик ручной приёмки');
+  insert into public.supplier_material_categories(supplier_id,category) values(v_supplier,'paint');
   insert into public.materials(id, name, category, default_supplier_id, created_by) values
     (v_material, 'Краска ручного распределения', 'paint', v_supplier, v_actor),
     (v_free_material, 'Краска свободного прихода', 'paint', v_supplier, v_actor);
@@ -360,6 +361,7 @@ begin
       when 'request_chain_cord' then 'chain_cord'::public.material_category
       else 'pipe'::public.material_category
     end;
+    insert into public.supplier_material_categories(supplier_id,category) values(v_supplier,v_category);
     v_unit := case
       when v_table in ('request_round_tube', 'request_pipe') then 'кг'
       when v_table = 'request_chain_cord' then 'мм'

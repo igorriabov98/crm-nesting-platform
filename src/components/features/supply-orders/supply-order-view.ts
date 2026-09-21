@@ -717,6 +717,16 @@ export function filterAndSortAggregates(aggregates: SupplyOrderAggregate[], filt
       return [cancelled, regular && isSupplyOrderAggregateClosed(regular) ? regular : null]
         .filter(Boolean) as SupplyOrderAggregate[]
     }
+    if (filters.status === 'pending' || filters.status === 'ordered') {
+      const matching = projectSupplyOrderAggregate(aggregate, item => {
+        if (isReturnedSupplyOrderSource(item) || isCancelledReturnedSupplyOrderSource(item)) return false
+        const progress = getSupplyOrderItemOrderProgress(item)
+        return filters.status === 'pending'
+          ? progress.remainingQuantity > 0.000001
+          : progress.orderedQuantity > 0.000001
+      }, 'regular')
+      return matching ? [matching] : []
+    }
     if (!hasReturnedItems && !hasCancelledReturnedItems) return [aggregate]
     const regular = projectSupplyOrderAggregate(
       aggregate,
@@ -729,8 +739,6 @@ export function filterAndSortAggregates(aggregates: SupplyOrderAggregate[], filt
   const filtered = projected.filter((aggregate) => {
     if (filters.category !== 'all' && aggregate.category !== filters.category) return false
     if (filters.status === 'open' && isSupplyOrderAggregateClosed(aggregate)) return false
-    if (filters.status === 'pending' && aggregate.pending_count <= 0) return false
-    if (filters.status === 'ordered' && aggregate.ordered_count <= 0) return false
     if (filters.status === 'scheduled' && aggregate.planned_schedule_quantity <= 0) return false
     if (filters.status === 'unscheduled' && !hasSupplyOrderRedelivery(aggregate)) return false
     if (filters.supplier !== 'all' && !aggregate.factories.some((factory) => (
@@ -1138,8 +1146,8 @@ function projectSupplyOrderFactory(
     weight_kg: sumNullableWeights(activeItems.map((item) => item.weight_kg)),
     item_count: includeInactiveCounts ? items.length : activeItems.length,
     machine_count: new Set((includeInactiveCounts ? items : activeItems).map((item) => item.machine_id)).size,
-    pending_count: activeItems.filter((item) => item.order_status === 'pending').length,
-    ordered_count: activeItems.filter((item) => item.order_status === 'ordered').length,
+    pending_count: activeItems.filter((item) => getSupplyOrderItemOrderProgress(item).remainingQuantity > 0.000001).length,
+    ordered_count: activeItems.filter((item) => getSupplyOrderItemOrderProgress(item).orderedQuantity > 0.000001).length,
     delivered_count: activeItems.filter((item) => item.order_status === 'delivered').length,
     planned_schedule_quantity: activeItems.reduce((sum, item) => sum + item.planned_schedule_quantity, 0),
     delivered_schedule_quantity: activeItems.reduce((sum, item) => sum + item.delivered_schedule_quantity, 0),

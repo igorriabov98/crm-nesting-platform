@@ -409,6 +409,7 @@ export type MaterialDeliveryAllocationPreviewRow = {
   id: string
   machine_id: string
   machine_name: string
+  characteristics?: SupplyOrderAggregateCharacteristic[]
   cutting_date: string | null
   material_date: string | null
   requested_quantity: number
@@ -3120,6 +3121,7 @@ async function buildMaterialAllocationPreview(
       id: candidate.id,
       machine_id: candidate.machineId,
       machine_name: candidate.machineName,
+      characteristics: matchingItems.find(item => item.table === candidate.table && item.id === candidate.id)?.characteristics || [],
       cutting_date: candidate.cuttingDate,
       material_date: candidate.materialDate,
       requested_quantity: candidate.requestedQuantity,
@@ -4175,53 +4177,18 @@ function projectPlannedScheduleAllocations(
   return { coverage, allocations }
 }
 
-async function syncOrderStatusesWithScheduleCoverage(
-  db: RpcDb,
-  items: SupplyOrderAggregateInputItem[],
-) {
-  const schedules = projectSchedulesToPurchasePlans(
-    items,
-    await loadReceivingSchedules(db, items),
-  )
-  const { coverage, allocations } = projectPlannedScheduleAllocations(items, schedules)
-  const suppliersByItem = new Map<string, Set<string>>()
-  for (const allocation of allocations) {
-    if (!allocation.schedule.supplier_id) continue
-    const key = itemKey(allocation.item)
-    suppliersByItem.set(key, new Set([
-      ...(suppliersByItem.get(key) || []),
-      allocation.schedule.supplier_id,
-    ]))
-  }
-  const orderedAt = new Date().toISOString()
-
-  await Promise.all(items
-    .filter((item) => item.order_status !== 'delivered' && item.order_status !== 'cancelled')
-    .map(async (item) => {
-      const itemCoverage = coverage.get(`${item.table}:${item.id}`)
-      const isCovered = Boolean(itemCoverage && itemCoverage.delivered + itemCoverage.planned > 0.000001)
-      const nextStatus: OrderItemStatus = isCovered ? 'ordered' : 'pending'
-      const itemSupplierIds = suppliersByItem.get(`${item.table}:${item.id}`) || new Set<string>()
-      const supplierId = itemSupplierIds.size === 1 ? Array.from(itemSupplierIds)[0] : null
-      if (item.order_status === nextStatus && !(isCovered && supplierId && item.supplier_id !== supplierId)) return
-
-      const values: Record<string, unknown> = { order_status: nextStatus }
-      if (nextStatus === 'ordered' && item.order_status !== 'ordered') values.ordered_at = orderedAt
-      if (nextStatus === 'pending') values.ordered_at = null
-      if (isCovered && supplierId) values.supplier_id = supplierId
-      const { error } = await db.from(item.table).update(values).eq('id', item.id)
-      if (error) throw new Error(error.message || 'Не удалось синхронизировать статус позиции с графиком')
-    }))
-}
-
 async function replacePlannedDeliverySchedules(
   db: RpcDb,
   scheduleIds: string[],
   rows: Record<string, unknown>[],
+  items: SupplyOrderAggregateInputItem[],
+  expected: ReceivingScheduleRow[],
 ) {
-  const { error } = await db.rpc('fn_replace_supply_order_delivery_schedules_v1', {
+  const { error } = await db.rpc('fn_replace_supply_order_delivery_schedules_v2', {
     p_delete_ids: scheduleIds,
     p_rows: rows,
+    p_items: items.map(item => ({ table: item.table, id: item.id })),
+    p_expected: expected.map(row => ({ id: row.id, status: row.status, updated_at: row.updated_at })),
   })
   if (error) throw new Error(error.message || 'Не удалось сохранить график поставки')
 }
@@ -4340,7 +4307,12 @@ function distributeScheduleRows(
   return rows
 }
 
-async function assertActiveScheduleSuppliers(db: RpcDb, schedules: NormalizedScheduleInput[]) {
+async function assertActiveScheduleSuppliers(db: RpcDb, schedules: NormalizedScheduleInput[], table: string) {
+  for (const supplierId of new Set(schedules.map(schedule => schedule.supplier_id))) {
+    const check = await db.rpc('fn_supplier_supports_request_table', { p_supplier: supplierId, p_table: table })
+    if (check.error) throw new Error(check.error.message)
+    if (!check.data) throw new Error('Поставщик отключён или не поставляет выбранную категорию материала')
+  }
   const supplierIds = Array.from(new Set(schedules.map((schedule) => schedule.supplier_id)))
   const { data, error } = await db.from('suppliers').select('id, is_active').in('id', supplierIds)
   if (error) throw new Error(error.message || 'Не удалось проверить поставщиков графика')
@@ -4397,7 +4369,7 @@ export async function saveAggregateDeliverySchedule(
       if (!supplierId) throw new Error('Выберите поставщика для каждой строки графика')
       return { ...schedule, supplier_id: supplierId }
     })
-    await assertActiveScheduleSuppliers(db, resolvedSchedules)
+    await assertActiveScheduleSuppliers(db, resolvedSchedules, openItems[0].table)
 
     const retainedPlannedByItem = (retained: PlannedScheduleAllocation[]) => {
       const totals = new Map<string, number>()
@@ -4537,9 +4509,8 @@ export async function saveAggregateDeliverySchedule(
       plannedScheduleIds = allPlannedScheduleIds
     }
 
-    await replacePlannedDeliverySchedules(db, plannedScheduleIds, insertRows)
+    await replacePlannedDeliverySchedules(db, plannedScheduleIds, insertRows, selectedItems, storedSchedules)
 
-    await syncOrderStatusesWithScheduleCoverage(db, selectedItems)
 
     const machineIds = await getAffectedMachineIds(db, groupedItems)
     revalidateSupplyOrderPaths(machineIds)
@@ -4601,9 +4572,8 @@ export async function clearAggregateDeliverySchedule(
         .map((schedule) => schedule.id)
     }
 
-    await replacePlannedDeliverySchedules(db, plannedScheduleIds, retainedRows)
+    await replacePlannedDeliverySchedules(db, plannedScheduleIds, retainedRows, selectedItems, storedSchedules)
 
-    await syncOrderStatusesWithScheduleCoverage(db, selectedItems)
 
     const machineIds = await getAffectedMachineIds(db, groupedItems)
     revalidateSupplyOrderPaths(machineIds)

@@ -1,4 +1,5 @@
 import 'server-only'
+import { approvedProcurement, isLayoutProcurement } from '@/lib/approval-procurement'
 /* eslint-disable @typescript-eslint/no-explicit-any -- migration-bound database adapter */
 import type { ApprovalSummaryItem, ApprovalSummarySnapshot } from '@/lib/technologist-request-approval'
 import { PIPE_SUBTYPE_LABELS, CHAIN_CORD_SUBTYPE_LABELS } from '@/lib/constants/procurement'
@@ -71,7 +72,7 @@ export async function buildTechnologistApprovalSnapshot(
     const part = (partsResult.data || []).find((row: any) => row.id === item.partId)
     return part ? { ...item, name: part.name, drawingNumber: part.drawing_number, unitWeightKg: part.unit_weight_kg } : item
   }) }
-  return (await withSheetSteelTypeNames(client, snapshotFromSource(sourceResult.data, requestId, machine, enriched)))!
+  return (await withApprovalProcurement(client, await withSheetSteelTypeNames(client, snapshotFromSource(sourceResult.data, requestId, machine, enriched))))!
 }
 
 export function snapshotFromSource(
@@ -141,5 +142,30 @@ export async function withSheetSteelTypeNames(
     if (item.category !== 'request_sheet_metal' || item.attributes?.steel_type_name) return item
     const name = names.get(String(item.attributes?.steel_type_id))
     return name ? { ...item, attributes: { ...item.attributes, steel_type_name: name } } : item
+  }) }
+}
+
+// Historical display reads only the exact candidate IDs captured at approval.
+// Never change sourceData: SQL uses it as the approval concurrency contract.
+export async function withApprovalProcurement(client: any, snapshot: ApprovalSummarySnapshot | null, stored?: ApprovalSummarySnapshot | null): Promise<ApprovalSummarySnapshot | null> {
+  if (!snapshot) return snapshot
+  const source = (snapshot.sourceData || {}) as Record<string, any[]>
+  const saved = new Map((stored?.items || []).map(item => [item.key, item]))
+  const candidates = new Map<string, any>()
+  for (const item of snapshot.items) {
+    const link = (source.cuttingItems || []).find(row => `${row.request_item_table}:${row.request_item_id}` === item.key && row.link_state === 'active')
+    const version = (source.cuttingVersions || []).find(row => row.plan_id === link?.plan_id && row.status === 'approved')
+    const candidate = (source.cuttingCandidates || []).find(row => row.version_id === version?.id && row.candidate_number === version?.selected_candidate_number)
+    if (candidate) candidates.set(item.key, candidate)
+  }
+  const ids = [...new Set(snapshot.items.flatMap(item => !saved.get(item.key)?.procurement && isLayoutProcurement(item) && candidates.has(item.key) ? [candidates.get(item.key).id] : []))]
+  const result = ids.length ? await client.from('long_stock_cutting_candidate_bars').select('candidate_id,stock_length_mm,length_group,source_type').in('candidate_id', ids) : { data: [], error: null }
+  if (result.error) throw new Error('Не удалось прочитать заготовки согласованной раскладки')
+  return { ...snapshot, items: snapshot.items.map(item => {
+    const candidate = candidates.get(item.key)
+    const bars = candidate ? (result.data || []).filter((bar: any) => bar.candidate_id === candidate.id) : undefined
+    // A missing old candidate is unknown, whereas an existing zero-purchase candidate is zero.
+    const verifiedBars = bars?.length || Number(candidate?.purchased_length_mm) === 0 ? bars : undefined
+    return { ...item, procurement: saved.get(item.key)?.procurement || item.procurement || approvedProcurement(item, verifiedBars) }
   }) }
 }

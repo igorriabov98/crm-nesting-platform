@@ -6,11 +6,17 @@ import { getTechnologistPositionDetails } from '@/lib/technologist-position-deta
 const fieldLabels: Record<string, string> = {
   name: 'наименование', quantity: 'количество', unit: 'единица', weightKg: 'вес',
   businessScrapReserved: 'бронь делового склада', regularStockReserved: 'бронь обычного склада', wastePercent: 'отходность',
-  attributes: 'характеристики позиции',
+  attributes: 'характеристики позиции', procurement: 'закупка по согласованию',
 }
 
 function percent(value: number | null) { return value === null ? '—' : `${value.toFixed(1)}%` }
 function quantity(value: number | null, unit: string) { return value === null ? '—' : `${value.toLocaleString('ru-RU')} ${unit}`.trim() }
+
+function Procurement({ item }: { item: ApprovalSummaryItem }) {
+  const plan = item.procurement
+  if (!plan || plan.unavailable) return <span className="text-slate-500">Нет данных о согласованной закупке</span>
+  return <div>{plan.components.map(part => <div key={`${part.length_mm}:${part.is_nonstandard}`}>{part.piece_count.toLocaleString('ru-RU')} шт × {part.length_mm.toLocaleString('ru-RU')} мм</div>)}<div>{plan.components.length ? 'Всего: ' : ''}{quantity(plan.quantity, plan.unit)}</div></div>
+}
 
 function Position({ item }: { item: ApprovalSummaryItem }) {
   const details = getTechnologistPositionDetails(item)
@@ -35,9 +41,9 @@ export function ApprovalSummary({ snapshot }: { snapshot: ApprovalSummarySnapsho
         </div>
         <div className="hidden overflow-x-auto rounded-lg border md:block">
           <table className="min-w-[760px] w-full text-sm">
-            <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="px-3 py-2 font-medium">Позиция</th><th className="px-3 py-2 font-medium">Заказано</th><th className="px-3 py-2 font-medium">Деловой склад</th><th className="px-3 py-2 font-medium">Обычный склад</th><th className="px-3 py-2 font-medium">Отходность</th></tr></thead>
+            <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="px-3 py-2 font-medium">Позиция</th><th className="px-3 py-2 font-medium">К закупке по согласованию</th><th className="px-3 py-2 font-medium">Деловой склад</th><th className="px-3 py-2 font-medium">Обычный склад</th><th className="px-3 py-2 font-medium">Отходность</th></tr></thead>
             <tbody className="divide-y">{items.map((item) => <tr key={item.key}>
-              <td className="px-3 py-3"><Position item={item} /></td><td className="px-3 py-3">{quantity(item.quantity, item.unit)}</td>
+              <td className="px-3 py-3"><Position item={item} /></td><td className="px-3 py-3"><Procurement item={item} /></td>
               <td className="px-3 py-3">{quantity(item.businessScrapReserved, item.unit)}</td><td className="px-3 py-3">{quantity(item.regularStockReserved, item.unit)}</td><td className="px-3 py-3">{percent(item.wastePercent)}</td>
             </tr>)}</tbody>
           </table>
@@ -45,7 +51,7 @@ export function ApprovalSummary({ snapshot }: { snapshot: ApprovalSummarySnapsho
         <div className="grid gap-3 md:hidden">{items.map((item) => <article key={item.key} className="space-y-3 rounded-lg border p-4 text-sm">
           <Position item={item} />
           <dl className="grid grid-cols-2 gap-3">
-            <div><dt className="text-slate-500">Заказано</dt><dd>{quantity(item.quantity, item.unit)}</dd></div>
+            <div><dt className="text-slate-500">К закупке по согласованию</dt><dd><Procurement item={item} /></dd></div>
             <div><dt className="text-slate-500">Отходность</dt><dd>{percent(item.wastePercent)}</dd></div>
             <div><dt className="text-slate-500">Деловой склад</dt><dd>{quantity(item.businessScrapReserved, item.unit)}</dd></div>
             <div><dt className="text-slate-500">Обычный склад</dt><dd>{quantity(item.regularStockReserved, item.unit)}</dd></div>
@@ -76,7 +82,7 @@ export function ApprovalDiff({ diff }: { diff: ApprovalVersionDiff | null }) {
     <p className="font-medium text-blue-950">Изменения относительно текущей версии</p>
     {diff.added.map((item: ApprovalSummaryItem) => <p key={`a-${item.key}`} className="text-emerald-700">Добавлено: {item.name}</p>)}
     {diff.removed.map((item: ApprovalSummaryItem) => <p key={`r-${item.key}`} className="text-red-700">Удалено: {item.name}</p>)}
-    {diff.changed.map((item) => <div key={`c-${item.after.key}`} className="text-amber-800"><p>Изменено: {item.after.name}</p><ul className="ml-4 list-disc">{item.fields.map((field) => <li key={field}>{fieldLabels[field] || field}{field !== 'attributes' ? `: ${String(item.before[field as keyof ApprovalSummaryItem] ?? '—')} → ${String(item.after[field as keyof ApprovalSummaryItem] ?? '—')}` : ''}</li>)}</ul></div>)}
+    {diff.changed.map((item) => <div key={`c-${item.after.key}`} className="text-amber-800"><p>Изменено: {item.after.name}</p><ul className="ml-4 list-disc">{item.fields.map((field) => <li key={field}>{fieldLabels[field] || field}{field !== 'attributes' && field !== 'procurement' ? `: ${String(item.before[field as keyof ApprovalSummaryItem] ?? '—')} → ${String(item.after[field as keyof ApprovalSummaryItem] ?? '—')}` : ''}</li>)}</ul></div>)}
     {diff.completionChanged.map((field) => <p key={field} className="text-amber-800">Изменено: {field}</p>)}
     {diff.completionDetails.map((item, index) => <p key={index} className={item.before === null ? 'text-emerald-700' : item.after === null ? 'text-red-700' : 'text-amber-800'}>{item.label}: {item.before === null ? `добавлено ${item.after}` : item.after === null ? `удалено ${item.before}` : `${item.before} → ${item.after}`}</p>)}
   </div>
