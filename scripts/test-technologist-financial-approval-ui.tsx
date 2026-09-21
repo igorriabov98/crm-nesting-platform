@@ -144,3 +144,31 @@ test('snapshot uses authoritative source rows without changing their order and l
   assert.equal(paint.quantity, 15)
   assert.notEqual(paint.name, 'Позиция paint-id')
 })
+
+test('sheet steel names resolve from saved IDs in both layouts without rewriting approval sources', async () => {
+  const helper = load<{
+    withSheetSteelTypeNames: (client: unknown, value: approval.ApprovalSummarySnapshot, stored?: approval.ApprovalSummarySnapshot) => Promise<approval.ApprovalSummarySnapshot>
+  }>('src/lib/server/technologist-approval-snapshot.ts', { 'server-only': {}, '@/lib/constants/procurement': procurement })
+  const original = { ...snapshot, sourceData: { request_sheet_metal: [{ id: 'a', steel_type_id: 'steel-hardox', material_grade: null }] },
+    items: [{ ...snapshot.items[0], name: 'Листовой металл', attributes: { steel_type_id: 'steel-hardox', material_grade: null, sheet_size: '1200x300' } }] }
+  const before = JSON.stringify(original)
+  let queries = 0
+  const client = { from(table: string) {
+    assert.equal(table, 'steel_types')
+    return { select: () => ({ in: async (key: string, ids: string[]) => {
+      queries++; assert.equal(key, 'id'); assert.deepEqual([...ids], ['steel-hardox'])
+      return { data: [{ id: 'steel-hardox', name: 'Hardox' }], error: null }
+    } }) }
+  } }
+  const enriched = await helper.withSheetSteelTypeNames(client, original)
+  assert.equal(JSON.stringify(original), before)
+  assert.equal(enriched.sourceData, original.sourceData, 'Source equality check must remain unchanged')
+  const html = renderToStaticMarkup(<ApprovalSummary snapshot={enriched} />)
+  assert.equal(html.split('Тип стали: Hardox').length - 1, 2, 'Desktop and mobile must both show steel type')
+  const fromHistory = await helper.withSheetSteelTypeNames(client, original, enriched)
+  assert.equal(fromHistory.items[0].attributes?.steel_type_name, 'Hardox')
+  assert.equal(queries, 1, 'Saved steel label survives later catalog changes without another lookup')
+  const missing = await helper.withSheetSteelTypeNames({ from: () => ({ select: () => ({ in: async () => ({ data: [], error: null }) }) }) }, original)
+  assert.ok(renderToStaticMarkup(<ApprovalSummary snapshot={missing} />).includes('Тип стали: Не указан'))
+  await assert.rejects(helper.withSheetSteelTypeNames({ from: () => ({ select: () => ({ in: async () => ({ data: null, error: { message: 'unavailable' } }) }) }) }, original), /Не удалось загрузить типы стали/)
+})

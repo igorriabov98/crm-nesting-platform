@@ -7,7 +7,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
-import { snapshotFromSource } from '@/lib/server/technologist-approval-snapshot'
+import { snapshotFromSource, withSheetSteelTypeNames } from '@/lib/server/technologist-approval-snapshot'
 import {
   compareApprovalSnapshots,
 } from '@/lib/technologist-request-approval'
@@ -104,6 +104,7 @@ export async function getTechnologistApprovalDetail(requestId: string) {
     const latestResult = latestId ? await db().from('technologist_request_approval_versions').select('*').eq('id', latestId).single() : { data: null, error: null }
     if (latestResult.error) throw latestResult.error
     const latest = latestResult.data
+    const storedSummary = latest?.summary_snapshot
     if (latest?.summary_snapshot?.sourceData && order) {
       const stored = latest.summary_snapshot
       latest.summary_snapshot = snapshotFromSource(stored.sourceData, id, { id: stored.machineId, name: stored.orderName, material_type: stored.materialType }, latest.completion_payload)
@@ -115,6 +116,7 @@ export async function getTechnologistApprovalDetail(requestId: string) {
       if (source.error) throw source.error
       currentSnapshot = snapshotFromSource(source.data, id, order, latest.completion_payload)
     }
+    currentSnapshot = await withSheetSteelTypeNames(db(), currentSnapshot, currentDraft ? null : storedSummary)
     const versions = versionsResult.data || []
     const draft = await db().from('technologist_request_revision_drafts')
       .select('revision_number,editor_id').eq('request_id', id).maybeSingle()
@@ -153,7 +155,7 @@ export async function getTechnologistApprovalHistoryVersion(requestId: string, v
       ? snapshotFromSource(stored.summary_snapshot.sourceData, id, { id: stored.summary_snapshot.machineId, name: stored.summary_snapshot.orderName, material_type: stored.summary_snapshot.materialType }, stored.completion_payload)
       : stored.summary_snapshot
     return { data: {
-      summary,
+      summary: await withSheetSteelTypeNames(db(), summary, stored.summary_snapshot),
       reason: stored.return_reason as string | null,
       diff: summary?.items && detail.data.currentSnapshot?.items ? compareApprovalSnapshots(summary, detail.data.currentSnapshot) : null,
     }, error: null }
