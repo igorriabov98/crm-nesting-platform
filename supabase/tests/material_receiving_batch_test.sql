@@ -52,6 +52,7 @@ begin
   values (v_department, 'member', 'inventory_receiving', true, true, v_actor);
   perform set_config('request.jwt.claim.sub', v_actor::text, true);
   insert into public.suppliers(id, name) values (v_supplier, 'Varian test');
+  insert into public.supplier_material_categories(supplier_id,category) values(v_supplier,'paint');
   insert into public.machines(id, factory_id, name, created_by)
   values (v_machine, v_factory, 'Тестовый заказ пакетной приёмки', v_actor);
   insert into public.technologist_requests(id, machine_id, created_by, status)
