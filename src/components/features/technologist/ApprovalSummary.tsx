@@ -1,6 +1,7 @@
 import { FileArchive } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { calculateWasteAggregate, type ApprovalSummaryItem, type ApprovalSummarySnapshot, type ApprovalVersionDiff } from '@/lib/technologist-request-approval'
+import { getTechnologistPositionDetails } from '@/lib/technologist-position-details'
 
 const fieldLabels: Record<string, string> = {
   name: 'наименование', quantity: 'количество', unit: 'единица', weightKg: 'вес',
@@ -10,6 +11,14 @@ const fieldLabels: Record<string, string> = {
 
 function percent(value: number | null) { return value === null ? '—' : `${value.toFixed(1)}%` }
 function quantity(value: number | null, unit: string) { return value === null ? '—' : `${value.toLocaleString('ru-RU')} ${unit}`.trim() }
+
+function Position({ item }: { item: ApprovalSummaryItem }) {
+  const details = getTechnologistPositionDetails(item)
+  return <div>
+    <p className="font-medium text-slate-900">{item.name}</p>
+    {details.length ? <p className="mt-1 text-xs font-normal leading-5 text-slate-500">{details.join(' · ')}</p> : null}
+  </div>
+}
 
 export function ApprovalSummary({ snapshot }: { snapshot: ApprovalSummarySnapshot | null }) {
   if (!snapshot?.items) return <p className="text-sm text-slate-500">Старая заявка была одобрена до внедрения версий. Производственные последствия повторно не создаются.</p>
@@ -28,13 +37,13 @@ export function ApprovalSummary({ snapshot }: { snapshot: ApprovalSummarySnapsho
           <table className="min-w-[760px] w-full text-sm">
             <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="px-3 py-2 font-medium">Позиция</th><th className="px-3 py-2 font-medium">Заказано</th><th className="px-3 py-2 font-medium">Деловой склад</th><th className="px-3 py-2 font-medium">Обычный склад</th><th className="px-3 py-2 font-medium">Отходность</th></tr></thead>
             <tbody className="divide-y">{items.map((item) => <tr key={item.key}>
-              <td className="px-3 py-3 font-medium">{item.name}</td><td className="px-3 py-3">{quantity(item.quantity, item.unit)}</td>
+              <td className="px-3 py-3"><Position item={item} /></td><td className="px-3 py-3">{quantity(item.quantity, item.unit)}</td>
               <td className="px-3 py-3">{quantity(item.businessScrapReserved, item.unit)}</td><td className="px-3 py-3">{quantity(item.regularStockReserved, item.unit)}</td><td className="px-3 py-3">{percent(item.wastePercent)}</td>
             </tr>)}</tbody>
           </table>
         </div>
         <div className="grid gap-3 md:hidden">{items.map((item) => <article key={item.key} className="space-y-3 rounded-lg border p-4 text-sm">
-          <h4 className="font-medium">{item.name}</h4>
+          <Position item={item} />
           <dl className="grid grid-cols-2 gap-3">
             <div><dt className="text-slate-500">Заказано</dt><dd>{quantity(item.quantity, item.unit)}</dd></div>
             <div><dt className="text-slate-500">Отходность</dt><dd>{percent(item.wastePercent)}</dd></div>
@@ -72,4 +81,3 @@ export function ApprovalDiff({ diff }: { diff: ApprovalVersionDiff | null }) {
     {diff.completionDetails.map((item, index) => <p key={index} className={item.before === null ? 'text-emerald-700' : item.after === null ? 'text-red-700' : 'text-amber-800'}>{item.label}: {item.before === null ? `добавлено ${item.after}` : item.after === null ? `удалено ${item.before}` : `${item.before} → ${item.after}`}</p>)}
   </div>
 }
-
