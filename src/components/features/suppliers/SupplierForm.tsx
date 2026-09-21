@@ -146,11 +146,11 @@ export function SupplierForm({ supplier, directorySection = 'all' }: SupplierFor
   )
   const organizationTypeDescription = isPrimaryRoleFixed
     ? form.primary_role === 'supplier'
-      ? 'Компания будет добавлена как поставщик. Отдельно укажите работу с металлом и расходниками.'
+      ? 'Компания будет добавлена как поставщик. Отдельно укажите работу с основными и остальными материалами.'
       : form.primary_role === 'transport'
         ? 'Компания будет добавлена как перевозчик. Поставка материалов и аутсорсинг для этого типа недоступны.'
         : 'Компания будет добавлена как аутсорсинговый подрядчик. Поставка материалов и транспорт для этого типа недоступны.'
-    : 'Основной тип выбирается один. Поставщик может одновременно работать с металлом и расходниками.'
+    : 'Основной тип выбирается один. Поставщик может одновременно работать с основными и остальными материалами.'
 
   function selectPrimaryRole(primaryRole: SupplierPrimaryRole) {
     setFormError(null)
@@ -470,11 +470,11 @@ export function SupplierForm({ supplier, directorySection = 'all' }: SupplierFor
                 />
                 <SupplierCapabilityPanel
                   id="supplier-consumables-capability"
-                  title="Поставляет расходники?"
-                  description="Может закрывать позиции расходников, которые формирует производство."
+                  title="Поставляет остальные материалы?"
+                  description="Краска, комплектация, сетка, цепи, шнуры и остальные материалы."
                   value={form.supplies_consumables}
                   categories={CONSUMABLE_SUPPLIER_CATEGORIES}
-                  categoryTitle="Категории расходников"
+                  categoryTitle="Категории остальных материалов"
                   selected={form.categories}
                   onDecision={(value) => setSupplyCapability('supplies_consumables', value)}
                   onToggle={toggleCategory}

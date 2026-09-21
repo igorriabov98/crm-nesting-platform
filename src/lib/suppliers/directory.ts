@@ -48,12 +48,12 @@ export const METAL_SUPPLIER_CATEGORIES = [
   'sheet_metal',
   'circle',
   'pipe',
-  'mesh',
+  'knives',
   'round_tube',
 ] as const satisfies readonly MaterialCategory[]
 
 export const CONSUMABLE_SUPPLIER_CATEGORIES = [
-  'knives',
+  'mesh',
   'paint',
   'components',
   'chain_cord',
@@ -84,16 +84,16 @@ export const SUPPLIER_DIRECTORY_SECTIONS: Record<SupplierDirectorySection, {
   metal: {
     title: 'Поставщики металла',
     shortTitle: 'Металл',
-    description: 'Поставщики листового металла, круга, трубы и металлической сетки.',
+    description: 'Поставщики листового металла, круга, трубы и ножей.',
     emptyTitle: 'Поставщики металла не найдены',
     emptyDescription: 'Добавьте организацию и выберите хотя бы одну категорию металла.',
   },
   consumables: {
-    title: 'Поставщики расходников',
-    shortTitle: 'Расходники',
-    description: 'Поставщики ножей, краски, комплектации, цепей, шнуров и других расходных материалов.',
-    emptyTitle: 'Поставщики расходников не найдены',
-    emptyDescription: 'Добавьте организацию и выберите подходящие категории расходников.',
+    title: 'Остальные поставщики',
+    shortTitle: 'Остальные',
+    description: 'Поставщики краски, комплектации, сетки, цепей, шнуров и остальных материалов.',
+    emptyTitle: 'Остальные поставщики не найдены',
+    emptyDescription: 'Добавьте организацию и выберите подходящие категории остальных материалов.',
   },
   transport: {
     title: 'Транспорт',
@@ -196,7 +196,7 @@ export function validateSupplierRoleConfiguration(
       const typeLabel = input.primary_role === 'transport' ? 'Перевозчик' : 'Аутсорсинговая компания'
       return {
         success: false,
-        error: `${typeLabel} не может одновременно быть поставщиком металла или расходников.`,
+        error: `${typeLabel} не может одновременно быть поставщиком основных или остальных материалов.`,
       }
     }
 
@@ -216,13 +216,13 @@ export function validateSupplierRoleConfiguration(
   if (typeof input.supplies_consumables !== 'boolean') {
     return {
       success: false,
-      error: 'Укажите, поставляет ли компания расходники по заявкам производства.',
+      error: 'Укажите, поставляет ли компания остальные материалы.',
     }
   }
   if (!input.supplies_metal && !input.supplies_consumables) {
     return {
       success: false,
-      error: 'Поставщик должен поставлять металл, расходники или оба направления.',
+      error: 'Поставщик должен поставлять основные материалы, остальные материалы или оба направления.',
     }
   }
 
@@ -240,12 +240,12 @@ export function validateSupplierRoleConfiguration(
     return { success: false, error: 'Уберите категории металла или выберите для металла ответ «Да».' }
   }
   if (input.supplies_consumables && consumableCategories.length === 0) {
-    return { success: false, error: 'Выберите хотя бы одну категорию расходников.' }
+    return { success: false, error: 'Выберите хотя бы одну категорию остальных материалов.' }
   }
   if (!input.supplies_consumables && consumableCategories.length > 0) {
     return {
       success: false,
-      error: 'Уберите категории расходников или выберите для расходников ответ «Да».',
+      error: 'Уберите категории остальных материалов или выберите для остальных материалов ответ «Да».',
     }
   }
 
@@ -295,4 +295,13 @@ export function getUnmappedMaterialCategories() {
     ...CONSUMABLE_SUPPLIER_CATEGORIES,
   ])
   return MATERIAL_CATEGORIES.filter((category) => !mapped.has(category))
+}
+
+/** Legacy round_tube suppliers cover circle and pipe, but never unrelated categories. */
+export function supplierSupportsCategory(
+  supplier: SupplierDirectoryRecord & { is_active?: boolean }, category: MaterialCategory,
+) {
+  return supplier.is_active !== false && getSupplierPrimaryRole(supplier) === 'supplier'
+    && (supplier.categories.includes(category)
+      || ((category === 'circle' || category === 'pipe') && supplier.categories.includes('round_tube')))
 }

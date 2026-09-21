@@ -5,6 +5,7 @@ export type ApprovalSummaryItem = {
   category: string
   categoryLabel: string
   name: string
+  procurement?: { quantity: number | null; unit: string; components: Array<{ length_mm: number; piece_count: number; is_nonstandard: boolean }>; unavailable: boolean }
   quantity: number | null
   unit: string
   weightKg: number | null
@@ -70,6 +71,7 @@ export function compareApprovalSnapshots(before: ApprovalSummarySnapshot, after:
     if (!previous) return []
     const fields = comparable.filter((field) => previous[field] !== item[field]).map(String)
     if (stableValue(previous.attributes) !== stableValue(item.attributes)) fields.push('attributes')
+    if (stableValue(previous.procurement) !== stableValue(item.procurement)) fields.push('procurement')
     return fields.length ? [{ before: previous, after: item, fields }] : []
   })
   const completionChanged: string[] = []

@@ -459,10 +459,11 @@ export async function getLongStockCuttingPlanItemOverview(
     .in('status', ['requested', 'editing', 'stock_check'])
   if (revisionResult.error) throw new Error(revisionResult.error.message || 'Не удалось проверить возврат позиции')
   if (!revisionResult.data?.length) {
+    const requestRow = await loadRequestItem(db, requestItem)
     revisionResult = await db.from<ActiveRevision>('supply_position_revisions')
       .select('source_request_item_table,source_request_item_id,assigned_to,status')
       .eq('replacement_request_item_table', requestItem.table)
-      .eq('replacement_request_item_id', requestItem.id)
+      .eq('replacement_request_id', requestRow.request_id)
       .in('status', ['editing', 'stock_check'])
     if (revisionResult.error) throw new Error(revisionResult.error.message || 'Не удалось проверить исправленную позицию')
   }
@@ -1583,7 +1584,7 @@ async function loadLongStockPlanningRecoveryState(
     const revisionResult = await db.from<{ id: string }>('supply_position_revisions')
       .select('id')
       .eq('replacement_request_item_table', requestItem.table)
-      .eq('replacement_request_item_id', requestItem.id)
+      .eq('replacement_request_id', requestRow.request_id)
       .in('status', ['editing', 'stock_check'])
     if (revisionResult.error) {
       throw new Error(revisionResult.error.message || 'Не удалось проверить исправление позиции')

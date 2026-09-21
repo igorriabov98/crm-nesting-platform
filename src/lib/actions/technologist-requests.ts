@@ -1019,6 +1019,14 @@ async function deleteSectionRow(id: string, table: RequestSectionTable): Promise
     const machine = await assertMachineNotArchived(db, meta.machineId)
     assertFactoryAccess(access, 'technologist_requests', 'manage', machine.factory_id)
     assertTechnologistRequestEditable(meta.status)
+    const revision = await db.from('supply_position_revisions').select('id').eq('replacement_request_id', meta.requestId).maybeSingle()
+    if (revision.error) throw new Error(revision.error.message || 'Не удалось проверить корректировку')
+    if (revision.data) {
+      const result = await db.rpc('fn_delete_supply_revision_item', { p_table: table, p_item: id })
+      if (result.error) throw new Error(result.error.message || 'Не удалось удалить позицию корректировки')
+      revalidateRequest(meta.machineId, meta.requestId)
+      return { success: true }
+    }
     const { data: reservationsData, error: reservationsError } = await db
       .from('inventory_reservations')
       .select('id')

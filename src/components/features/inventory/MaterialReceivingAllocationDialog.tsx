@@ -123,7 +123,7 @@ export function MaterialReceivingAllocationDialog({
         </DialogHeader>
 
         <div className="grid grid-cols-2 gap-2 border-b bg-muted/25 p-3 sm:grid-cols-3 sm:px-6 xl:grid-cols-6">
-          <Summary label="План текущей поставки" value={`${formatAmount(preview.planned_quantity)} ${preview.unit}`} />
+          <Summary label="План текущей поставки" value={`${isBar && preview.planned_piece_count != null && preview.planned_piece_length_mm != null ? `${formatAmount(preview.planned_piece_count)} шт × ${formatAmount(preview.planned_piece_length_mm)} мм · ` : ""}${formatAmount(preview.planned_quantity)} ${preview.unit}`} />
           {isBar && preview.planned_piece_length_mm !== null && preview.planned_piece_count !== null && (
             <Summary
               label="Заказано хлыстов"
@@ -172,8 +172,9 @@ export function MaterialReceivingAllocationDialog({
         </div>
 
         <div className="min-h-0 overflow-y-auto overscroll-contain px-3 py-3 sm:px-6">
-          <div className="hidden grid-cols-[minmax(220px,1.4fr)_repeat(4,minmax(95px,.62fr))_minmax(145px,.8fr)] gap-3 border-b px-3 py-2 text-xs font-semibold uppercase text-muted-foreground lg:grid">
+          <div className="hidden grid-cols-[minmax(190px,1fr)_minmax(180px,1fr)_repeat(4,minmax(95px,.62fr))_minmax(145px,.8fr)] gap-3 border-b px-3 py-2 text-xs font-semibold uppercase text-muted-foreground lg:grid">
             <div>Машина и дата Заготовки</div>
+            <div>Характеристики материала</div>
             <div>Заявлено к поставке</div>
             <div>Принято ранее</div>
             <div>Осталось принять</div>
@@ -190,7 +191,7 @@ export function MaterialReceivingAllocationDialog({
             {rows.map((row) => (
               <div
                 key={row.key}
-                className={`grid gap-3 p-3 lg:grid-cols-[minmax(220px,1.4fr)_repeat(4,minmax(95px,.62fr))_minmax(145px,.8fr)] lg:items-center ${row.is_eligible ? 'bg-card' : 'bg-muted/40 text-muted-foreground'}`}
+                className={`grid gap-3 p-3 lg:grid-cols-[minmax(190px,1fr)_minmax(180px,1fr)_repeat(4,minmax(95px,.62fr))_minmax(145px,.8fr)] lg:items-center ${row.is_eligible ? 'bg-card' : 'bg-muted/40 text-muted-foreground'}`}
               >
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
@@ -209,6 +210,7 @@ export function MaterialReceivingAllocationDialog({
                   )}
                 </div>
 
+                <div className="min-w-0 text-xs leading-5"><p className="font-medium lg:hidden">Характеристики материала</p>{row.characteristics?.length ? row.characteristics.map(part => `${part.label}: ${part.value}`).join(' · ') : itemName}</div>
                 <SupplyProgressCell
                   label="Заявлено к поставке"
                   quantity={row.supply_requested_quantity}

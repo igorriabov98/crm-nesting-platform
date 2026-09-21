@@ -108,6 +108,16 @@ begin
   values
     (v_supply, v_supply || '@revision.test', 'Снабжение', 'supply_manager', v_factory, true),
     (v_technologist, v_technologist || '@revision.test', 'Технолог', 'technologist', v_factory, true);
+  insert into public.departments(id, name, factory_id)
+    values (v_technology_department, 'REVISION TECHNOLOGY ' || v_technology_department, v_factory);
+  insert into public.department_members(user_id, department_id, is_department_head)
+    values (v_technologist, v_technology_department, false);
+  insert into public.department_access_permissions(
+    department_id, subject_scope, resource_key, can_view, can_manage
+  ) values
+    (v_technology_department, 'member', 'technologist_requests', true, true),
+    (v_technology_department, 'member', 'inventory', true, true),
+    (v_technology_department, 'member', 'inventory_detailing', true, true);
   perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   insert into public.machines(id, factory_id, name, created_by)
   values (v_machine, v_factory, 'REVISION-' || p_table || '-' || coalesce(p_variant, 'default'), v_technologist);
@@ -180,13 +190,28 @@ begin
     get stacked diagnostics v_error = message_text;
     if v_error not like '[REVISION_CATEGORY_LOCKED]%' then raise; end if;
   end;
+  perform pg_temp.insert_revision_item(p_table, v_replacement_request_id, v_other_item, p_variant);
+  if (select count(*) from public.supply_position_revision_items where revision_id=v_revision_id)<>2 then
+    raise exception 'Replacement group was not tracked';
+  end if;
+  -- Deleting the anchor selects another group member; rollback this probe afterwards.
   begin
-    perform pg_temp.insert_revision_item(p_table, v_replacement_request_id, gen_random_uuid(), p_variant);
-    raise exception 'Second row unexpectedly succeeded';
-  exception when sqlstate '55000' then
-    get stacked diagnostics v_error = message_text;
-    if v_error not like '[REVISION_STRUCTURE_LOCKED]%' then raise; end if;
+    perform public.fn_delete_supply_revision_item(p_table,v_replacement_item_id);
+    if (select replacement_request_item_id from public.supply_position_revisions where id=v_revision_id)<>v_other_item then
+      raise exception 'Deleting anchor did not select remaining group member';
+    end if;
+    raise exception using errcode='P0002',message='rollback anchor probe';
+  exception when no_data_found then null;
   end;
+  perform public.fn_delete_supply_revision_item(p_table,v_other_item);
+  begin
+    perform public.fn_delete_supply_revision_item(p_table,v_replacement_item_id);
+    raise exception 'Last correction item was removed';
+  exception when others then
+    get stacked diagnostics v_error=message_text;
+    if v_error not like '%Сохраните хотя бы одну позицию%' then raise; end if;
+  end;
+
 
   execute format(
     'update public.%I set %I = $1 where id = $2',
@@ -274,16 +299,6 @@ begin
     insert into public.department_access_permissions(department_id,subject_scope,resource_key,can_view,can_manage)
       values (v_finance_department,'head','technologist_request_results',true,true);
   end if;
-  insert into public.departments(id, name, factory_id)
-    values (v_technology_department, 'REVISION TECHNOLOGY ' || v_technology_department, v_factory);
-  insert into public.department_members(user_id, department_id, is_department_head)
-    values (v_technologist, v_technology_department, false);
-  insert into public.department_access_permissions(
-    department_id, subject_scope, resource_key, can_view, can_manage
-  ) values
-    (v_technology_department, 'member', 'technologist_requests', true, true),
-    (v_technology_department, 'member', 'inventory', true, true),
-    (v_technology_department, 'member', 'inventory_detailing', true, true);
   if p_table in ('request_sheet_metal','request_pipe') then
     if p_table = 'request_sheet_metal' then
       update public.request_sheet_metal set thickness_mm = 10, sheet_size = '1000x1000', remainder_qty = 2 where id = v_replacement_item_id;
@@ -309,6 +324,23 @@ begin
     jsonb_build_object('decision','none','enteredPlasmaMinutes',0,'wasteItems',v_waste,'futureItems','[]'::jsonb,'archives',v_archives),
     jsonb_build_object('sourceData',public.fn_technologist_approval_source(v_replacement_request_id)),
     v_archives);
+  if p_table='request_sheet_metal' then
+    -- Exact regression: supply return -> submit -> finance return -> edit twice.
+    perform set_config('request.jwt.claim.sub',v_finance::text,true);
+    perform public.fn_return_technologist_request_for_revision(v_approval,v_finance,'Проверить ещё раз');
+    perform set_config('request.jwt.claim.sub',v_technologist::text,true);
+    perform public.fn_begin_technologist_request_revision(v_replacement_request_id,v_technologist);
+    perform public.fn_begin_technologist_request_revision(v_replacement_request_id,v_technologist);
+    if (select count(*) from public.technologist_request_revision_drafts where request_id=v_replacement_request_id)<>1 then raise exception 'Duplicate revision draft'; end if;
+    perform pg_temp.insert_revision_item(p_table,v_replacement_request_id,v_other_item,p_variant);
+    update public.request_sheet_metal set thickness_mm=10,sheet_size='1000x1000',remainder_qty=2 where id=v_other_item;
+    v_waste:=v_waste || jsonb_build_array(jsonb_build_object('sourceTable',p_table,'sourceId',v_other_item,'wastePercent',10,'itemName','Металл','materialName','Металл'));
+    update public.technologist_requests set status='stock_checked' where id=v_replacement_request_id;
+    v_approval:=public.fn_submit_technologist_request_for_approval(v_replacement_request_id,v_technologist,
+      jsonb_build_object('decision','none','enteredPlasmaMinutes',0,'wasteItems',v_waste,'futureItems','[]'::jsonb,'archives',v_archives),
+      jsonb_build_object('sourceData',public.fn_technologist_approval_source(v_replacement_request_id)),v_archives);
+    if (select count(*) from public.supply_position_revision_items where revision_id=v_revision_id)<>2 then raise exception 'Missing replacement row'; end if;
+  end if;
   execute format('select to_jsonb(item) from public.%I item where id = $1',p_table) into v_row using v_source_item;
   if v_row->>'order_status' = 'cancelled' or (select status from public.supply_position_revisions where id = v_revision_id) = 'submitted' then
     raise exception 'Correction changed its source before financial approval';

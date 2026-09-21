@@ -1,5 +1,7 @@
 'use client'
 
+import { supplierSupportsCategory } from '@/lib/suppliers/directory'
+
 import Link from 'next/link'
 import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
@@ -816,6 +818,7 @@ function FactoryDeliveryEditorForm({
     () => ({ ...factory, items: activeItems }),
     [activeItems, factory],
   )
+  const eligibleSuppliers = suppliers.filter(supplier => supplierSupportsCategory(supplier, aggregate.category))
   const draftDateSlice = appendUnscheduled
     ? { dateKey: 'no_supply_date', unscheduledQuantity: factory.unscheduled_quantity }
     : dateSlice
@@ -1253,8 +1256,11 @@ function FactoryDeliveryEditorForm({
                       onChange={(event) => updateDraft(index, { supplier_id: event.target.value })}
                       className="h-9 min-w-0 w-full max-w-full truncate rounded-md border border-[#CBD5E1] bg-white px-2 text-sm text-[#111827] disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <option value="">Выберите поставщика</option>
-                      {suppliers.map((supplier) => (
+                      <option value="">{eligibleSuppliers.length ? 'Выберите поставщика' : 'Нет поставщиков этой категории'}</option>
+                      {draft.supplier_id && !eligibleSuppliers.some(supplier => supplier.id === draft.supplier_id) && (
+                        <option value={draft.supplier_id} disabled>{suppliers.find(supplier => supplier.id === draft.supplier_id)?.name || 'Ранее выбранный поставщик'} — не подходит для категории</option>
+                      )}
+                      {eligibleSuppliers.map((supplier) => (
                         <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
                       ))}
                     </select>

@@ -79,7 +79,7 @@ export const SUPPLY_POSITION_RETURN_ERROR_MESSAGES: Record<string, string> = {
   RETURN_ALREADY_OPEN: 'Позиция уже возвращена технологу',
   EXTERNAL_ORDER_CONFIRMATION_REQUIRED: 'Подтвердите отмену внешнего заказа поставщику',
   REVISION_FORBIDDEN: 'Исправить позицию может назначенный технолог или руководитель',
-  REVISION_STRUCTURE_LOCKED: 'В корректирующей заявке должна остаться ровно одна позиция',
+  REVISION_STRUCTURE_LOCKED: 'Состав корректировки недоступен для изменения. Сохраните хотя бы одну позицию исходной категории',
   REVISION_CATEGORY_LOCKED: 'Категорию корректирующей позиции менять нельзя',
   STOCK_CHECK_REQUIRED: 'Сначала выполните повторную проверку и резервирование склада',
   CUTTING_PLAN_REQUIRED: 'Сначала подготовьте и утвердите карту раскроя',

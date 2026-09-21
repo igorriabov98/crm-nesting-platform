@@ -12,6 +12,7 @@ import * as dialogs from '../src/components/ui/dialog'
 import * as textareas from '../src/components/ui/textarea'
 import * as procurement from '../src/lib/constants/procurement'
 import * as approval from '../src/lib/technologist-request-approval'
+import * as approvalProcurement from '../src/lib/approval-procurement'
 import * as approvalBadge from '../src/lib/technologist-approval-badge'
 import { ApprovalSummary, ApprovalDiff } from '../src/components/features/technologist/ApprovalSummary'
 
@@ -90,6 +91,7 @@ test('summary does not present empty paint measurements as real position data', 
     key: 'request_paint:a', category: 'request_paint', categoryLabel: 'Краска', name: 'RAL 6050 · матовый',
     quantity: 10, unit: 'кг', weightKg: 0, businessScrapReserved: 0, regularStockReserved: 0, wastePercent: null,
     attributes: { area_m2: 0, weight_with_waste_kg: 0 },
+    procurement: { quantity: 10, unit: 'кг', components: [], unavailable: false },
   }] }
   const html = renderToStaticMarkup(<ApprovalSummary snapshot={paintSnapshot} />)
   assert.ok(html.includes('10 кг'))
@@ -123,7 +125,7 @@ test('history does not fetch or render snapshots before opening', () => {
 
 test('snapshot uses authoritative source rows without changing their order and labels wire in kilograms', () => {
   const helper = load<{ snapshotFromSource: (source: Record<string, unknown[]>, id: string, machine: {id:string;name:string;material_type:string}, input: unknown) => approval.ApprovalSummarySnapshot }>('src/lib/server/technologist-approval-snapshot.ts', {
-    'server-only': {}, '@/lib/constants/procurement': procurement,
+    'server-only': {}, '@/lib/constants/procurement': procurement, '@/lib/approval-procurement': approvalProcurement,
   })
   const source = { request_pipe: [
     { id:'b', pipe_type:'wire', sort_order:2, remainder_length_mm:0, remainder_kg:12, calculated_weight_kg:12 },
@@ -148,7 +150,7 @@ test('snapshot uses authoritative source rows without changing their order and l
 test('sheet steel names resolve from saved IDs in both layouts without rewriting approval sources', async () => {
   const helper = load<{
     withSheetSteelTypeNames: (client: unknown, value: approval.ApprovalSummarySnapshot, stored?: approval.ApprovalSummarySnapshot) => Promise<approval.ApprovalSummarySnapshot>
-  }>('src/lib/server/technologist-approval-snapshot.ts', { 'server-only': {}, '@/lib/constants/procurement': procurement })
+  }>('src/lib/server/technologist-approval-snapshot.ts', { 'server-only': {}, '@/lib/constants/procurement': procurement, '@/lib/approval-procurement': approvalProcurement })
   const original = { ...snapshot, sourceData: { request_sheet_metal: [{ id: 'a', steel_type_id: 'steel-hardox', material_grade: null }] },
     items: [{ ...snapshot.items[0], name: 'Листовой металл', attributes: { steel_type_id: 'steel-hardox', material_grade: null, sheet_size: '1200x300' } }] }
   const before = JSON.stringify(original)
@@ -171,4 +173,35 @@ test('sheet steel names resolve from saved IDs in both layouts without rewriting
   const missing = await helper.withSheetSteelTypeNames({ from: () => ({ select: () => ({ in: async () => ({ data: [], error: null }) }) }) }, original)
   assert.ok(renderToStaticMarkup(<ApprovalSummary snapshot={missing} />).includes('Тип стали: Не указан'))
   await assert.rejects(helper.withSheetSteelTypeNames({ from: () => ({ select: () => ({ in: async () => ({ data: null, error: { message: 'unavailable' } }) }) }) }, original), /Не удалось загрузить типы стали/)
+})
+
+
+test('agreed procurement uses exact saved candidate and remains stable for historical versions', async () => {
+  const helper = load<{ withApprovalProcurement: (client: unknown, value: approval.ApprovalSummarySnapshot, stored?: approval.ApprovalSummarySnapshot) => Promise<approval.ApprovalSummarySnapshot> }>('src/lib/server/technologist-approval-snapshot.ts', {
+    'server-only': {}, '@/lib/constants/procurement': procurement, '@/lib/approval-procurement': approvalProcurement,
+  })
+  const original = { ...circleSnapshot, items: [circleSnapshot.items[0]], sourceData: {
+    cuttingItems: [{request_item_table:'request_circle', request_item_id:circleSnapshot.items[0].key.split(':')[1], plan_id:'plan', link_state:'active'}],
+    cuttingVersions: [{id:'approved-v1', plan_id:'plan', status:'approved', selected_candidate_number:1}],
+    cuttingCandidates: [{id:'saved-candidate', version_id:'approved-v1', candidate_number:1, purchased_length_mm:12000}],
+  } }
+  const before = JSON.stringify(original.sourceData)
+  let queries = 0
+  const client = { from(table: string) {
+    assert.equal(table, 'long_stock_cutting_candidate_bars')
+    return { select: () => ({ in: async (key: string, ids: string[]) => {
+      queries++; assert.equal(key, 'candidate_id'); assert.deepEqual([...ids], ['saved-candidate'])
+      return { data: [{ candidate_id:'saved-candidate', stock_length_mm:6000, length_group:'standard', source_type:'new_stock' }, { candidate_id:'saved-candidate', stock_length_mm:6000, length_group:'standard', source_type:'new_stock' }], error:null }
+    } }) }
+  } }
+  const enriched = await helper.withApprovalProcurement(client, original)
+  assert.equal(enriched.items[0].procurement?.quantity, 12000)
+  assert.equal(enriched.items[0].procurement?.components[0].piece_count, 2)
+  assert.equal(JSON.stringify(enriched.sourceData), before)
+  const restored = await helper.withApprovalProcurement(client, original, enriched)
+  assert.equal(restored.items[0].procurement?.quantity, 12000)
+  assert.equal(queries, 1, 'stored approved procurement must not re-read today’s warehouse or plans')
+  const html = renderToStaticMarkup(<ApprovalSummary snapshot={restored} />)
+  assert.ok(html.includes('К закупке по согласованию'))
+  assert.ok(html.includes('2 шт × 6'))
 })

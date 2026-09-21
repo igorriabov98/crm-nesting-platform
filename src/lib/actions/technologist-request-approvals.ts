@@ -7,7 +7,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
-import { snapshotFromSource, withSheetSteelTypeNames } from '@/lib/server/technologist-approval-snapshot'
+import { snapshotFromSource, withSheetSteelTypeNames, withApprovalProcurement } from '@/lib/server/technologist-approval-snapshot'
 import {
   compareApprovalSnapshots,
 } from '@/lib/technologist-request-approval'
@@ -116,7 +116,7 @@ export async function getTechnologistApprovalDetail(requestId: string) {
       if (source.error) throw source.error
       currentSnapshot = snapshotFromSource(source.data, id, order, latest.completion_payload)
     }
-    currentSnapshot = await withSheetSteelTypeNames(db(), currentSnapshot, currentDraft ? null : storedSummary)
+    currentSnapshot = await withApprovalProcurement(db(), await withSheetSteelTypeNames(db(), currentSnapshot, currentDraft ? null : storedSummary), currentDraft ? null : storedSummary)
     const versions = versionsResult.data || []
     const draft = await db().from('technologist_request_revision_drafts')
       .select('revision_number,editor_id').eq('request_id', id).maybeSingle()
@@ -154,10 +154,11 @@ export async function getTechnologistApprovalHistoryVersion(requestId: string, v
     const summary = stored.summary_snapshot?.sourceData && machine
       ? snapshotFromSource(stored.summary_snapshot.sourceData, id, { id: stored.summary_snapshot.machineId, name: stored.summary_snapshot.orderName, material_type: stored.summary_snapshot.materialType }, stored.completion_payload)
       : stored.summary_snapshot
+    const enrichedSummary = await withApprovalProcurement(db(), await withSheetSteelTypeNames(db(), summary, stored.summary_snapshot), stored.summary_snapshot)
     return { data: {
-      summary: await withSheetSteelTypeNames(db(), summary, stored.summary_snapshot),
+      summary: enrichedSummary,
       reason: stored.return_reason as string | null,
-      diff: summary?.items && detail.data.currentSnapshot?.items ? compareApprovalSnapshots(summary, detail.data.currentSnapshot) : null,
+      diff: enrichedSummary?.items && detail.data.currentSnapshot?.items ? compareApprovalSnapshots(enrichedSummary, detail.data.currentSnapshot) : null,
     }, error: null }
   } catch (error) { return { data: null, error: getErrorMessage(error) } }
 }

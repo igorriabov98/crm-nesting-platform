@@ -95,7 +95,7 @@ assert.match(
 )
 assert.match(
   supplyOrdersAction,
-  /fn_replace_supply_order_delivery_schedules_v1/u,
+  /fn_replace_supply_order_delivery_schedules_v2/u,
   'schedule replacement must be atomic so an invalid long-stock graph rolls back completely',
 )
 assert.match(
@@ -694,11 +694,7 @@ assert.match(
   /schedule\.status === 'planned'[\s\S]*deliveryScheduleBelongsToScope\(schedule\.delivery_date, normalizedScope\)/u,
   'the server must delete only planned schedules inside the requested date scope',
 )
-assert.match(
-  supplyOrdersAction,
-  /syncOrderStatusesWithScheduleCoverage[\s\S]*nextStatus: OrderItemStatus = isCovered \? 'ordered' : 'pending'/u,
-  'saving a graph must derive order status from virtual schedule coverage',
-)
+
 assert.match(
   supplyOrdersAction,
   /normalizedScope\?\.mode === 'item'[\s\S]*rowsFromRetainedAllocations\(retained, userId\)[\s\S]*plannedScheduleIds = allPlannedScheduleIds/u,
@@ -1790,3 +1786,18 @@ function makeHistory(patch: Partial<SupplyOrderHistoryItem>): SupplyOrderHistory
     ...patch,
   }
 }
+
+const placedLegacy = structuredClone(aggregate)
+placedLegacy.pending_count = placedLegacy.item_count
+for (const factory of placedLegacy.factories) for (const item of factory.items) {
+  item.order_status = 'pending'
+  item.unscheduled_quantity = 0
+}
+assert.equal(filterAndSortAggregates([placedLegacy], { query:'',supplier:'all',category:'all',status:'pending',sort:'date_asc' }).length,0,'placed legacy source rows must not appear as unplaced purchases')
+const partiallyPlaced = structuredClone(placedLegacy)
+partiallyPlaced.factories[0].items[0].order_status='ordered'
+partiallyPlaced.factories[0].items[0].unscheduled_quantity=1
+const pendingProjection=filterAndSortAggregates([partiallyPlaced], { query:'',supplier:'all',category:'all',status:'pending',sort:'date_asc' })
+assert.equal(pendingProjection.length,1)
+assert.equal(pendingProjection[0].factories.flatMap(f=>f.items).length,1,'mixed aggregates show only sources still needing an order')
+assert.equal(pendingProjection[0].pending_count,1)

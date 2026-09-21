@@ -108,7 +108,8 @@
     "test:organization": "node --test scripts/test-password-recovery-ui.mjs scripts/test-background-access-refresh.mjs scripts/test-organization-workspace.mjs scripts/test-task-notification-bell.mjs && tsx --test scripts/test-organization-auth-cron.ts scripts/test-organization-auth-email.ts scripts/test-task-material-access.ts src/lib/auth/service-error.test.ts src/lib/auth/password-recovery.test.ts src/lib/config.test.ts src/lib/permissions/matrix-draft.test.ts scripts/test-organization-inventory-ui.tsx && npm run test:access-control && npm run test:rls-matrix-cutover",
     "test:organization:db": "node scripts/test-organization-db.mjs && node scripts/test-organization-races.mjs",
     "test:organization:migration": "node scripts/test-organization-migration.mjs",
-    "ops:organization:preflight": "tsx scripts/organization-preflight.ts"
+    "ops:organization:preflight": "tsx scripts/organization-preflight.ts",
+    "test:approval-procurement": "tsx --test src/lib/approval-procurement.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.0",

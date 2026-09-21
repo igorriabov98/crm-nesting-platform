@@ -130,7 +130,7 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
             {revisionNumber && <p className="mt-1 font-semibold text-amber-800">Черновик заявки №{requestNumber || '—'}.{revisionNumber}</p>}
             <p className="mt-1 text-sm text-slate-500">
               {revision
-                ? 'Измените материал, характеристики или количество. Категория и состав заявки зафиксированы.'
+                ? 'Измените материал, характеристики или количество. Можно добавить позиции той же категории. Все позиции проходят согласование вместе.'
                 : 'Состав материалов, деловой отход и позиции к заказу.'}
             </p>
           </div>
@@ -162,28 +162,28 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
         <div className="mt-4 rounded-xl border border-[#E8ECF0] bg-white p-4">
           {/* Sections own optimistic row state; keep hidden panels mounted so tab changes cannot reset it to stale server props. */}
           {(!revision || revision.category === 'sheet_metal') && <TabsContent value="sheet" keepMounted className="outline-none">
-            <SheetMetalSection requestId={data.request.id} items={data.sheetMetal} suppliers={suppliers.sheetMetal} canEdit={canEdit} steelTypes={steelTypes} allowStructureChanges={!revision} />
+            <SheetMetalSection requestId={data.request.id} items={data.sheetMetal} suppliers={suppliers.sheetMetal} canEdit={canEdit} steelTypes={steelTypes} allowStructureChanges={canEdit} />
           </TabsContent>}
           {(!revision || revision.category === 'circle') && <TabsContent value="circle" keepMounted className="outline-none">
-            <CircleSection requestId={data.request.id} items={data.circles} isEditable={canEdit} steelTypes={steelTypes} allowStructureChanges={!revision} />
+            <CircleSection requestId={data.request.id} items={data.circles} isEditable={canEdit} steelTypes={steelTypes} allowStructureChanges={canEdit} />
           </TabsContent>}
           {(!revision || revision.category === 'pipe') && <TabsContent value="pipe" keepMounted className="outline-none">
-            <PipeSection requestId={data.request.id} items={data.pipes} isEditable={canEdit} steelTypes={steelTypes} onRowsChange={handlePipeRowsChange} allowStructureChanges={!revision} />
+            <PipeSection requestId={data.request.id} items={data.pipes} isEditable={canEdit} steelTypes={steelTypes} onRowsChange={handlePipeRowsChange} allowStructureChanges={canEdit} />
           </TabsContent>}
           {(!revision || revision.category === 'knives') && <TabsContent value="knives" keepMounted className="outline-none">
-            <KnivesSection requestId={data.request.id} items={data.knives} canEdit={canEdit} canEditStock={false} steelTypes={steelTypes} allowStructureChanges={!revision} />
+            <KnivesSection requestId={data.request.id} items={data.knives} canEdit={canEdit} canEditStock={false} steelTypes={steelTypes} allowStructureChanges={canEdit} />
           </TabsContent>}
           {(!revision || revision.category === 'paint') && <TabsContent value="paint" keepMounted className="outline-none">
-            <PaintSection requestId={data.request.id} items={data.paint} canEdit={canEdit} canEditStock={false} onRowsChange={handlePaintRowsChange} allowStructureChanges={!revision} />
+            <PaintSection requestId={data.request.id} items={data.paint} canEdit={canEdit} canEditStock={false} onRowsChange={handlePaintRowsChange} allowStructureChanges={canEdit} />
           </TabsContent>}
           {(!revision || revision.category === 'components') && <TabsContent value="components" keepMounted className="outline-none">
-            <ComponentsSection requestId={data.request.id} items={data.components} canEdit={canEdit} canEditStock={false} onRowsChange={handleComponentRowsChange} allowStructureChanges={!revision} />
+            <ComponentsSection requestId={data.request.id} items={data.components} canEdit={canEdit} canEditStock={false} onRowsChange={handleComponentRowsChange} allowStructureChanges={canEdit} />
           </TabsContent>}
           {(!revision || revision.category === 'mesh') && <TabsContent value="mesh" keepMounted className="outline-none">
-            <MeshSection requestId={data.request.id} items={data.meshItems} isEditable={canEdit} onRowsChange={handleMeshRowsChange} allowStructureChanges={!revision} />
+            <MeshSection requestId={data.request.id} items={data.meshItems} isEditable={canEdit} onRowsChange={handleMeshRowsChange} allowStructureChanges={canEdit} />
           </TabsContent>}
           {(!revision || revision.category === 'chain_cord') && <TabsContent value="chain_cord" keepMounted className="outline-none">
-            <ChainCordSection requestId={data.request.id} items={data.chainCords} isEditable={canEdit} onRowsChange={handleChainCordRowsChange} allowStructureChanges={!revision} />
+            <ChainCordSection requestId={data.request.id} items={data.chainCords} isEditable={canEdit} onRowsChange={handleChainCordRowsChange} allowStructureChanges={canEdit} />
           </TabsContent>}
         </div>
       </Tabs>
