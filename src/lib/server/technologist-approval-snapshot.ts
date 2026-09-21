@@ -31,7 +31,7 @@ function numberOrNull(value: unknown) {
 function describeRow(table: string, row: Record<string, unknown>) {
   const name = [
     row.material_name, row.material_grade, row.steel_grade, PIPE_SUBTYPE_LABELS[String(row.pipe_type)], row.knife_type,
-    row.component_name, row.paint_name, row.mesh_type, CHAIN_CORD_SUBTYPE_LABELS[String(row.chain_cord_type)], row.size, row.sheet_size,
+    row.component_name, row.paint_name, row.paint_type, row.ral_code, row.finish, row.mesh_type, CHAIN_CORD_SUBTYPE_LABELS[String(row.chain_cord_type)], row.size, row.sheet_size,
     row.thickness_mm ? `${row.thickness_mm} мм` : null,
   ].filter(Boolean).join(' · ')
   const candidates: Array<[string, string]> = table === 'request_sheet_metal'

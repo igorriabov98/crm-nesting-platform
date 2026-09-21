@@ -22,7 +22,7 @@ run('psql', [
   path.join(root, 'supabase', 'tests', 'technologist_request_financial_approval_test.sql'),
 ])
 
-const ids = Object.fromEntries(['factory','authorDepartment','reviewerDepartment','author','reviewer','machine','request','sheet','steel'].map((key) => [key, randomUUID()]))
+const ids = Object.fromEntries(['factory','authorDepartment','reviewerDepartment','author','reviewer','machine','request','sheet','steel','archive'].map((key) => [key, randomUUID()]))
 const version = sql(`
   begin;
   insert into factories(id,name) values ('${ids.factory}','APPROVAL-CONCURRENCY-TEST');
@@ -37,8 +37,10 @@ const version = sql(`
     ('${ids.reviewer}','${ids.reviewerDepartment}',true);
   insert into department_access_permissions(department_id,subject_scope,resource_key,can_view,can_manage) values
     ('${ids.authorDepartment}','member','technologist_requests',true,true),
+    ('${ids.authorDepartment}','member','inventory',true,true),
     ('${ids.authorDepartment}','member','inventory_detailing',true,true),
     ('${ids.authorDepartment}','head','technologist_requests',true,true),
+    ('${ids.authorDepartment}','head','inventory',true,true),
     ('${ids.authorDepartment}','head','inventory_detailing',true,true),
     ('${ids.reviewerDepartment}','member','technologist_request_results',true,true),
     ('${ids.reviewerDepartment}','head','technologist_request_results',true,true);
@@ -49,13 +51,21 @@ const version = sql(`
   insert into steel_types(id,name,density_kg_mm3) values ('${ids.steel}','APPROVAL-RACE-STEEL',0.00000785);
   insert into request_sheet_metal(id,request_id,material_name,quantity_sheets,thickness_mm,sheet_size,steel_type_id,remainder_qty)
     values ('${ids.sheet}','${ids.request}','Лист гонки',1,10,'1000x1000','${ids.steel}',1);
-  with actor as (select set_config('request.jwt.claim.sub','${ids.author}',true))
+  insert into storage.objects(bucket_id,name,metadata)
+    values ('nesting-files','machine-cutting/${ids.machine}/${ids.request}/1700000000000-${ids.archive}.zip','{"size":128}'::jsonb);
+  with actor as (select set_config('request.jwt.claim.sub','${ids.author}',true)),
+  archive as (select jsonb_build_object(
+    'requestId','${ids.request}','completionId',null,
+    'objectPath','machine-cutting/${ids.machine}/${ids.request}/1700000000000-${ids.archive}.zip',
+    'fileName','approval-race.zip','mimeType','application/zip','fileSize',128
+  ) payload)
   select fn_submit_technologist_request_for_approval('${ids.request}','${ids.author}',
     jsonb_build_object('decision','none','enteredPlasmaMinutes',0,'wasteItems',jsonb_build_array(jsonb_build_object(
       'sourceTable','request_sheet_metal','sourceId','${ids.sheet}','itemName','Лист гонки','materialName','Лист гонки','wastePercent',10
-    )),'futureItems','[]'::jsonb,'archives','[]'::jsonb),
-    jsonb_build_object('schemaVersion',1,'items','[]'::jsonb,'sourceData',fn_technologist_approval_source('${ids.request}')))
-  from actor;
+    )),'futureItems','[]'::jsonb,'archives',jsonb_build_array(archive.payload)),
+    jsonb_build_object('schemaVersion',1,'items','[]'::jsonb,'sourceData',fn_technologist_approval_source('${ids.request}')),
+    jsonb_build_array(archive.payload))
+  from actor,archive;
   commit;
 `).trim()
 assert.match(version, /^[0-9a-f-]{36}$/)

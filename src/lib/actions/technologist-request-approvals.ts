@@ -20,11 +20,12 @@ function db() { return createAdminClient() as any }
 
 export async function getTechnologistApprovalList() {
   try {
-    const { userId } = await requirePermission('technologist_request_results', 'view')
+    const { userId, permissionDetails } = await requirePermission('technologist_request_results', 'view')
     const head = await db().rpc('fn_technologist_approval_department_head', { p_name: 'Финансовый отдел' })
     if (head.error) throw head.error
     const reviewer = head.data === userId
-    const assigned = !reviewer ? await db().from('tasks')
+    const isAdmin = permissionDetails.isAdminPosition
+    const assigned = !reviewer && !isAdmin ? await db().from('tasks')
       .select('approval_version:technologist_request_approval_versions!tasks_technologist_request_approval_id_fkey(request_id)')
       .eq('assigned_to', userId).eq('task_type', 'technologist_request_revision') : { data: [], error: null }
     if (assigned.error) throw assigned.error
@@ -32,7 +33,7 @@ export async function getTechnologistApprovalList() {
     const requests = db().from('technologist_requests')
       .select('id,machine_id,created_by,status,created_at,machines(id,name,material_type)')
       .order('created_at', { ascending: false })
-    if (!reviewer) {
+    if (!reviewer && !isAdmin) {
       if (assignedIds.size > 0) requests.or(`created_by.eq.${userId},id.in.(${[...assignedIds].join(',')})`)
       else requests.eq('created_by', userId)
     }
@@ -61,7 +62,7 @@ export async function getTechnologistApprovalList() {
         ...request,
         request_number: requestNumberById.get(request.id) || 1,
         currentVersion: (versions.data || []).find((version: any) => version.request_id === request.id) || null,
-      })).filter((request: any) => request.currentVersion !== null),
+      })),
       error: null,
     }
   } catch (error) {
@@ -72,14 +73,16 @@ export async function getTechnologistApprovalList() {
 export async function getTechnologistApprovalDetail(requestId: string) {
   try {
     const id = requestIdSchema.parse(requestId)
-    const { userId } = await requirePermission('technologist_request_results', 'view')
+    const { userId, permissionDetails } = await requirePermission('technologist_request_results', 'view')
     const requestResult = await db().from('technologist_requests')
       .select('id,machine_id,created_by,status,created_at,machines(id,name,material_type),users!technologist_requests_created_by_fkey(full_name)')
-      .eq('id', id).single()
-    if (requestResult.error || !requestResult.data) throw new Error('Заявка не найдена')
+      .eq('id', id).maybeSingle()
+    if (requestResult.error) throw new Error(requestResult.error.message || 'Не удалось прочитать заявку')
+    if (!requestResult.data) throw new Error('Заявка не найдена')
     const head = await db().rpc('fn_technologist_approval_department_head', { p_name: 'Финансовый отдел' })
     if (head.error) throw head.error
     const reviewer = head.data === userId
+    const isAdmin = permissionDetails.isAdminPosition
     const revisionTasks = await db().from('tasks').select('technologist_request_approval_id').eq('assigned_to', userId)
       .eq('task_type', 'technologist_request_revision').in('status', ['pending', 'in_progress'])
     if (revisionTasks.error) throw revisionTasks.error
@@ -88,7 +91,7 @@ export async function getTechnologistApprovalDetail(requestId: string) {
       .select('id').eq('request_id', id).in('id', assignedVersionIds).limit(1) : { data: [], error: null }
     if (assignedVersion.error) throw assignedVersion.error
     const assignedRevision = (assignedVersion.data || []).length > 0
-    if (!reviewer && requestResult.data.created_by !== userId && !assignedRevision) throw new Error('Заявка недоступна')
+    if (!isAdmin && !reviewer && requestResult.data.created_by !== userId && !assignedRevision) throw new Error('Недостаточно прав для просмотра заявки')
     const numberRows = await db().from('technologist_requests').select('id').eq('machine_id', requestResult.data.machine_id).order('created_at', { ascending: true }).order('id', { ascending: true })
     if (numberRows.error) throw numberRows.error
     const requestNumber = (numberRows.data || []).findIndex((row: any) => row.id === id) + 1
@@ -101,7 +104,7 @@ export async function getTechnologistApprovalDetail(requestId: string) {
     const latestResult = latestId ? await db().from('technologist_request_approval_versions').select('*').eq('id', latestId).single() : { data: null, error: null }
     if (latestResult.error) throw latestResult.error
     const latest = latestResult.data
-    if (latest?.is_legacy && latest.summary_snapshot?.sourceData && order) {
+    if (latest?.summary_snapshot?.sourceData && order) {
       const stored = latest.summary_snapshot
       latest.summary_snapshot = snapshotFromSource(stored.sourceData, id, { id: stored.machineId, name: stored.orderName, material_type: stored.materialType }, latest.completion_payload)
     }
@@ -123,9 +126,9 @@ export async function getTechnologistApprovalDetail(requestId: string) {
         versions: versions.map((version: any) => ({ id: version.id, revision_number: version.revision_number, state: version.state, is_legacy: version.is_legacy })),
         currentSnapshot,
         currentDraft,
-        canReview: reviewer,
+        canReview: reviewer || isAdmin,
         revisionDraft: draft.data,
-        canEdit: (firstSubmitter === userId || requestResult.data.created_by === userId || assignedRevision)
+        canEdit: (isAdmin || firstSubmitter === userId || requestResult.data.created_by === userId || assignedRevision)
           && ['pending_financial_approval', 'pending_stock_check', 'stock_checked'].includes(requestResult.data.status)
           && versions.length > 0,
       },
@@ -146,7 +149,7 @@ export async function getTechnologistApprovalHistoryVersion(requestId: string, v
     if (result.error || !result.data) throw new Error('Версия не найдена')
     const stored = result.data
     const machine = Array.isArray(detail.data.request.machines) ? detail.data.request.machines[0] : detail.data.request.machines
-    const summary = stored.is_legacy && stored.summary_snapshot?.sourceData && machine
+    const summary = stored.summary_snapshot?.sourceData && machine
       ? snapshotFromSource(stored.summary_snapshot.sourceData, id, { id: stored.summary_snapshot.machineId, name: stored.summary_snapshot.orderName, material_type: stored.summary_snapshot.materialType }, stored.completion_payload)
       : stored.summary_snapshot
     return { data: {
@@ -172,8 +175,8 @@ function revalidateApproval(requestId: string) {
 export async function beginTechnologistRequestRevision(requestId: string) {
   try {
     const id = requestIdSchema.parse(requestId)
-    const { userId } = await requirePermission('technologist_request_results', 'view')
-    const { error } = await db().rpc('fn_begin_technologist_request_revision', { p_request_id: id, p_actor: userId })
+    const { userId, supabase } = await requirePermission('technologist_request_results', 'view')
+    const { error } = await (supabase as any).rpc('fn_begin_technologist_request_revision', { p_request_id: id, p_actor: userId })
     if (error) throw error
     const request = await db().from('technologist_requests').select('machine_id').eq('id', id).single()
     revalidateApproval(id)

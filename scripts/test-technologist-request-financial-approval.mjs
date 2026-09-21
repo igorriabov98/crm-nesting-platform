@@ -6,6 +6,7 @@ const workflowMigration = await readFile(new URL('../supabase/migrations/2026091
 const followupMigration = await readFile(new URL('../supabase/migrations/20260917180000_approval_revision_contract_scope.sql', import.meta.url), 'utf8')
 const jwtContextMigration = await readFile(new URL('../supabase/migrations/20260918130000_finance_approval_jwt_context.sql', import.meta.url), 'utf8')
 const cleanupActorMigration = await readFile(new URL('../supabase/migrations/20260918160000_finance_approval_draft_cleanup_actor.sql', import.meta.url), 'utf8')
+const accessProgramsMigration = await readFile(new URL('../supabase/migrations/20260921082107_access_programs_admin_and_layouts.sql', import.meta.url), 'utf8')
 const requestCompletion = await readFile(new URL('../src/lib/actions/request-completion.ts', import.meta.url), 'utf8')
 const supplyRequest = await readFile(new URL('../src/lib/actions/supply-request.ts', import.meta.url), 'utf8')
 const approvalActions = await readFile(new URL('../src/lib/actions/technologist-request-approvals.ts', import.meta.url), 'utf8')
@@ -66,6 +67,14 @@ for (const expected of [
   'fn_discard_long_stock_request_item_drafts_v1(new.id, v_actor, null, null)',
 ]) assert.ok(cleanupActorMigration.toLowerCase().includes(expected.toLowerCase()), `approval draft cleanup actor migration is missing: ${expected}`)
 
+for (const expected of [
+  'crm_can_work_technologist_request',
+  "private.crm_has_factory_permission('inventory', p_inventory_operation",
+  'Для заявки с листовым металлом загрузите программу порезки',
+  'public.crm_user_is_admin(p_actor)',
+  "to authenticated, service_role",
+]) assert.ok(accessProgramsMigration.toLowerCase().includes(expected.toLowerCase()), `access/program/admin migration contract is missing: ${expected}`)
+
 assert.ok(approvalActions.includes("requirePermission('technologist_request_results', 'view')"), 'finance head decisions must use exact-head RPC authorization')
 assert.ok(!approvalActions.includes("hasPermission(permissions, 'technologist_request_results', 'manage') && head.data === userId"), 'finance head UI must not depend on a stale member/head flag')
 assert.ok(requestActions.includes('loadRequestItemPresence'), 'draft visibility must check whether the draft contains positions')
@@ -74,7 +83,7 @@ assert.ok(requestActions.includes("request.status === 'draft' || revisionDraftId
 assert.ok(requestCompletion.includes("rpc('fn_submit_technologist_request_for_approval'"), 'wizard must submit approval version')
 assert.match(
   requestCompletion,
-  /const \{ userId, supabase \} = await requirePermission\('technologist_requests', 'manage'\)[\s\S]*?\(supabase as any\)\.rpc\('fn_submit_technologist_request_for_approval'/,
+  /const access = await requireTechnologistRequestAccess\([\s\S]*?const \{ userId, supabase \} = access[\s\S]*?\(supabase as any\)\.rpc\('fn_submit_technologist_request_for_approval'/,
   'approval submission must preserve the authenticated actor for the RPC',
 )
 assert.ok(!requestCompletion.includes("rpc('fn_finalize_technologist_request_with_archives'"), 'wizard must not directly finalize request')

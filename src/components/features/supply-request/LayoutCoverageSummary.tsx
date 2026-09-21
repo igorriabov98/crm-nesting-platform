@@ -4,6 +4,7 @@ import { formatAmount } from './SupplyRequestTableShared'
 
 type Props = {
   coverage: LayoutCoverage | null
+  requestId?: string
 }
 
 const statusLabel: Record<LayoutCoverage['status'], string> = {
@@ -44,7 +45,7 @@ export function LayoutCoveragePurchase({ coverage }: Props) {
   )
 }
 
-export function LayoutCoverageState({ coverage }: Props) {
+export function LayoutCoverageState({ coverage, requestId }: Props) {
   const status = coverage?.status || 'not_approved'
   return (
     <div className="min-w-[170px] space-y-1">
@@ -57,10 +58,10 @@ export function LayoutCoverageState({ coverage }: Props) {
       }`}>
         {statusLabel[status]}
       </span>
-      {coverage?.version_id && (
+      {coverage?.version_id && requestId && (
         <a
           className="inline-flex items-center gap-1 text-xs font-medium text-[#1B3A6B] underline-offset-2 hover:underline"
-          href={`/api/production/cutting-area/cutting-plans/${coverage.version_id}`}
+          href={`/api/technologist/requests/${requestId}/cutting-plans/${coverage.version_id}`}
           target="_blank"
           rel="noreferrer"
         >

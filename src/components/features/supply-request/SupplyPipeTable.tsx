@@ -10,12 +10,13 @@ import type { RequestPipe } from '@/lib/types'
 
 type Props = {
   rows: SupplyRequestRow<RequestPipe>[]
+  requestId: string
   machineId: string
   canReserve?: boolean
   canUnreserve?: boolean
 }
 
-export function SupplyPipeTable({ rows, machineId, canReserve = false, canUnreserve = false }: Props) {
+export function SupplyPipeTable({ rows, requestId, machineId, canReserve = false, canUnreserve = false }: Props) {
   return (
     <Section title="Труба">
       <table className={tableClass}>
@@ -56,7 +57,7 @@ export function SupplyPipeTable({ rows, machineId, canReserve = false, canUnrese
                 <td className={tdClass}>
                   {isWire
                     ? <OrderStatusCell table="request_pipe" status={row.order_status} needed={needed} reserved={reserved} covered={row.covered_quantity} pipeType={row.pipe_type} />
-                    : <LayoutCoverageState coverage={row.layout_coverage} />}
+                    : <LayoutCoverageState coverage={row.layout_coverage} requestId={requestId} />}
                 </td>
                 <td className={tdClass}>
                   {isWire && (canReserve || (canUnreserve && row.reservation_id)) ? <div className="flex items-center gap-2">

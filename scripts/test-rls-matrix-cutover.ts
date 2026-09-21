@@ -218,6 +218,7 @@ assert.deepEqual(
     '20260920120000_organization_member_management.sql',
     '20260920130000_task_notifications_material_type_access.sql',
     '20260920220000_technologist_reservations_projects_password.sql',
+    '20260921082107_access_programs_admin_and_layouts.sql',
 
   ],
   'После cutover разрешены только проверенные follow-up миграции',

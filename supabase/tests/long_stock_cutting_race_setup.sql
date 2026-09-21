@@ -154,6 +154,7 @@ begin
     department_id, subject_scope, resource_key, can_view, can_manage
   ) values
     (v_technology_department, 'member', 'technologist_requests', true, true),
+    (v_technology_department, 'member', 'inventory', true, true),
     (v_technology_department, 'member', 'inventory_detailing', true, true),
     (v_finance_department, 'head', 'technologist_request_results', true, true);
   perform set_config('request.jwt.claim.sub', v_actor::text, true);

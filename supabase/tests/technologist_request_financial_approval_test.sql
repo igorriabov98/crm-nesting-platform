@@ -35,6 +35,7 @@ declare
   v_second_version uuid;
   v_completion uuid;
   v_error text;
+  v_archive jsonb;
 begin
   update public.users set is_active = false where role = 'financial_director';
   insert into public.factories(id, name) values (v_factory, 'FINANCIAL-APPROVAL-TEST');
@@ -63,7 +64,9 @@ begin
     department_id, subject_scope, resource_key, can_view, can_manage
   ) values
     (v_department, 'member', 'technologist_requests', true, true),
+    (v_department, 'member', 'inventory', true, true),
     (v_department, 'member', 'inventory_detailing', true, true),
+    (v_department, 'head', 'inventory', true, true),
     (v_finance_department, 'member', 'technologist_request_results', true, true),
     (v_finance_department, 'head', 'technologist_request_results', true, true);
   insert into public.machines(id, factory_id, name, created_by, status, material_type) values
@@ -184,12 +187,24 @@ begin
   end;
 
   perform set_config('request.jwt.claim.sub', v_technologist::text, true);
+  select public.fn_submit_technologist_request_for_approval(
+    v_request, v_technologist,
+    jsonb_build_object('decision', 'none', 'enteredPlasmaMinutes', 0, 'wasteItems', '[]'::jsonb, 'futureItems', '[]'::jsonb, 'archives', '[]'::jsonb),
+    jsonb_build_object('schemaVersion', 1, 'requestId', v_request, 'machineId', v_machine, 'items', '[]'::jsonb, 'sourceData', public.fn_technologist_approval_source(v_request)),
+    '[]'::jsonb
+  ) into v_second_version;
+  if v_second_version <> v_version then raise exception 'identical submission retry created another version'; end if;
   begin
-    perform public.fn_submit_technologist_request_for_approval(v_request, v_technologist, '{}'::jsonb, '{}'::jsonb, '[]'::jsonb);
-    raise exception 'duplicate submission unexpectedly succeeded';
+    perform public.fn_submit_technologist_request_for_approval(
+      v_request, v_technologist,
+      jsonb_build_object('decision', 'scrap', 'enteredPlasmaMinutes', 0, 'wasteItems', '[]'::jsonb, 'futureItems', '[]'::jsonb, 'archives', '[]'::jsonb),
+      jsonb_build_object('schemaVersion', 1, 'requestId', v_request, 'machineId', v_machine, 'items', '[]'::jsonb, 'sourceData', public.fn_technologist_approval_source(v_request)),
+      '[]'::jsonb
+    );
+    raise exception 'changed duplicate submission unexpectedly succeeded';
   exception when others then
     get stacked diagnostics v_error = message_text;
-    if v_error not like '%не готова к согласованию%' then raise; end if;
+    if v_error not like '%другими данными%' then raise; end if;
   end;
 
   perform set_config('request.jwt.claim.sub', v_finance_one::text, true);
@@ -295,10 +310,27 @@ begin
     raise exception 'self-edit did not preserve the previous version as superseded';
   end if;
 
-  update public.users set is_active = false where id in (v_finance_one, v_finance_two);
-  update public.department_members set is_department_head=false where department_id=v_finance_department;
-  insert into public.department_members(user_id,department_id,is_department_head) values(v_admin,v_finance_department,true);
+  update public.users set is_active = false where id = v_finance_two;
   perform set_config('request.jwt.claim.sub', v_technologist::text, true);
+  begin
+    perform public.fn_submit_technologist_request_for_approval(
+      v_second_request, v_technologist,
+      jsonb_build_object('decision','none','enteredPlasmaMinutes',0,'wasteItems','[]'::jsonb,'futureItems','[]'::jsonb,'archives','[]'::jsonb),
+      jsonb_build_object('sourceData', public.fn_technologist_approval_source(v_second_request)),
+      '[]'::jsonb
+    );
+    raise exception 'sheet-metal request was submitted without a cutting program';
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%листовым металлом%программу порезки%' then raise; end if;
+  end;
+  v_archive := jsonb_build_object(
+    'requestId',v_second_request,'completionId',null,
+    'objectPath','machine-cutting/'||v_second_machine||'/'||v_second_request||'/1700000000000-'||gen_random_uuid()||'.zip',
+    'fileName','approval-test.zip','mimeType','application/zip','fileSize',128
+  );
+  insert into storage.objects(bucket_id,name,metadata)
+  values('nesting-files',v_archive->>'objectPath',jsonb_build_object('size',128));
   select public.fn_submit_technologist_request_for_approval(
     v_second_request, v_technologist,
     jsonb_build_object(
@@ -308,13 +340,13 @@ begin
         'itemName', 'Тестовый лист', 'materialId', null, 'materialVariantId', null,
         'materialName', 'Тестовый лист', 'materialGrade', 'S235', 'wastePercent', 10
       )),
-      'futureItems', '[]'::jsonb, 'archives', '[]'::jsonb
+      'futureItems', '[]'::jsonb, 'archives', jsonb_build_array(v_archive)
     ),
     jsonb_build_object('schemaVersion', 1, 'requestId', v_second_request, 'machineId', v_second_machine, 'items', '[]'::jsonb, 'sourceData', public.fn_technologist_approval_source(v_second_request)),
-    '[]'::jsonb
+    jsonb_build_array(v_archive)
   ) into v_second_version;
   if not exists (
-    select 1 from public.tasks where technologist_request_approval_id = v_second_version and assigned_to = v_admin
+    select 1 from public.tasks where technologist_request_approval_id = v_second_version and assigned_to = v_finance_one
   ) then raise exception 'configured financial head task was not created'; end if;
 
   begin
@@ -330,7 +362,10 @@ begin
   if v_completion is null
      or (select status from public.technologist_requests where id = v_second_request) <> 'submitted_to_supply'
      or (select state from public.technologist_request_approval_versions where id = v_second_version) <> 'approved' then
-    raise exception 'atomic approval did not finalize the approved version';
+    raise exception 'active CRM administrator did not finalize the approved version';
+  end if;
+  if (select decided_by from public.technologist_request_approval_versions where id=v_second_version) <> v_admin then
+    raise exception 'administrator decision was attributed to another user';
   end if;
   begin
     perform public.fn_approve_technologist_request(v_second_version, v_admin);
@@ -365,6 +400,7 @@ begin
   update public.users set is_active = false where id in (
     select dm.user_id from public.department_members dm join public.positions p on p.id = dm.position_id where p.name = 'Администратор CRM'
   );
+  update public.users set is_active = false where id = v_finance_one;
   perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   update public.technologist_requests set status = 'stock_checked' where id = v_request;
   begin

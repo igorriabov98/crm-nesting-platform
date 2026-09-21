@@ -6,9 +6,10 @@ import type { RequestCircle } from '@/lib/types'
 
 type Props = {
   rows: SupplyRequestRow<RequestCircle>[]
+  requestId: string
 }
 
-export function SupplyCircleTable({ rows }: Props) {
+export function SupplyCircleTable({ rows, requestId }: Props) {
   return (
     <Section title="Круг">
       <table className={tableClass}>
@@ -33,7 +34,7 @@ export function SupplyCircleTable({ rows }: Props) {
                 <td className={tdClass}>{row.calculated_weight_kg ? `${formatAmount(row.calculated_weight_kg)} кг` : '—'}</td>
                 <td className={tdClass}><LayoutCoverageSources coverage={row.layout_coverage} /></td>
                 <td className={tdClass}><LayoutCoveragePurchase coverage={row.layout_coverage} /></td>
-                <td className={tdClass}><LayoutCoverageState coverage={row.layout_coverage} /></td>
+                <td className={tdClass}><LayoutCoverageState coverage={row.layout_coverage} requestId={requestId} /></td>
                 <td className={tdClass}><OrderStatusCell table="request_circle" status={row.order_status} needed={needed} reserved={reserved} covered={row.covered_quantity} /></td>
               </tr>
             )

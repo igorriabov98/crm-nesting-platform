@@ -400,7 +400,7 @@ for (const filePath of walk(join(root, 'src/app/api'), 'route.ts')) {
     continue
   }
   assert(
-    /(?:get|require)NestingProxyAccess\(|requirePermission\(|requireProductProductionDrawingAccess\(/u.test(source),
+    /(?:get|require)NestingProxyAccess\(|requirePermission\(|requireProductProductionDrawingAccess\(|requireTechnologistRequestAccess\(/u.test(source),
     `API-маршрут ${relativePath} не проверяет право модуля`,
   )
 }

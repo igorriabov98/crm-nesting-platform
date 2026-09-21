@@ -247,9 +247,9 @@ export function SupplyRequestPage({ data, detailing }: Props) {
       </div>
 
       {activeTab === 'sheet_metal' && <SupplySheetMetalTable key={selectedFactoryId} rows={filteredSections.sheetMetal} machineId={request.machine_id} canReserve={canReserve} canUnreserve={canUnreserve} />}
-      {activeTab === 'circle' && <SupplyCircleTable key={selectedFactoryId} rows={filteredSections.circles} />}
-      {activeTab === 'pipe' && <SupplyPipeTable key={selectedFactoryId} rows={filteredSections.pipes} machineId={request.machine_id} canReserve={canReserve} canUnreserve={canUnreserve} />}
-      {activeTab === 'knives' && <SupplyKnivesTable key={selectedFactoryId} rows={filteredSections.knives} />}
+      {activeTab === 'circle' && <SupplyCircleTable key={selectedFactoryId} rows={filteredSections.circles} requestId={request.id} />}
+      {activeTab === 'pipe' && <SupplyPipeTable key={selectedFactoryId} rows={filteredSections.pipes} requestId={request.id} machineId={request.machine_id} canReserve={canReserve} canUnreserve={canUnreserve} />}
+      {activeTab === 'knives' && <SupplyKnivesTable key={selectedFactoryId} rows={filteredSections.knives} requestId={request.id} />}
       {activeTab === 'paint' && <SupplyPaintTable key={selectedFactoryId} rows={filteredSections.paint} machineId={request.machine_id} canReserve={canReserve} canUnreserve={canUnreserve} />}
       {activeTab === 'components' && <SupplyComponentsTable key={selectedFactoryId} rows={filteredSections.components} machineId={request.machine_id} canReserve={canReserve} canUnreserve={canUnreserve} />}
       {activeTab === 'mesh' && <SupplyMeshTable key={selectedFactoryId} rows={filteredSections.meshItems} machineId={request.machine_id} canReserve={canReserve} canUnreserve={canUnreserve} />}

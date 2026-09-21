@@ -14,6 +14,8 @@ declare
   v_factory uuid;
   v_version uuid;
   v_completion uuid;
+  v_archive jsonb;
+  v_archives jsonb := '[]'::jsonb;
 begin
   select m.factory_id into v_factory from public.technologist_requests r join public.machines m on m.id = r.machine_id where r.id = p_request;
   v_reviewer := public.fn_technologist_approval_department_head('Финансовый отдел');
@@ -34,11 +36,27 @@ begin
     values (p_actor,v_technology_department,false);
   insert into public.department_access_permissions(department_id,subject_scope,resource_key,can_view,can_manage) values
     (v_technology_department,'member','technologist_requests',true,true),
+    (v_technology_department,'member','inventory',true,true),
     (v_technology_department,'member','inventory_detailing',true,true);
+  if exists (select 1 from public.request_sheet_metal where request_id = p_request) then
+    v_archive := jsonb_build_object(
+      'requestId', p_request,
+      'completionId', null,
+      'objectPath', 'machine-cutting/' || (select machine_id from public.technologist_requests where id = p_request)
+        || '/' || p_request || '/1700000000000-' || gen_random_uuid() || '.zip',
+      'fileName', 'long-stock-cutting-fact.zip',
+      'mimeType', 'application/zip',
+      'fileSize', 128
+    );
+    v_archives := jsonb_build_array(v_archive);
+    insert into storage.objects(bucket_id,name,metadata)
+      values ('nesting-files', v_archive->>'objectPath', jsonb_build_object('size', 128, 'mimetype', 'application/zip'));
+  end if;
   perform set_config('request.jwt.claim.sub', p_actor::text, true);
   v_version := public.fn_submit_technologist_request_for_approval(p_request,p_actor,
-    jsonb_build_object('decision',p_decision,'enteredPlasmaMinutes',p_minutes,'wasteItems',p_waste,'futureItems',p_future,'archives','[]'::jsonb),
-    jsonb_build_object('sourceData',public.fn_technologist_approval_source(p_request)));
+    jsonb_build_object('decision',p_decision,'enteredPlasmaMinutes',p_minutes,'wasteItems',p_waste,'futureItems',p_future,'archives',v_archives),
+    jsonb_build_object('sourceData',public.fn_technologist_approval_source(p_request)),
+    v_archives);
   perform set_config('request.jwt.claim.sub', v_reviewer::text, true);
   select public.fn_approve_technologist_request(v_version,v_reviewer) into v_completion;
   perform set_config('request.jwt.claim.sub', p_actor::text, true);

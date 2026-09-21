@@ -31,7 +31,7 @@ import { finalizeTechnologistRequest, getFutureDetailingCompatibilityOptions, se
 import { ROUTES } from '@/lib/constants/routes'
 import { calculatePlasmaTime, calculateWaste } from '@/lib/request-completion-calculations'
 import { cn } from '@/lib/utils'
-import { cleanupDirectMachineCuttingUpload, uploadMachineCuttingFileDirect } from '@/lib/machine-cutting/direct-upload-client'
+import { MachineCuttingUploadError, uploadMachineCuttingFileDirect } from '@/lib/machine-cutting/direct-upload-client'
 import { validateMachineCuttingUploadRequest, type DirectMachineCuttingUpload } from '@/lib/machine-cutting/files'
 import { hasSheetMetalForCompletion } from '@/lib/request-completion-material-scope'
 import { CompletionCuttingPlanCard } from './CompletionCuttingPlanCard'
@@ -39,6 +39,7 @@ import { CompletionCuttingPlanCard } from './CompletionCuttingPlanCard'
 type PartSearch = { id: string; name: string; drawing_number: string; unit_weight_kg: number }
 type ProductOption = { id: string; name_uk: string; name_en: string; drawing_number: string; versions: Array<{ id: string; version_number: number; drawing_number: string }> }
 type FutureRow = { key: string; partId?: string; name: string; drawingNumber: string; unitWeightKg: number; quantity: number; productId?: string; versionId?: string }
+type FailedUpload = { file: File; code: string; message: string; retryable: boolean }
 
 function productLabel(product: ProductOption) {
   return `${product.name_uk || product.name_en} · ${product.drawing_number}`
@@ -66,7 +67,8 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
   const [hours, setHours] = useState('0')
   const [minutes, setMinutes] = useState('0')
   const [archiveFiles, setArchiveFiles] = useState<File[]>([])
-  const [uploadFailure, setUploadFailure] = useState<{ successful: DirectMachineCuttingUpload[]; failed: File[] } | null>(null)
+  const [uploadedArchives, setUploadedArchives] = useState<DirectMachineCuttingUpload[]>([])
+  const [uploadFailure, setUploadFailure] = useState<{ successful: DirectMachineCuttingUpload[]; failed: FailedUpload[] } | null>(null)
 
   useEffect(() => {
     let active = true
@@ -149,6 +151,7 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
   }
 
   async function finish(archives: DirectMachineCuttingUpload[]) {
+    if (archives.length > 0) setUploadedArchives(archives)
     const result = await finalizeTechnologistRequest(completionPayload(archives))
     if (!result.success) { toast.error(result.error || 'Не удалось завершить заявку'); return false }
     toast.success('Версия заявки отправлена финансовому директору')
@@ -159,10 +162,15 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
   async function uploadFiles(files: File[], successful: DirectMachineCuttingUpload[] = []) {
     const settled = await Promise.allSettled(files.map((file) => uploadMachineCuttingFileDirect(workspace.machineId, workspace.requestId, file)))
     const uploaded = [...successful]
-    const failed: File[] = []
+    const failed: FailedUpload[] = []
     settled.forEach((result, index) => {
       if (result.status === 'fulfilled') uploaded.push(result.value)
-      else failed.push(files[index])
+      else {
+        const error = result.reason instanceof MachineCuttingUploadError
+          ? result.reason
+          : new MachineCuttingUploadError(files[index].name, { message: result.reason instanceof Error ? result.reason.message : undefined })
+        failed.push({ file: files[index], code: error.code, message: error.message, retryable: error.retryable })
+      }
     })
     return { successful: uploaded, failed }
   }
@@ -174,12 +182,18 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
     if (incompletePlan) return toast.error(`Нет утверждённой карты раскроя: ${incompletePlan.itemName}`)
     const invalid = Object.values(percentages).some((value) => value === '' || Number(value) < 0 || Number(value) > 100 || Math.round(Number(value) * 10) !== Number(value) * 10)
     if (invalid || (hasSheetMetal && Number(minutes) > 59)) return toast.error('Проверьте проценты отходности и время')
+    if (hasSheetMetal && archiveFiles.length === 0) return toast.error('Для листового металла загрузите минимум одну программу порезки')
     startTransition(async () => {
       if (!hasSheetMetal) {
         await finish([])
         return
       }
+      if (uploadedArchives.length > 0) {
+        await finish(uploadedArchives)
+        return
+      }
       const uploads = await uploadFiles(archiveFiles)
+      setUploadedArchives(uploads.successful)
       if (uploads.failed.length > 0) {
         setUploadFailure(uploads)
         return
@@ -195,6 +209,8 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
       if (selected.length > 20) throw new Error('Можно выбрать не более 20 архивов')
       selected.forEach((file) => validateMachineCuttingUploadRequest({ fileName: file.name, fileSize: file.size }))
       setArchiveFiles(selected)
+      setUploadedArchives([])
+      setUploadFailure(null)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Некорректный архив')
     }
@@ -391,14 +407,14 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
       <Card className="overflow-hidden rounded-2xl border-slate-200 shadow-sm">
         <CardHeader className="border-b border-slate-100 bg-slate-50/70 px-5 py-5 sm:px-7">
           <CardTitle className="flex items-center gap-2 text-xl text-slate-950"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 text-blue-700"><FileArchive className="h-5 w-5" /></span>Программа порезки</CardTitle>
-          <CardDescription>Необязательно. Выберите один или несколько архивов ZIP, RAR или 7Z до 500 МБ каждый.</CardDescription>
+          <CardDescription>Обязательно для листового металла. Выберите один или несколько архивов ZIP, RAR или 7Z до 500 МБ каждый.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 p-5 sm:p-7">
           <Label htmlFor="cutting-archives" className="flex min-h-12 cursor-pointer items-center justify-center rounded-xl border border-dashed border-blue-300 bg-blue-50 px-4 text-center font-medium text-blue-800 hover:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500">
             Выбрать программы порезки
             <input id="cutting-archives" type="file" multiple accept=".zip,.rar,.7z,application/zip,application/x-rar-compressed,application/vnd.rar,application/x-7z-compressed" className="sr-only" onChange={(event) => selectArchives(event.target.files)} />
           </Label>
-          {archiveFiles.length === 0 ? <p className="text-sm text-slate-500">Программа не выбрана — заявку можно завершить без неё.</p> : <ul className="space-y-2" aria-label="Выбранные программы">{archiveFiles.map((file, index) => <li key={`${file.name}-${file.lastModified}-${index}`} className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2"><span className="min-w-0 break-all text-sm font-medium text-slate-800">{file.name}</span><Button type="button" variant="ghost" size="sm" className="min-h-11 shrink-0 text-red-700" onClick={() => setArchiveFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))}>Удалить</Button></li>)}</ul>}
+          {archiveFiles.length === 0 ? <p className="text-sm font-medium text-amber-700">Программа не выбрана. Без успешно загруженного архива отправка недоступна.</p> : <ul className="space-y-2" aria-label="Выбранные программы">{archiveFiles.map((file, index) => <li key={`${file.name}-${file.lastModified}-${index}`} className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2"><span className="min-w-0 break-all text-sm font-medium text-slate-800">{file.name}</span><Button type="button" variant="ghost" size="sm" className="min-h-11 shrink-0 text-red-700" onClick={() => setArchiveFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))}>Исключить</Button></li>)}</ul>}
         </CardContent>
       </Card>
       <Card className="overflow-hidden rounded-2xl border-slate-200 shadow-sm">
@@ -426,26 +442,24 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
     </div>}
     <Dialog open={Boolean(uploadFailure)} onOpenChange={() => undefined}>
       <DialogContent className="sm:max-w-lg" showCloseButton={false}>
-        <DialogHeader><DialogTitle>Не все программы загружены</DialogTitle><DialogDescription>Успешно: {uploadFailure?.successful.length || 0}. Не загружено: {uploadFailure?.failed.length || 0}. Выберите, как завершить заявку.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>Не все программы загружены</DialogTitle><DialogDescription>Успешно: {uploadFailure?.successful.length || 0}. Не загружено: {uploadFailure?.failed.length || 0}. Исправьте загрузку или явно исключите неудачные файлы.</DialogDescription></DialogHeader>
+        <div className="space-y-2">{uploadFailure?.failed.map((item) => <div key={`${item.file.name}-${item.file.lastModified}`} className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm"><p className="break-all font-medium text-red-900">{item.file.name}</p><p className="mt-1 text-red-700">{item.message}</p>{!item.retryable && <p className="mt-1 text-xs text-red-600">Повтор недоступен, измените права или состав заявки.</p>}</div>)}</div>
         <DialogFooter className="flex-col gap-2 sm:flex-col">
           <Button type="button" disabled={pending} className="min-h-11 w-full" onClick={() => startTransition(async () => {
             if (!uploadFailure) return
-            const retried = await uploadFiles(uploadFailure.failed, uploadFailure.successful)
+            const retried = await uploadFiles(uploadFailure.failed.filter((item) => item.retryable).map((item) => item.file), uploadFailure.successful)
+            const permanent = uploadFailure.failed.filter((item) => !item.retryable)
+            retried.failed.unshift(...permanent)
+            setUploadedArchives(retried.successful)
             if (retried.failed.length > 0) setUploadFailure(retried)
             else { setUploadFailure(null); await finish(retried.successful) }
-          })}>Повторить неудачные загрузки</Button>
+          })}>Повторить доступные загрузки</Button>
           <Button type="button" disabled={pending || !uploadFailure?.successful.length} variant="outline" className="min-h-11 w-full" onClick={() => startTransition(async () => {
             if (!uploadFailure) return
             const uploads = uploadFailure.successful
             setUploadFailure(null)
             await finish(uploads)
-          })}>Отправить с загруженными</Button>
-          <Button type="button" disabled={pending} variant="ghost" className="min-h-11 w-full" onClick={() => startTransition(async () => {
-            if (!uploadFailure) return
-            await Promise.all(uploadFailure.successful.map((upload) => cleanupDirectMachineCuttingUpload(workspace.machineId, upload)))
-            setUploadFailure(null)
-            await finish([])
-          })}>Отправить без программы</Button>
+          })}>Исключить неудачные и отправить с загруженными</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

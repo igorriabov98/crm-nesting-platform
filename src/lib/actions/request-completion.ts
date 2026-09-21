@@ -10,16 +10,13 @@ import { getErrorMessage } from '@/lib/utils/get-error-message'
 import { completeStockReservation } from '@/lib/actions/technologist-requests'
 import { resolveCompletionWorkspaceNavigation } from '@/lib/request-completion-navigation'
 import type { RequestStatus } from '@/lib/types'
-import {
-  MACHINE_CUTTING_BUCKET,
-  validateMachineCuttingRegistration,
-  type DirectMachineCuttingUpload,
-} from '@/lib/machine-cutting/files'
+import { validateMachineCuttingRegistration } from '@/lib/machine-cutting/files'
 import { isLongStockPlanReadyForSupply } from '@/lib/request-completion-material-scope'
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import { formatMetalScrapMaterialName } from '@/lib/metal-scrap'
 import type { CompletionFutureBusinessScrap } from '@/lib/request-completion-future-scrap'
 import { buildTechnologistApprovalSnapshot } from '@/lib/server/technologist-approval-snapshot'
+import { requireTechnologistRequestAccess } from '@/lib/technologist-request-access'
 
 const stagedArchiveSchema = z.object({
   requestId: z.string().uuid(),
@@ -167,11 +164,13 @@ type CompletionWorkspaceResult = {
 export async function getCompletionWorkspace(requestId: string): Promise<CompletionWorkspaceResult> {
   try {
     const id = z.string().uuid().parse(requestId)
-    const { userId } = await requirePermission('technologist_requests', 'manage')
+    await requireTechnologistRequestAccess(id, {
+      workflowOperation: 'manage',
+      inventoryOperation: 'manage',
+    })
     const client = db()
     const requestResult = await client.from('technologist_requests').select('id,machine_id,created_by,status').eq('id', id).single()
     if (requestResult.error || !requestResult.data) throw new Error('Заявка не найдена')
-    if (requestResult.data.created_by !== userId) throw new Error('Завершить заявку может только её автор')
     const navigation = resolveCompletionWorkspaceNavigation(requestResult.data.status as RequestStatus, id)
     if (navigation.kind === 'redirect') return { data: null, error: null, redirectTo: navigation.href }
     if (navigation.kind === 'unavailable') throw new Error('Заявка не находится на этапе бронирования')
@@ -269,11 +268,15 @@ export async function getFutureDetailingCompatibilityOptions(query = '') {
 }
 
 export async function finalizeTechnologistRequest(input: z.input<typeof finalizeSchema>) {
-  let stagedArchives: DirectMachineCuttingUpload[] = []
   try {
     const parsed = finalizeSchema.parse(input)
-    stagedArchives = parsed.archives
-    const { userId, supabase } = await requirePermission('technologist_requests', 'manage')
+    const stagedArchives = parsed.archives
+    const access = await requireTechnologistRequestAccess(parsed.requestId, {
+      workflowOperation: 'manage',
+      inventoryOperation: 'manage',
+      allowedStatuses: ['stock_checked'],
+    })
+    const { userId, supabase } = access
     const client = db()
     const [machineResult, sheetResult] = await Promise.all([
       client.from('technologist_requests').select('machine_id,created_by,status,machines(id,name,material_type)').eq('id', parsed.requestId).single(),
@@ -281,11 +284,11 @@ export async function finalizeTechnologistRequest(input: z.input<typeof finalize
     ])
     if (machineResult.error || !machineResult.data) throw new Error('Заявка не найдена')
     if (sheetResult.error) throw new Error('Не удалось проверить состав заявки')
-    if (machineResult.data.created_by !== userId) throw new Error('Завершить заявку может только её автор')
     if (machineResult.data.status !== 'stock_checked') {
       throw new Error('Сначала завершите бронь основного склада')
     }
     const hasSheetMetal = (sheetResult.count || 0) > 0
+    if (hasSheetMetal && stagedArchives.length === 0) throw new Error('Для заявки с листовым металлом загрузите программу порезки')
     if (!hasSheetMetal && stagedArchives.length > 0) throw new Error('Программа порезки доступна только для листового металла')
     if (!hasSheetMetal && (parsed.hours > 0 || parsed.minutes > 0)) throw new Error('Время плазмы доступно только для листового металла')
     for (const archive of stagedArchives) {
@@ -324,21 +327,7 @@ export async function finalizeTechnologistRequest(input: z.input<typeof finalize
     revalidatePath(ROUTES.INVENTORY_METAL_SCRAP)
     revalidatePath(`${ROUTES.SALES_PLAN}/${machineResult.data.machine_id}`)
     return { success: true, data }
-  } catch (error) {
-    if (stagedArchives.length > 0) {
-      const admin = createAdminClient()
-      const paths = stagedArchives.map((archive) => archive.objectPath)
-      const { data: registered } = await (admin as any).from('machine_cutting_archives').select('storage_path').in('storage_path', paths)
-      const { data: staged, error: stagedError } = await (admin as any).from('technologist_request_approval_archives').select('object_path').in('object_path', paths)
-      const registeredPaths = new Set([
-        ...(registered || []).map((row: { storage_path: string }) => row.storage_path),
-        ...(staged || []).map((row: { object_path: string }) => row.object_path),
-      ])
-      const orphanPaths = paths.filter((path) => !registeredPaths.has(path))
-      if (!stagedError && orphanPaths.length > 0) await admin.storage.from(MACHINE_CUTTING_BUCKET).remove(orphanPaths)
-    }
-    return { success: false, error: getErrorMessage(error) }
-  }
+  } catch (error) { return { success: false, error: getErrorMessage(error) } }
 }
 
 export async function getCompletionCorrectionWorkspace(requestId: string) {

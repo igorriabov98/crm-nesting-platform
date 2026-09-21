@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
+import { PermissionDeniedError } from '@/lib/permissions/server'
 import {
   MACHINE_CUTTING_BUCKET,
   machineCuttingUploadPrefix,
@@ -14,6 +14,7 @@ import {
   assertMachineCuttingUploadAccess,
   loadMachineCuttingUploadContext,
 } from '@/lib/machine-cutting/server'
+import { TechnologistRequestAccessError, requireTechnologistRequestAccess } from '@/lib/technologist-request-access'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,20 +33,28 @@ const cleanupSchema = z.object({
   objectPath: z.string().min(1).max(700),
 })
 
-function errorResponse(error: unknown, fallback: string) {
+function errorResponse(error: unknown, fallback: string, file: string | null = null) {
+  const accessError = error instanceof TechnologistRequestAccessError ? error : null
   const denied = error instanceof PermissionDeniedError || error instanceof MachineCuttingUploadDeniedError
+  const message = error instanceof Error ? error.message : fallback
   return NextResponse.json(
-    { error: error instanceof Error ? error.message : fallback },
-    { status: denied ? 403 : 400 },
+    { error: message, file, code: accessError?.code || (denied ? 'access_denied' : 'upload_invalid'), message, retryable: accessError?.retryable ?? !denied },
+    { status: accessError?.status || (denied ? 403 : 400) },
   )
 }
 
 export async function POST(request: NextRequest) {
+  let fileName: string | null = null
   try {
     const input = uploadSchema.parse(await request.json())
-    const permission = await requirePermission('machine_cutting', 'manage')
+    fileName = input.fileName
+    const permission = await requireTechnologistRequestAccess(input.requestId, {
+      workflowOperation: 'manage',
+      inventoryOperation: 'manage',
+      allowedStatuses: ['stock_checked'],
+    })
     const context = await loadMachineCuttingUploadContext(input.machineId, input.requestId)
-    const uploadTarget = assertMachineCuttingUploadAccess(context, permission, { allowPendingRequest: true })
+    const uploadTarget = assertMachineCuttingUploadAccess(context, permission, { allowPendingRequest: true, canAccessRequest: true })
     const { extension } = validateMachineCuttingUploadRequest({ fileName: input.fileName, fileSize: input.size })
     const objectPath = `${machineCuttingUploadPrefix(input.machineId, uploadTarget.request.id)}${Date.now()}-${randomUUID()}${extension}`
 
@@ -63,16 +72,20 @@ export async function POST(request: NextRequest) {
       },
     })
   } catch (error) {
-    return errorResponse(error, 'Не удалось подготовить загрузку архива')
+    return errorResponse(error, 'Не удалось подготовить загрузку архива', fileName)
   }
 }
 
 export async function DELETE(request: NextRequest) {
   try {
     const input = cleanupSchema.parse(await request.json())
-    const permission = await requirePermission('machine_cutting', 'manage')
+    const permission = await requireTechnologistRequestAccess(input.requestId, {
+      workflowOperation: 'manage',
+      inventoryOperation: 'manage',
+      allowedStatuses: ['stock_checked'],
+    })
     const context = await loadMachineCuttingUploadContext(input.machineId, input.requestId, input.completionId)
-    assertMachineCuttingUploadAccess(context, permission, { allowArchivedCleanup: true, allowPendingRequest: true })
+    assertMachineCuttingUploadAccess(context, permission, { allowArchivedCleanup: true, allowPendingRequest: true, canAccessRequest: true })
     validateMachineCuttingRegistration({
       machineId: input.machineId,
       requestId: input.requestId,

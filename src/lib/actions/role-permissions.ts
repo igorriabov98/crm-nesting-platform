@@ -524,9 +524,30 @@ export async function saveDepartmentAccessPermissions(input: DepartmentAccessPer
     if (changes.some(row => !row.expectedRevision || !/^\d+$/.test(row.expectedRevision))) throw new Error('Обновите матрицу перед сохранением')
     const {data, error} = await (context.supabase as unknown as RpcClient).rpc('crm_save_matrix', {p_changes: changes})
     if (error) throw new Error(error.message || 'Не удалось сохранить права')
+    const saved = data as DepartmentAccessPermissionInput[]
+    const comparable = (row: DepartmentAccessPermissionInput) => JSON.stringify({
+      departmentId: row.departmentId,
+      subjectScope: row.subjectScope,
+      resourceKey: row.resourceKey,
+      canView: row.canView,
+      canManage: row.canManage,
+      factoryScope: row.factoryScope,
+      companyViewScope: row.companyViewScope,
+      companyManageScope: row.companyManageScope,
+    })
+    const expectedByKey = new Map(normalized.map((row) => [
+      `${row.departmentId}:${row.subjectScope}:${row.resourceKey}`,
+      comparable(row),
+    ]))
+    const confirmed = Array.isArray(saved)
+      && saved.length === normalized.length
+      && saved.every((row) => expectedByKey.get(`${row.departmentId}:${row.subjectScope}:${row.resourceKey}`) === comparable(row))
+    if (!confirmed) {
+      throw new Error('Сервер вернул другие значения доступа. Черновик сохранён — обновите матрицу и проверьте конфликт.')
+    }
     revalidatePath('/', 'layout')
     revalidatePath(ROUTES.ADMIN_ACCESS_SETTINGS)
-    return {success: true, error: null, permissions: data as DepartmentAccessPermissionInput[]}
+    return {success: true, error: null, permissions: saved}
   } catch (error) {
     return {success: false, error: error instanceof Error ? error.message : 'Не удалось сохранить права', permissions: null}
   }
