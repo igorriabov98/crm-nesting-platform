@@ -11,9 +11,10 @@ export function evaluateReservationCapability(input: {
   userFactoryId: string | null
   targetFactoryId: string | null
   workflowDeniedReason: string
+  inventoryDeniedReason?: string
 }): ReservationCapability {
   if (!input.hasWorkflowPermission) return { allowed: false, reason: input.workflowDeniedReason }
-  if (!input.hasInventoryManage) return { allowed: false, reason: 'Нет права управлять складом' }
+  if (!input.hasInventoryManage) return { allowed: false, reason: input.inventoryDeniedReason || 'Нет права управлять складом' }
   if (input.isAdmin || input.inventoryFactoryScope === 'all') return { allowed: true, reason: null }
   if (!input.userFactoryId) {
     return {

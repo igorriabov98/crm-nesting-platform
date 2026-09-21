@@ -817,7 +817,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                               {resource.supportsFactoryScope && (
                                 <TableRow className="bg-muted/20 hover:bg-muted/30">
                                   <TableCell className="whitespace-normal px-4 py-3 align-top">
-                                    <div className="font-medium text-foreground">Заводы в очереди</div>
+                                    <div className="font-medium text-foreground">Доступ к заводам</div>
                                     <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
                                       По умолчанию виден только завод сотрудника.
                                     </p>

@@ -9,6 +9,7 @@ import { recordMaterialUsage } from '@/lib/actions/materials'
 import { repairImportedSheetMetalMaterials } from '@/lib/actions/request-sheet-metal-materials'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import { requireAnyPermission, requirePermission } from '@/lib/permissions/server'
+import { requireTechnologistRequestAccess } from '@/lib/technologist-request-access'
 import { assertFactoryAccess } from '@/lib/permissions/factory-scope'
 import { assertMachineCanUseTechnologistRequest } from '@/lib/actions/machine-progress'
 import { unreserveInventoryReservation } from '@/lib/inventory/secure-rpc'
@@ -666,14 +667,17 @@ export async function completeStockReservation(
   requestId: string,
 ): Promise<ActionResult<{ href: string; advancedToWarehouse?: boolean; submittedRevision?: boolean }>> {
   try {
-    const { db, userId } = await requireRequestPermission('manage')
-    const request = await getRequestMachine(db, requestId)
-    await assertMachineNotArchived(db, request.machine_id)
-
-    await assertMachineCanUseTechnologistRequest(db, request.machine_id)
-
-    if (request.status !== 'pending_stock_check' && request.status !== 'stock_checked') {
-      throw new Error('Бронь уже завершена или заявка не находится на проверке склада')
+    const access = await requireTechnologistRequestAccess(requestId, {
+      workflowOperation: 'manage',
+      inventoryOperation: 'manage',
+      allowedStatuses: ['pending_stock_check', 'stock_checked'],
+    })
+    const db = access.supabase as unknown as LooseDb
+    const userId = access.userId
+    const request = {
+      id: access.request.id,
+      machine_id: access.request.machine_id,
+      status: access.request.status as RequestStatus,
     }
 
     const admin = createAdminClient() as unknown as LooseDb

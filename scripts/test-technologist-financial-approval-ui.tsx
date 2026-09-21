@@ -96,6 +96,8 @@ test('snapshot uses authoritative source rows without changing their order and l
   const source = { request_pipe: [
     { id:'b', pipe_type:'wire', sort_order:2, remainder_length_mm:0, remainder_kg:12, calculated_weight_kg:12 },
     { id:'a', pipe_type:'round', sort_order:1, remainder_length_mm:1000 },
+  ], request_paint: [
+    { id:'paint-id', paint_type:'Порошковая краска', ral_code:'RAL 7016', finish:'Матовая', remainder_kg:15, weight_with_waste_kg:15 },
   ], reservations: [{ request_item_table:'request_pipe', request_item_id:'b', logical_reserved_quantity:5, is_business_scrap:true }] }
   const before = JSON.stringify(source)
   const result = helper.snapshotFromSource(source,'request',{id:'machine',name:'Заказ',material_type:'standard'}, { decision:'none', enteredPlasmaMinutes:0, wasteItems:[], futureItems:[], archives:[] })
@@ -105,4 +107,8 @@ test('snapshot uses authoritative source rows without changing their order and l
   assert.equal(wire.quantity, 12)
   assert.equal(wire.unit, 'кг')
   assert.equal(wire.businessScrapReserved, 5)
+  const paint = result.items.find((item) => item.key === 'request_paint:paint-id')!
+  assert.equal(paint.name, 'Порошковая краска · RAL 7016 · Матовая')
+  assert.equal(paint.quantity, 15)
+  assert.notEqual(paint.name, 'Позиция paint-id')
 })

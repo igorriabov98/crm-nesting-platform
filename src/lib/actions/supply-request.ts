@@ -984,7 +984,7 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
     })
     result.data.can_reserve = reservationCapability.allowed
     result.data.can_unreserve = reservationCapability.allowed
-    result.data.can_complete_reservation = hasPermission(permissions, 'technologist_requests', 'manage')
+    result.data.can_complete_reservation = reservationCapability.allowed
     result.data.reservation_block_reason = reservationCapability.reason
     return result
   } catch (error) {
@@ -1026,7 +1026,7 @@ export async function getRequestForBusinessScrap(requestId: string): Promise<{ d
     })
     result.data.can_reserve = reservationCapability.allowed
     result.data.can_unreserve = reservationCapability.allowed
-    result.data.can_complete_reservation = hasPermission(permissions, 'technologist_requests', 'manage')
+    result.data.can_complete_reservation = reservationCapability.allowed
     result.data.reservation_block_reason = reservationCapability.reason
     return result
   } catch (error) {

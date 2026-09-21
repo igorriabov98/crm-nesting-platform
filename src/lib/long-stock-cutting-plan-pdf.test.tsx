@@ -150,6 +150,7 @@ test('circle, pipe and knife cutting plans render with the bundled PDF font', as
 
 test('download route only resolves the stored object and cutting-area UI blocks invalid versions', () => {
   const route = readFileSync('src/app/api/production/cutting-area/cutting-plans/[versionId]/route.ts', 'utf8')
+  const technologistRoute = readFileSync('src/app/api/technologist/requests/[requestId]/cutting-plans/[versionId]/route.ts', 'utf8')
   const action = readFileSync('src/lib/actions/long-stock-cutting-plans.ts', 'utf8')
   const page = readFileSync('src/components/features/production/CuttingAreaPage.tsx', 'utf8')
   const migration = readFileSync('supabase/migrations/20260818160000_long_stock_cutting_plan_pdf.sql', 'utf8')
@@ -158,6 +159,9 @@ test('download route only resolves the stored object and cutting-area UI blocks 
   assert(route.includes('resolveFileResponse'))
   assert(!route.includes('renderToBuffer'))
   assert(route.includes("version.status === 'invalid'"))
+  assert(technologistRoute.includes('requireTechnologistRequestAccess'))
+  assert(technologistRoute.includes('Раскладка не принадлежит этой заявке'))
+  assert(!technologistRoute.includes('requireClientCommercialDocumentVisibility'))
   assert(action.includes('prepareLongStockCuttingPlanPdf'))
   assert(action.includes("'fn_approve_long_stock_cutting_plan_version_v2'"))
   assert(page.includes('Карты раскроя'))

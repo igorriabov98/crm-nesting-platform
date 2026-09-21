@@ -67,7 +67,7 @@ export async function loadMachineCuttingUploadContext(
 export function assertMachineCuttingUploadAccess(
   context: MachineCuttingUploadContext,
   actor: { userId: string; permissionDetails: { isAdminPosition: boolean } },
-  options: { allowArchivedCleanup?: boolean; allowPendingRequest?: boolean } = {},
+  options: { allowArchivedCleanup?: boolean; allowPendingRequest?: boolean; canAccessRequest?: boolean } = {},
 ) {
   if (context.machine.is_archived && !options.allowArchivedCleanup) {
     throw new MachineCuttingUploadDeniedError('В архивную машину нельзя загружать новые файлы')
@@ -78,10 +78,10 @@ export function assertMachineCuttingUploadAccess(
   if (!context.completion && !options.allowPendingRequest) {
     throw new MachineCuttingUploadDeniedError('Загрузка станет доступна после завершения заявки технолога')
   }
-  if (!context.completion && options.allowPendingRequest && context.request.created_by !== actor.userId) {
+  if (!context.completion && options.allowPendingRequest && !options.canAccessRequest && context.request.created_by !== actor.userId) {
     throw new MachineCuttingUploadDeniedError('До завершения программы может загрузить только автор заявки')
   }
-  if (!canUploadMachineCutting({
+  if (!options.canAccessRequest && !canUploadMachineCutting({
     userId: actor.userId,
     canManage: true,
     canBypassOwnership: actor.permissionDetails.isAdminPosition,

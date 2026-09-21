@@ -1392,7 +1392,7 @@ function OrganizationEditor({
             </>
           )}
           {(isUser || isProfile || editor.kind === "department") && (
-            <Field label="Завод">
+            <Field label={isProfile ? "Основной завод" : "Завод"}>
               <select
                 className={selectClass}
                 name="factory_id"
@@ -1405,6 +1405,11 @@ function OrganizationEditor({
                   </option>
                 ))}
               </select>
+              {isProfile && (
+                <span className="text-xs text-muted-foreground">
+                  Доступ к другим заводам настраивается отдельно в матрице доступа. «Не указан» не означает «Все заводы».
+                </span>
+              )}
             </Field>
           )}
           {isProfile && (

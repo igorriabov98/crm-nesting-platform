@@ -120,6 +120,13 @@ function fixture(options: {
     '@/lib/materials/pipe-profile': pipeProfile,
     '@/lib/metal-scrap': metalScrap,
     '@/lib/server/technologist-approval-snapshot': { buildTechnologistApprovalSnapshot: forbiddenMutation },
+    '@/lib/technologist-request-access': { requireTechnologistRequestAccess: async (id: string, access: { workflowOperation: string; inventoryOperation: string }) => {
+      assert.equal(id, requestId)
+      assert.equal(access.workflowOperation, 'manage')
+      assert.equal(access.inventoryOperation, 'manage')
+      if (options.createdBy === 'another-author') throw new Error('Действие доступно только её автору или назначенному исполнителю доработки')
+      return { userId: 'author-1', supabase: db }
+    } },
   }
   const loadedModule = { exports: {} as { getCompletionWorkspace: (id: string) => Promise<WorkspaceResult> } }
   vm.runInNewContext(actionCode, {
@@ -227,10 +234,10 @@ test('scrap read failures are reported instead of presenting a false empty state
   }
 })
 
-test('completion keeps author and lifecycle checks before loading any scraps', async () => {
+test('completion keeps request access and lifecycle checks before loading any scraps', async () => {
   const foreign = fixture({ createdBy: 'another-author' })
   assert.match((await foreign.load()).error ?? '', /только её автор/)
-  assert.equal(foreign.calls.length, 1)
+  assert.equal(foreign.calls.length, 0)
   const completed = fixture({ requestStatus: 'submitted_to_supply' })
   assert.equal((await completed.load()).redirectTo, `${routes.ROUTES.TECHNOLOGIST_REQUEST_RESULTS}/${requestId}`)
   assert.equal(completed.calls.length, 1)

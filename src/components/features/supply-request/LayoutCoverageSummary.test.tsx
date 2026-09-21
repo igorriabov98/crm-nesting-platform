@@ -27,7 +27,7 @@ test('layout coverage shows reserved sources, source factories and purchased bar
     <>
       <LayoutCoverageSources coverage={coverage} />
       <LayoutCoveragePurchase coverage={coverage} />
-      <LayoutCoverageState coverage={coverage} />
+      <LayoutCoverageState coverage={coverage} requestId="request" />
     </>,
   )
   assert.match(markup, /Основной склад — забронировано по раскладке:/)
@@ -37,6 +37,7 @@ test('layout coverage shows reserved sources, source factories and purchased bar
   assert.match(markup, /1 × 7\s000 мм/)
   assert.match(markup, /Всего к закупке: 7\s000 мм/)
   assert.match(markup, /Открыть раскладку №3/)
+  assert.match(markup, /\/api\/technologist\/requests\/request\/cutting-plans\/version/)
 })
 
 test('missing and stale layouts never look like available stock', () => {

@@ -11,6 +11,24 @@ type SignedUploadResponse = {
     token: string
   }
   error?: string
+  file?: string | null
+  code?: string
+  message?: string
+  retryable?: boolean
+}
+
+export class MachineCuttingUploadError extends Error {
+  readonly file: string
+  readonly code: string
+  readonly retryable: boolean
+
+  constructor(file: string, input?: Pick<SignedUploadResponse, 'code' | 'message' | 'error' | 'retryable'>) {
+    super(input?.message || input?.error || 'Не удалось загрузить архив')
+    this.name = 'MachineCuttingUploadError'
+    this.file = file
+    this.code = input?.code || 'upload_failed'
+    this.retryable = input?.retryable !== false
+  }
 }
 
 export async function cleanupDirectMachineCuttingUpload(
@@ -38,7 +56,7 @@ export async function uploadMachineCuttingFileDirect(machineId: string, requestI
   })
   const payload = await response.json() as SignedUploadResponse
   if (!response.ok || !payload.data) {
-    throw new Error(payload.error || 'Не удалось подготовить загрузку архива')
+    throw new MachineCuttingUploadError(file.name, payload)
   }
 
   const { bucket, completionId, objectPath, token } = payload.data
@@ -56,7 +74,11 @@ export async function uploadMachineCuttingFileDirect(machineId: string, requestI
   })
   if (error) {
     await cleanupDirectMachineCuttingUpload(machineId, upload)
-    throw error
+    throw new MachineCuttingUploadError(file.name, {
+      code: 'storage_upload_failed',
+      message: error.message,
+      retryable: true,
+    })
   }
   return upload
 }

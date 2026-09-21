@@ -78,6 +78,16 @@ BEGIN
  BEGIN
    PERFORM public.crm_save_matrix(jsonb_build_array(item || '{"expectedRevision":null}')); RAISE EXCEPTION 'TEST FAILURE: null revision accepted';
  EXCEPTION WHEN serialization_failure THEN NULL; END;
+ SELECT revision INTO ver FROM public.department_access_permissions WHERE department_id=dept AND subject_scope='head' AND resource_key='inventory';
+ item:=jsonb_build_object('departmentId',dept,'subjectScope','head','resourceKey','inventory','canView',true,'canManage',false,'factoryScope','all','companyViewScope','own','companyManageScope','own','expectedRevision',ver::text);
+ result:=public.crm_save_matrix(jsonb_build_array(item));
+ ASSERT result->0->>'factoryScope'='all','Inventory all-factories scope was not returned';
+ ASSERT (SELECT factory_scope='all' FROM public.department_access_permissions WHERE department_id=dept AND subject_scope='head' AND resource_key='inventory'),'Inventory all-factories scope was not persisted';
+ BEGIN
+   SELECT revision INTO ver FROM public.department_access_permissions WHERE department_id=dept AND subject_scope='member' AND resource_key='tasks';
+   item:=jsonb_build_object('departmentId',dept,'subjectScope','member','resourceKey','tasks','canView',true,'canManage',true,'factoryScope','all','companyViewScope','own','companyManageScope','own','expectedRevision',ver::text);
+   PERFORM public.crm_save_matrix(jsonb_build_array(item)); RAISE EXCEPTION 'TEST FAILURE: unsupported all-factories scope accepted';
+ EXCEPTION WHEN invalid_parameter_value THEN NULL; END;
  -- A head and an unfinished task must both prevent blocking.
  INSERT INTO public.tasks(id,assigned_to,task_type,title,status) VALUES(task_id,employee,'agenda_pool_distribution','Organization handoff task','pending');
  BEGIN

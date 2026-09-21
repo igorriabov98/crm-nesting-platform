@@ -7,9 +7,10 @@ import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
 
 type Props = {
   rows: SupplyRequestRow<RequestKnives>[]
+  requestId: string
 }
 
-export function SupplyKnivesTable({ rows }: Props) {
+export function SupplyKnivesTable({ rows, requestId }: Props) {
   return (
     <Section title="Ножи">
       <table className={tableClass}>
@@ -35,7 +36,7 @@ export function SupplyKnivesTable({ rows }: Props) {
                 <td className={tdClass}>{row.calculated_weight_kg ? `${formatAmount(row.calculated_weight_kg)} кг` : '—'}</td>
                 <td className={tdClass}><LayoutCoverageSources coverage={row.layout_coverage} /></td>
                 <td className={tdClass}><LayoutCoveragePurchase coverage={row.layout_coverage} /></td>
-                <td className={tdClass}><LayoutCoverageState coverage={row.layout_coverage} /></td>
+                <td className={tdClass}><LayoutCoverageState coverage={row.layout_coverage} requestId={requestId} /></td>
                 <td className={tdClass}><OrderStatusCell table="request_knives" status={row.order_status} needed={needed} reserved={reserved} covered={row.covered_quantity} /></td>
               </tr>
             )
