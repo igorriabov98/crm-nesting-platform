@@ -43,7 +43,7 @@ import {
 } from '@/lib/supply-orders/long-stock-purchase-plan'
 import {
   calculateSupplyReceiptProgress,
-  deliveredSupplyQuantity,
+  reservedSupplyQuantity,
 } from '@/lib/supply-orders/receiving-supply-progress'
 import { resolveActualMaterialDate, type MaterialCompletionItem } from '@/lib/supply-orders/material-completion'
 import { wholeBarReceiptCapacity, wholeBarLogicalQuantity } from '@/lib/supply-orders/whole-bar-receiving'
@@ -2135,10 +2135,6 @@ function schedulePlannedQuantity(schedule: SupplyOrderDeliverySchedule) {
   return Number(schedule.quantity || 0)
 }
 
-function scheduleDeliveredQuantity(schedule: SupplyOrderDeliverySchedule) {
-  return deliveredSupplyQuantity(schedule)
-}
-
 function toScheduleDto(
   schedule: ReceivingScheduleRow,
   supplierNameMap: Map<string, string>,
@@ -2284,7 +2280,7 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
         .reduce((sum, schedule) => sum + schedulePlannedQuantity(schedule), 0)
       const deliveredScheduleQuantity = positionInactive ? 0 : itemSchedules
         .filter((schedule) => schedule.status === 'delivered')
-        .reduce((sum, schedule) => sum + scheduleDeliveredQuantity(schedule), 0)
+        .reduce((sum, schedule) => sum + reservedSupplyQuantity(schedule), 0)
       const unscheduledQuantity = Math.max(activeToOrder - plannedScheduleQuantity - deliveredScheduleQuantity, 0)
       const supplyDeliveryDates = itemSchedules.length > 0
         ? itemSchedules.map((schedule) => schedule.delivery_date)

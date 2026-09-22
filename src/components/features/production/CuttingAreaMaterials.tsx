@@ -33,12 +33,12 @@ export function CuttingAreaMaterialStatus({ summary }: { summary: CuttingAreaMat
           {state === 'delivery' && <Truck aria-hidden="true" className="size-3.5" />}
           {state === 'received' && <PackageCheck aria-hidden="true" className="size-3.5" />}
           {state === 'stock' && <Warehouse aria-hidden="true" className="size-3.5" />}
-          {label}<span className="tabular-nums"> · {summary.counts[state]}</span>
+          {label}<span className="tabular-nums"> · {summary.counts[state]} позиций</span>
           <ChevronDown aria-hidden="true" className="size-3.5" />
         </PopoverTrigger>
         <PopoverContent align="start" sideOffset={6} className="w-96 max-w-[calc(100vw-2rem)] p-4 motion-reduce:animate-none">
-          <PopoverTitle>{label} · {summary.counts[state]}</PopoverTitle>
-          <PopoverDescription>Конкретные позиции и количество потребности по каждой из них.</PopoverDescription>
+          <PopoverTitle>{label} · позиций: {summary.counts[state]}</PopoverTitle>
+          <PopoverDescription>Количество в этом состоянии. Частично обеспеченная позиция может быть в нескольких группах.</PopoverDescription>
           <ul className="mt-3 max-h-72 space-y-2 overflow-y-auto" aria-label={`Позиции: ${label.toLocaleLowerCase('ru')}`}>
             {summary.details[state].map((detail) => (
               <li key={`${detail.requestId}:${detail.id}`} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
@@ -48,8 +48,10 @@ export function CuttingAreaMaterialStatus({ summary }: { summary: CuttingAreaMat
                     <p className="break-words text-sm font-medium text-slate-950">{detail.label}</p>
                     {detail.description && <p className="mt-0.5 break-words text-xs text-slate-600">{detail.description}</p>}
                   </div>
-                  <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-900">{detail.quantity}</span>
+                  <span className="max-w-[45%] text-right text-sm font-semibold tabular-nums text-slate-900">{detail.quantity}</span>
                 </div>
+                <p className="mt-2 text-xs text-slate-600">Общая потребность: {detail.demandQuantity} · Со склада: {detail.stockQuantity}</p>
+                {detail.notes.map((note, index) => <p key={index} className="mt-1 text-xs text-slate-600">{note}</p>)}
               </li>
             ))}
           </ul>

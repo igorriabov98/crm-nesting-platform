@@ -56,16 +56,16 @@ export function SupplyDateOrderExportButton({
       disabled={!hasItems || isExporting}
       aria-label={hasItems
         ? `Скачать заказ: ${itemCount} незаказанных материалов`
-        : 'Все материалы на эту дату уже заказаны'}
+        : 'Нет незапланированного остатка для заказа на эту дату; приёмка проверяется отдельно'}
       title={hasItems
         ? 'Скачать все незаказанные материалы этой даты'
-        : 'Все материалы на эту дату уже заказаны'}
+        : 'Нет незапланированного остатка для заказа на эту дату; приёмка проверяется отдельно'}
       onClick={download}
     >
       {isExporting
         ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
         : <FileSpreadsheet className="h-4 w-4" aria-hidden="true" />}
-      <span>{isExporting ? 'Формирование…' : hasItems ? 'Скачать заказ' : 'Всё заказано'}</span>
+      <span>{isExporting ? 'Формирование…' : hasItems ? 'Скачать заказ' : 'Нет материалов для заказа'}</span>
       {hasItems && !isExporting && (
         <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-primary">
           {itemCount}

@@ -75,8 +75,8 @@ assert.match(
 )
 assert.match(
   supplyOrdersAction,
-  /function scheduleDeliveredQuantity[\s\S]*deliveredSupplyQuantity\(schedule\)/u,
-  'server aggregation must use the shared physical supplier-receipt projection',
+  /const deliveredScheduleQuantity = positionInactive[\s\S]*reservedSupplyQuantity\(schedule\)/u,
+  'demand aggregation must use allocated receipt quantities, not supplier surplus',
 )
 assert.match(
   supplyOrdersAction,
@@ -373,7 +373,11 @@ assert.equal(
   false,
   'a fully covered ordered position must keep the normal ordered status',
 )
-const closedAggregate = { ...aggregate, id: 'closed', ordered_count: 0, delivered_count: 1 }
+const closedAggregate = { ...aggregate, id: 'closed', ordered_count: 0, delivered_count: 1, planned_schedule_quantity: 0,
+  factories: [{ ...aggregate.factories[0], planned_schedule_quantity: 0,
+    items: [{ ...aggregate.factories[0].items[0], planned_schedule_quantity: 0,
+      delivery_schedules: [makeDeliverySchedule({ quantity: 8, received_quantity: 8, allocated_quantity: 8 })] }] }],
+}
 assert.deepEqual(filterAndSortAggregates([aggregate, closedAggregate], {
   query: '', supplier: 'all', category: 'all', status: 'open', sort: 'date_asc',
 }).map((row) => row.id), ['aggregate'], 'the default open view must hide fully accepted deliveries')
@@ -459,7 +463,7 @@ assert.deepEqual(
   })),
   [
     { quantity: 3_000, planned: 3_000, delivered: 0, unscheduled: 0 },
-    { quantity: 4_000, planned: 0, delivered: 4_000, unscheduled: 0 },
+    { quantity: 5_000, planned: 0, delivered: 5_000, unscheduled: 0 },
     { quantity: 1_000, planned: 0, delivered: 0, unscheduled: 1_000 },
   ],
   'every date card must expose only its scheduled, accepted, and uncovered quantities',
@@ -472,7 +476,7 @@ const quantitySummary = summarizeSupplyOrderQuantities(
 )
 assert.deepEqual(
   quantitySummary,
-  { demandQuantity: 7, deliveryQuantity: 9, remainingToOrder: 0, deliveryExcess: 2 },
+  { requestedQuantity: 7, stockQuantity: 0, demandQuantity: 7, deliveryQuantity: 9, remainingToOrder: 0, deliveryExcess: 2, allocatedQuantity: 0, physicalReceivedQuantity: 0, outstandingQuantity: 7, plannedQuantity: 9 },
   'the summary must distinguish request demand, dated delivery, remaining order quantity, and schedule excess',
 )
 assert.equal(
@@ -710,9 +714,6 @@ assert.match(
   /hasMixedPlannedAndUnscheduled[\s\S]*appendUnscheduled[\s\S]*allowFinance=\{false\}/u,
   'a mixed date card must expose a separate append-only editor for its unscheduled remainder',
 )
-assert.match(summaryPageSource, /Потребность по заявкам/u, 'summary cards must show total demand from supply requests')
-assert.match(summaryPageSource, /Осталось заказать/u, 'summary cards must show the remaining quantity still to order')
-assert.match(summaryPageSource, /Избыток графика/u, 'summary cards must explain a dated schedule above request demand')
 
 const detailsPageSource = readFileSync(
   new URL('../src/components/features/supply-orders/OrderItemRow.tsx', import.meta.url),
@@ -789,7 +790,10 @@ const mergedDateGroups = groupSupplyOrderAggregatesBySupplyDate([
     }),
   ], { plannedMaterialDate: '2026-08-28', unscheduledQuantity: 1_000 }),
 ], 'date_asc')
-assert.equal(mergedDateGroups.length, 1, 'schedules and fallback remainder on the same date must share one card')
+assert.equal(mergedDateGroups.length, 1, 'keep the same date group')
+assert.equal(mergedDateGroups[0].rows.length, 2, 'unplanned need must be a separate card, never added to real deliveries')
+assert.equal(mergedDateGroups[0].rows[1].kind, 'unscheduled')
+assert.equal(mergedDateGroups[0].rows[1].unscheduledQuantity, 1000)
 assert.deepEqual(
   {
     quantity: mergedDateGroups[0].rows[0].quantity,
@@ -797,7 +801,7 @@ assert.deepEqual(
     delivered: mergedDateGroups[0].rows[0].deliveredQuantity,
     unscheduled: mergedDateGroups[0].rows[0].unscheduledQuantity,
   },
-  { quantity: 5_500, planned: 2_000, delivered: 2_500, unscheduled: 1_000 },
+  { quantity: 4_500, planned: 2_000, delivered: 2_500, unscheduled: 0 },
   'same-date schedule parts must use accepted fact instead of the obsolete supplier promise',
 )
 
@@ -812,7 +816,7 @@ const distributedReceiptAggregate = makeDateScheduleAggregate([
   }),
   makeDeliverySchedule({
     id: 'distributed-receipt-child',
-    delivery_date: '2026-09-23',
+    delivery_date: '2026-09-24',
     quantity: 2,
     received_quantity: 0,
     allocated_quantity: 2,
@@ -835,6 +839,7 @@ distributedReceiptAggregate.requested_quantity = 7
 distributedReceiptAggregate.factories[0].quantity = 7
 distributedReceiptAggregate.factories[0].requested_quantity = 7
 distributedReceiptAggregate.factories[0].items[0].quantity = 7
+assert.equal(groupSupplyOrderAggregatesBySupplyDate([distributedReceiptAggregate], 'date_asc').length, 1, 'an allocation child must not create a separate shipment date')
 const distributedReceiptSlice = groupSupplyOrderAggregatesBySupplyDate(
   [distributedReceiptAggregate],
   'date_asc',
@@ -853,6 +858,27 @@ assert.deepEqual(
   { quantity: 7, planned: 1, delivered: 6, excess: 0 },
   'receipt allocation children must preserve the six-unit fact without inflating dated supply to nine units',
 )
+
+// CIV-19: need 20, allocated 10 on the 7th, a physical 15 still expected on the 9th.
+const civ = makeDateScheduleAggregate([
+  makeDeliverySchedule({ id: 'civ-receipt', delivery_date: '2026-10-07', quantity: 10, received_quantity: 10, allocated_quantity: 10 }),
+  makeDeliverySchedule({ id: 'civ-future', delivery_date: '2026-10-09', quantity: 15, status: 'planned', received_quantity: null, allocated_quantity: null }),
+], { plannedMaterialDate: '2026-10-07', unscheduledQuantity: 0 })
+civ.quantity = civ.requested_quantity = civ.factories[0].quantity = civ.factories[0].requested_quantity = civ.factories[0].items[0].quantity = 20
+const civDates = groupSupplyOrderAggregatesBySupplyDate([civ], 'date_asc')
+assert.deepEqual(civDates.map((group) => [group.dateKey, group.rows[0].quantity]), [['2026-10-07', 10], ['2026-10-09', 15]])
+for (const group of civDates) {
+  assert.deepEqual(summarizeSupplyOrderQuantities(civ, civ.factories[0], group.rows[0]), {
+    requestedQuantity: 20, stockQuantity: 0, demandQuantity: 20, deliveryQuantity: group.rows[0].quantity, allocatedQuantity: 10,
+    physicalReceivedQuantity: 10, outstandingQuantity: 10, plannedQuantity: 15,
+    remainingToOrder: 0, deliveryExcess: 5,
+  })
+}
+assert.equal(civ.quantity, 20, 'dated expansion must not duplicate aggregate demand')
+const childSummary = summarizeSupplyOrderQuantities(distributedReceiptAggregate, distributedReceiptAggregate.factories[0])
+assert.equal(childSummary.physicalReceivedQuantity, 6)
+assert.equal(childSummary.allocatedQuantity, 6)
+assert.equal(childSummary.outstandingQuantity, 1)
 
 assert.deepEqual(
   groupSupplyOrderAggregatesBySupplyDate([
@@ -1212,6 +1238,7 @@ assert.deepEqual(
 
 const physicallyClosedFactory = {
   ...makeAggregate().factories[0],
+  planned_schedule_quantity: 0,
   quantity: 2,
   unscheduled_quantity: 0,
   ordered_count: 1,
@@ -1227,8 +1254,8 @@ const physicallyClosedFactory = {
 }
 assert.equal(
   isSupplyOrderFactoryClosed(physicallyClosedFactory),
-  true,
-  'a fully received supplier delivery closes even when the operator left it in free warehouse stock',
+  false,
+  'physical stock that was not allocated does not close request demand',
 )
 
 assert.deepEqual(

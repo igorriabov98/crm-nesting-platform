@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { plannedLogicalCoverage } from '../src/lib/production-cutting-area/planned-logical-coverage'
+import { getMaterialRequestStockCoverage, formatMaterialRequestStockQuantity } from '../src/lib/material-request-stock-coverage'
 import { readFileSync } from 'node:fs'
 import {
   buildCuttingAreaMaterialSummaries,
@@ -37,6 +39,8 @@ assert.deepEqual(summarize().details.not_ordered, [{
   label: 'Подшипник 6204',
   description: 'ГОСТ 8338-75',
   quantity: '10 шт',
+  demandQuantity: '10 шт', stockQuantity: '0 шт',
+  notes: ['Для этого количества нет подтверждённого графика поставки.'],
 }], 'Агрегат «Не заказано» должен раскрывать конкретную позицию и количество')
 const sheetWithSteelType = summarize([{
   ...item,
@@ -52,8 +56,8 @@ const sheetWithSteelType = summarize([{
 }]).details.not_ordered[0]
 assert.match(sheetWithSteelType.description || '', /Тип стали: 09Г2С/,
   'Участок заготовки должен показывать тип стали листового металла')
-assert.equal(summarize([{ ...item, order_status: 'ordered' }]).counts.delivery, 1)
-assert.equal(summarize([{ ...item, order_status: 'delivered' }]).counts.received, 1)
+assert.equal(summarize([{ ...item, order_status: 'ordered' }]).counts.not_ordered, 1)
+assert.equal(summarize([{ ...item, order_status: 'delivered' }]).counts.received, 0, 'Статус без фактического распределения не доказывает получение')
 assert.deepEqual(summarize([{ ...item, order_status: 'cancelled' }], [schedule]), emptyCuttingAreaMaterialSummary())
 assert.deepEqual(summarize([item], [{ ...schedule, status: 'cancelled' }]).deliveryDates, [])
 assert.equal(summarize([{ ...item, custom_delivery_date: '2026-09-05' }]).counts.not_ordered, 1, 'Выбранная дата сама по себе не означает заказ')
@@ -64,8 +68,9 @@ assert.equal(summarize([item], [{ ...schedule, delivery_date: '2026-02-30' }]).h
 assert.deepEqual(summarize([{ ...item, custom_delivery_date: 'not-a-date' }]).deliveryDates, [])
 
 const partial = { ...schedule, status: 'delivered', received_quantity: 100, allocated_quantity: 4 }
-assert.equal(summarize([item], [partial]).counts.delivery, 1, 'Учитывается выделенное заявке количество, не весь приход')
-assert.equal(summarize([{ ...item, order_status: 'delivered' }], [partial]).counts.received, 0, 'Неполная приёмка не должна стать полной из-за старого статуса')
+assert.equal(summarize([item], [partial]).counts.not_ordered, 1, 'Учитывается выделенное заявке количество, не весь приход')
+assert.equal(summarize([{ ...item, order_status: 'delivered' }], [partial]).details.received[0].quantity, '4 шт', 'Старый статус не превращает частичный приход в полный')
+assert.equal(summarize([{ ...item, order_status: 'delivered' }], [partial]).details.not_ordered[0].quantity, '6 шт')
 assert.equal(summarize([item], [partial]).hasUndatedDelivery, true, 'Для остатка нужна дата довоза')
 assert.equal(summarize([item], [partial, { ...schedule, id: 'rest', quantity: 6, delivery_date: '2026-09-04' }]).hasUndatedDelivery, false)
 assert.equal(summarize([item], [{ ...partial, allocated_quantity: 10 }]).counts.received, 1)
@@ -95,6 +100,45 @@ for (const [table, fields] of quantities) {
   assert.equal(delivery.counts.stock, 1, `${table}: складское покрытие сильнее старого ordered`)
 }
 
+for (const [table, fields] of quantities) {
+  const unreserved = Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, key.startsWith('reserved_') ? 0 : value]))
+  const row = { ...item, ...unreserved, table, order_status: 'delivered' }
+  const c = table === 'request_round_tube' ? { needed: 10, unit: 'кг' } : getMaterialRequestStockCoverage(table, row)
+  const format = (quantity: number) => formatMaterialRequestStockQuantity(quantity, c.unit)
+  const receipt = { ...partial, request_item_table: table, allocated_quantity: c.needed / 2, received_quantity: c.needed * 2 }
+  const half = summarize([row], [receipt])
+  assert.equal(half.details.received[0].quantity, format(c.needed / 2), `${table}: only actual allocation covers demand`)
+  assert.equal(half.details.not_ordered[0].quantity, format(c.needed / 2), `${table}: half remains without a schedule`)
+  const future = { ...schedule, id: 'future', request_item_table: table, quantity: c.needed * 0.75, delivery_date: '2026-10-09' }
+  const planned = summarize([row], [receipt, future])
+  assert.equal(planned.details.delivery[0].quantity, format(c.needed / 2))
+  assert.equal(planned.counts.not_ordered, 0)
+  const cancelled = summarize([row], [receipt, { ...future, status: 'cancelled' }])
+  assert.equal(cancelled.details.not_ordered[0].quantity, format(c.needed / 2))
+  assert.equal(summarize([{ ...row, inactive: true }], [receipt, future]).counts.received, 0)
+}
+const civSheet = { ...item, table: 'request_sheet_metal' as const, remainder_qty: 20, reserved_from_stock_kg: 0 }
+const civReceipt = { ...partial, request_item_table: civSheet.table, received_quantity: 10, allocated_quantity: 10 }
+const civFuture = { ...schedule, request_item_table: civSheet.table, quantity: 15, delivery_date: '2026-10-09' }
+const civ = summarize([civSheet], [civReceipt, civFuture])
+assert.equal(civ.details.received[0].quantity, '10 шт')
+assert.equal(civ.details.delivery[0].quantity, '10 шт')
+assert(civ.details.delivery[0].notes.includes('Поставка 09.10.2026 — 15 шт'))
+assert(civ.details.delivery[0].notes.some((note) => note.includes('сверх потребности: 5 шт')))
+assert.equal(summarize([{ ...item, order_status: 'delivered' }], [{ ...partial, allocated_quantity: 0 }]).counts.received, 0)
+const barSchedules = [
+  { ...partial, allocated_quantity: 4000, allocated_physical_quantity: 6000, allocated_piece_count: 1, planned_piece_length_mm: 6000 },
+  { ...schedule, quantity: 6000, planned_piece_length_mm: 6000, planned_piece_count: 1 },
+]
+const logicalPlanned = plannedLogicalCoverage([{ length: 6000, logical: 4000 }, { length: 6000, logical: 3000 }, { length: 6000, logical: 3000 }], barSchedules)
+assert.equal(logicalPlanned, 3000, 'one scheduled bar covers its cuts, not 6000 mm of logical demand')
+const bar = summarize([{ ...item, table: 'request_circle', remainder_mm: 10000, reserved_from_stock_mm: 0, plannedLogicalQuantity: logicalPlanned }],
+  barSchedules.map((row) => ({ ...row, request_item_table: 'request_circle' })))
+assert.equal(bar.details.received[0].quantity.replaceAll('\u00a0', ' '), '4 000 мм')
+assert.equal(bar.details.delivery[0].quantity.replaceAll('\u00a0', ' '), '3 000 мм')
+assert.equal(bar.details.not_ordered[0].quantity.replaceAll('\u00a0', ' '), '3 000 мм')
+assert(bar.details.delivery[0].notes.some((note) => note.includes('физического материала')))
+
 const followerRequest = { ...request, id: 'follower' }
 const follower = { ...item, id: 'follower-item', request_id: followerRequest.id, order_status: 'ordered' }
 function sharedSummary(requestOverride = {}, itemOverride = {}, schedules: CuttingAreaMaterialSchedule[] = [{ ...schedule, quantity: 20 }]) {
@@ -115,7 +159,18 @@ assert.deepEqual(sharedSummary({}, { custom_delivery_date: '2026-09-06' }).deliv
 assert.deepEqual(sharedSummary({}, {}, [{ ...schedule, status: 'delivered', quantity: 20 }]).deliveryDates, [], 'Приёмка не распространяется на соседние заявки')
 assert.deepEqual(sharedSummary({}, {}, [{ ...schedule, quantity: 20 }, { ...schedule, id: 'own', request_item_id: follower.id, delivery_date: '2026-09-03' }]).deliveryDates, ['2026-09-03'])
 
-const mixed = mergeCuttingAreaMaterialSummaries([summarize(), summarize([{ ...item, order_status: 'delivered' }]), summarize([item], [schedule])])
+const sharedPartial = sharedSummary({}, {}, [
+  { ...schedule, quantity: 20 },
+  { ...partial, id: 'follower-receipt', request_item_id: follower.id, allocated_quantity: 4 },
+])
+assert.equal(sharedPartial.details.received[0].quantity, '4 шт')
+assert.equal(sharedPartial.details.delivery[0].quantity, 'Распределение при приёмке')
+assert(sharedPartial.details.delivery[0].notes.includes('Осталось обеспечить эту заявку: 6 шт'))
+const anchor = buildCuttingAreaMaterialSummaries([request, followerRequest], [item, follower], [{ ...schedule, quantity: 20 }]).get(request.id)!
+assert.equal(anchor.details.delivery[0].quantity, 'Распределение при приёмке')
+assert(!anchor.details.delivery[0].notes.some((note) => note.includes('сверх потребности')))
+
+const mixed = mergeCuttingAreaMaterialSummaries([summarize(), summarize([item], [{ ...partial, allocated_quantity: 10 }]), summarize([item], [schedule])])
 assert.deepEqual(mixed.counts, { not_ordered: 1, delivery: 1, received: 1, stock: 0 })
 assert.deepEqual(Object.fromEntries(Object.entries(mixed.details).map(([state, rows]) => [state, rows.length])), { not_ordered: 1, delivery: 1, received: 1, stock: 0 })
 assert.deepEqual(mixed.deliveryDates, ['2026-09-02'])
@@ -160,7 +215,7 @@ const db = {
 async function main() {
   const loaded = await loadCuttingAreaMaterialSummaries(db, [request.factoryId], [request.id, 'foreign'])
   assert.equal(loaded.size, 1, 'Результат не содержит заявки чужого завода')
-  assert.equal(loaded.get(request.id)!.counts.not_ordered, 1100, 'Загружаются все страницы, а не только первые 1000 строк')
+  assert.equal(loaded.get(request.id)!.counts.not_ordered, 1101, 'Загружаются все страницы, а не только первые 1000 строк')
   assert.equal(loaded.get(request.id)!.counts.delivery, 1)
   assert(calls.some((call) => call.table === 'request_components' && call.from === 1000))
   assert(calls.some((call) => call.table === 'supply_order_delivery_schedules' && call.from === 500))
@@ -181,7 +236,7 @@ async function main() {
   const ui = readFileSync('src/components/features/production/CuttingAreaMaterials.tsx', 'utf8')
   assert(ui.includes('openOnHover') && ui.includes('PopoverTrigger'))
   assert(ui.includes('hasUndatedDelivery') && ui.includes('Раздельная доставка'))
-  assert(ui.includes('Конкретные позиции и количество потребности'), 'Статус материала должен раскрывать состав')
+  assert(ui.includes('Количество в этом состоянии'), 'Статус материала должен раскрывать состав')
   assert(ui.includes('summary.details[state]'), 'В расшифровке должны использоваться конкретные позиции')
   const loader = readFileSync('src/lib/production-cutting-area/load-materials.ts', 'utf8')
   assert.match(loader, /request_sheet_metal:[^\n]*steel_types\(name\)/,
