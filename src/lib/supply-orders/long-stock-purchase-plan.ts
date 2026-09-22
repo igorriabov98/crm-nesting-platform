@@ -30,6 +30,7 @@ export type LongStockPurchasePlan = {
   total_length_mm: number
   uses_nonstandard_length: boolean
   returned_assigned_to?: string | null
+  receipt_bars?: Array<{ length_mm: number; logical_quantity: number }>
 }
 
 type PlannedLongStockSchedule = {

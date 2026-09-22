@@ -44,6 +44,9 @@ for (const [label, sql] of [
   ['Supply receiving plan/fact', testSql],
   ['Material receiving batch', batchTestSql],
   ['Manual quantity receipt reconciliation', manualReconciliationTestSql],
+  ['Approved whole-bar receipt allocation', readFileSync(
+    path.join(root, 'supabase', 'tests', 'receiving_approved_bar_allocation_test.sql'), 'utf8',
+  )],
 ]) {
   const result = spawnSync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-d', databaseName], {
     cwd: root,

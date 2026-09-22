@@ -58,6 +58,7 @@ export function MaterialReceivingAllocationDialog({
         max,
         isEligible: row.is_eligible,
         outstandingQuantity: row.outstanding_quantity,
+        logicalQuantitiesByPiece: row.logical_quantities_by_piece,
       }
     }),
   })
@@ -318,7 +319,9 @@ export function MaterialReceivingAllocationDialog({
 
           <div aria-live="polite" aria-atomic="true" className="mt-2 min-h-5 text-sm text-destructive">
             {invalidRows
-              ? 'Проверьте значения: бронь не может превышать открытый остаток, а хлысты указываются целыми штуками.'
+              ? isBar
+                ? 'Укажите целое число хлыстов в пределах оставшегося количества по карте раскроя.'
+                : 'Бронь не может превышать оставшееся количество по заявке.'
               : exceedsReceipt
                 ? 'Распределено больше материала, чем фактически принято.'
                 : isBar && selectedRows.length === 0

@@ -297,6 +297,7 @@ export type MaterialReceiptBatchAllocation = {
   quantity: number
   physical_quantity: number
   piece_count: number | null
+  logical_quantities_by_piece?: number[] | null
 }
 
 export type MaterialReceiptBatchCall = {
@@ -376,6 +377,7 @@ export function buildMaterialReceiptBatchCalls(input: {
     for (const allocation of input.allocations) {
       let remainingPieces = Number(allocation.piece_count || 0)
       let remainingLogical = allocation.quantity
+      let allocatedPieceOffset = 0
       if (!Number.isInteger(remainingPieces) || remainingPieces <= 0) {
         throw new Error('Некорректное распределение прутков')
       }
@@ -383,7 +385,11 @@ export function buildMaterialReceiptBatchCalls(input: {
         const pieces = Math.min(remainingPieces, remainingPiecesByCall[index])
         if (pieces <= 0) continue
         const physical = pieces * pieceLength
-        const logical = Math.min(remainingLogical, physical)
+        const plannedLogical = allocation.logical_quantities_by_piece == null
+          ? physical
+          : allocation.logical_quantities_by_piece.slice(allocatedPieceOffset, allocatedPieceOffset + pieces)
+            .reduce((sum, quantity) => sum + quantity, 0)
+        const logical = Math.min(remainingLogical, physical, plannedLogical)
         calls[index].allocations.push({
           ...allocation,
           quantity: roundQuantity(logical),
@@ -392,6 +398,7 @@ export function buildMaterialReceiptBatchCalls(input: {
         })
         remainingPiecesByCall[index] -= pieces
         remainingPieces -= pieces
+        allocatedPieceOffset += pieces
         remainingLogical = roundQuantity(remainingLogical - logical)
       }
       if (remainingPieces > 0 || remainingLogical > EPSILON) {

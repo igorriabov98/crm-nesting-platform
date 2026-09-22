@@ -1,3 +1,5 @@
+import { wholeBarLogicalQuantity } from './whole-bar-receiving'
+
 export type ManualAllocationMode = 'quantity' | 'whole_bar'
 
 export type ManualAllocationRowInput = {
@@ -6,6 +8,7 @@ export type ManualAllocationRowInput = {
   max: number
   isEligible: boolean
   outstandingQuantity: number
+  logicalQuantitiesByPiece?: number[] | null
 }
 
 type CalculatedRow = {
@@ -36,7 +39,9 @@ export function calculateManualAllocation<T extends ManualAllocationRowInput>({
     const physical = row.isEligible && validNumber
       ? isBar ? row.value * Number(pieceLengthMm || 0) : row.value
       : 0
-    const logical = Math.min(row.outstandingQuantity, physical)
+    const logical = isBar
+      ? wholeBarLogicalQuantity(row.value, Number(pieceLengthMm || 0), row.outstandingQuantity, row.logicalQuantitiesByPiece)
+      : Math.min(row.outstandingQuantity, physical)
     return {
       ...row,
       isValid,

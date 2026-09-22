@@ -46,6 +46,7 @@ import {
   deliveredSupplyQuantity,
 } from '@/lib/supply-orders/receiving-supply-progress'
 import { resolveActualMaterialDate, type MaterialCompletionItem } from '@/lib/supply-orders/material-completion'
+import { wholeBarReceiptCapacity, wholeBarLogicalQuantity } from '@/lib/supply-orders/whole-bar-receiving'
 import {
   isSupplyPositionTable,
   supplyPositionRevisionKey,
@@ -425,6 +426,7 @@ export type MaterialDeliveryAllocationPreviewRow = {
   supply_outstanding_piece_count: number | null
   suggested_quantity: number
   needed_piece_count: number | null
+  logical_quantities_by_piece?: number[] | null
   suggested_piece_count: number | null
   suggested_physical_quantity: number
   suggested_logical_quantity: number
@@ -1961,6 +1963,7 @@ async function loadAggregateInputItems(
   db: LooseDb,
   factoryId?: string | null,
   includeReturned = false,
+  includeReceiptBars = false,
 ): Promise<SupplyOrderAggregateInputItem[]> {
   const requests = await loadAggregateRequests(db, factoryId)
   const requestIds = requests.map((request) => request.id)
@@ -2044,7 +2047,7 @@ async function loadAggregateInputItems(
   ].filter((item): item is SupplyOrderAggregateInputItem => Boolean(item))
 
   const [longStockPlanMap, positionRevisionMap] = await Promise.all([
-    loadLongStockPurchasePlanMap(createTrustedLongStockReadDb(), rawItems),
+    loadLongStockPurchasePlanMap(createTrustedLongStockReadDb(), rawItems, includeReceiptBars),
     loadSupplyPositionRevisionMap(db, rawItems),
   ])
   const orderableItems = rawItems
@@ -2638,6 +2641,7 @@ function projectSchedulesToPurchasePlans<T extends {
 }
 
 type LongStockPlanItemRow = {
+  id: string
   plan_id: string
   request_item_table: string
   request_item_id: string
@@ -2666,7 +2670,9 @@ type LongStockCandidateRow = {
 }
 
 type LongStockCandidateBarRow = LongStockPurchaseBar & {
+  bar_number: number
   candidate_id: string
+  cuts: Array<{ cut_length_mm: number; segment: { plan_item_id: string } }>
 }
 
 function longStockItemKey(item: Pick<RawOrderItem, 'table' | 'id'>) {
@@ -2695,6 +2701,7 @@ function applyLongStockPurchasePlan<T extends RawOrderItem>(
 async function loadLongStockPurchasePlanMap(
   db: LooseDb,
   items: Array<Pick<RawOrderItem, 'table' | 'id' | 'pipe_type'>>,
+  includeReceiptBars = false,
 ) {
   const eligibleItems = items.filter((item) => (
     isLongStockRequestItemTable(item.table)
@@ -2705,7 +2712,7 @@ async function loadLongStockPurchasePlanMap(
   const eligibleKeys = new Set(eligibleItems.map((item) => `${item.table}:${item.id}`))
   const { data: planItemsRaw, error: planItemsError } = await db
     .from('long_stock_cutting_plan_items')
-    .select('plan_id, request_item_table, request_item_id, cutting_status, link_state')
+    .select('id, plan_id, request_item_table, request_item_id, cutting_status, link_state')
     .in('request_item_id', Array.from(new Set(eligibleItems.map((item) => item.id))))
   if (planItemsError) throw new Error(planItemsError.message || 'Не удалось загрузить карты раскроя для снабжения')
 
@@ -2771,7 +2778,9 @@ async function loadLongStockPurchasePlanMap(
   if (candidateIds.length === 0) return new Map<string, LongStockPurchasePlan>()
   const { data: barsRaw, error: barsError } = await db
     .from('long_stock_cutting_candidate_bars')
-    .select('candidate_id, stock_length_mm, length_group, source_type')
+    .select(includeReceiptBars
+      ? 'candidate_id, bar_number, stock_length_mm, length_group, source_type, cuts:long_stock_cutting_bar_cuts(cut_length_mm, segment:long_stock_cutting_segments(plan_item_id))'
+      : 'candidate_id, stock_length_mm, length_group, source_type')
     .in('candidate_id', candidateIds)
   if (barsError) throw new Error(barsError.message || 'Не удалось загрузить закупочные хлысты карты раскроя')
 
@@ -2787,6 +2796,15 @@ async function loadLongStockPurchasePlanMap(
     const candidate = version ? selectedCandidateByVersion.get(version.id) : null
     if (!plan || !version || !candidate) continue
     const purchase = summarizeLongStockPurchaseBars(barsByCandidate.get(candidate.id) || [])
+    const receiptBars = includeReceiptBars ? (barsByCandidate.get(candidate.id) || [])
+      .filter((bar) => bar.source_type === 'new_stock')
+      .sort((left, right) => left.bar_number - right.bar_number)
+      .map((bar) => ({
+        length_mm: Number(bar.stock_length_mm),
+        logical_quantity: bar.cuts
+          .filter((cut) => cut.segment.plan_item_id === item.id)
+          .reduce((sum, cut) => sum + Number(cut.cut_length_mm), 0),
+      })) : undefined
     result.set(`${item.request_item_table}:${item.request_item_id}`, {
       plan_id: item.plan_id,
       plan_number: Number(plan.plan_number),
@@ -2800,6 +2818,7 @@ async function loadLongStockPurchasePlanMap(
         ? assignedByDepartment.get(version.invalidation_department_request_id) || null
         : null,
       ...purchase,
+      receipt_bars: receiptBars,
     })
   }
   return result
@@ -2909,7 +2928,7 @@ async function resolveReceivingSource(db: LooseDb, input: MaterialDeliveryInput)
   }
 
   assertOrderTable(sourceTable)
-  const allOpenItems = await loadAggregateInputItems(db)
+  const allOpenItems = await loadAggregateInputItems(db, null, false, true)
   const sourceItem = allOpenItems.find((item) => item.table === sourceTable && item.id === sourceId)
   if (!sourceItem) throw new Error('Не удалось определить исходную позицию поставки')
   assertApprovedLongStockPurchasePlan(sourceItem)
@@ -3069,7 +3088,10 @@ async function buildMaterialAllocationPreview(
       requestedPieceCount: requestedSupplyPieceCount,
       schedules: itemSchedules,
     })
-    const delivered = supplyProgress.deliveredQuantity
+    const delivered = isWholeBarItem(item)
+      ? itemSchedules.filter((schedule) => schedule.status === 'delivered')
+        .reduce((sum, schedule) => sum + committedScheduleQuantity(schedule), 0)
+      : supplyProgress.deliveredQuantity
     const outstandingQuantity = outstandingAllocationQuantity({
       isWholeBar: isWholeBarItem(item),
       requestedQuantity: item.requested_quantity,
@@ -3080,6 +3102,15 @@ async function buildMaterialAllocationPreview(
     const futureSchedules = futureCoverageByItem.get(key) || []
     const hasOtherPlannedSchedule = futureSchedules.length > 0
     const isSource = sourceItemKeys.has(key)
+    const barCapacity = isBar && pieceLengthMm
+      ? wholeBarReceiptCapacity({
+          plan: item.long_stock_purchase_plan,
+          schedules: itemSchedules,
+          plannedPieceLengthMm: isSource ? plannedPieceLengthMm : null,
+          receivedPieceLengthMm: pieceLengthMm,
+          outstandingLogicalQuantity: outstandingQuantity,
+        })
+      : null
     return {
       key,
       table: item.table,
@@ -3093,11 +3124,14 @@ async function buildMaterialAllocationPreview(
       reservedQuantity: item.reserved_quantity,
       deliveredQuantity: delivered,
       outstandingQuantity,
+      neededPieceCount: barCapacity?.neededPieceCount,
+      logicalQuantitiesByPiece: barCapacity?.logicalQuantitiesByPiece,
+      characteristics: getAggregateCharacteristics(item.table, item.raw, item),
       supplyProgress,
       futureSchedules,
       hasOtherPlannedSchedule,
       isSource,
-      isEligible: outstandingQuantity > 0,
+      isEligible: outstandingQuantity > 0 && (!barCapacity || barCapacity.neededPieceCount > 0),
       unavailableReason: null,
     }
   }).filter((candidate) => candidate.outstandingQuantity > 0)
@@ -3121,7 +3155,7 @@ async function buildMaterialAllocationPreview(
       id: candidate.id,
       machine_id: candidate.machineId,
       machine_name: candidate.machineName,
-      characteristics: matchingItems.find(item => item.table === candidate.table && item.id === candidate.id)?.characteristics || [],
+      characteristics: candidate.characteristics,
       cutting_date: candidate.cuttingDate,
       material_date: candidate.materialDate,
       requested_quantity: candidate.requestedQuantity,
@@ -3139,9 +3173,8 @@ async function buildMaterialAllocationPreview(
       supply_delivered_piece_count: candidate.supplyProgress.deliveredPieceCount,
       supply_outstanding_piece_count: candidate.supplyProgress.outstandingPieceCount,
       suggested_quantity: isBar ? logicalQuantity : Number(suggestion?.quantity || 0),
-      needed_piece_count: isBar && pieceLengthMm
-        ? Math.ceil(candidate.outstandingQuantity / pieceLengthMm)
-        : null,
+      needed_piece_count: candidate.neededPieceCount ?? null,
+      logical_quantities_by_piece: candidate.logicalQuantitiesByPiece ?? null,
       suggested_piece_count: allocatedPieces,
       suggested_physical_quantity: physicalQuantity,
       suggested_logical_quantity: logicalQuantity,
@@ -3179,7 +3212,7 @@ async function buildMaterialAllocationPreview(
     )
     : null
   const totalNeededPieces = isBar && pieceLengthMm
-    ? eligibleCandidates.reduce((sum, row) => sum + Math.ceil(row.outstandingQuantity / pieceLengthMm), 0)
+    ? eligibleCandidates.reduce((sum, row) => sum + Number(row.neededPieceCount || 0), 0)
     : 0
   const freePieceCount = isBar && pieceLengthMm
     ? Math.round(suggested.excessQuantity / pieceLengthMm)
@@ -3523,6 +3556,7 @@ function confirmedMaterialAllocations(
     quantity: number
     physical_quantity: number
     piece_count: number | null
+    logical_quantities_by_piece?: number[] | null
   }> = []
   for (const selection of selected) {
     const key = `${selection.table}:${selection.id}`
@@ -3565,9 +3599,10 @@ function confirmedMaterialAllocations(
       table: row.table,
       id: row.id,
       key,
-      quantity: Math.min(row.outstanding_quantity, physicalQuantity),
+      quantity: wholeBarLogicalQuantity(pieces, preview.piece_length_mm, row.outstanding_quantity, row.logical_quantities_by_piece),
       physical_quantity: physicalQuantity,
       piece_count: pieces,
+      logical_quantities_by_piece: row.logical_quantities_by_piece,
     })
   }
   if (totalPhysical > preview.received_quantity + 0.000001) {
