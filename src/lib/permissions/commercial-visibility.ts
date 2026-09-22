@@ -110,9 +110,24 @@ export async function getCommercialVisibilityForClient(
 }
 
 export async function requireClientCardAccess(clientId: string, context?: PermissionContext) {
-  const visibility = await getCommercialVisibilityForClient(clientId, context)
-  if (!visibility.canAccessClientCard) throw new PermissionDeniedError('clients', 'view')
-  return visibility
+  const resolvedContext = context || await getCommercialPermissionContext()
+  if (!hasPermission(resolvedContext.permissions, 'clients', 'view')) {
+    throw new PermissionDeniedError('clients', 'view')
+  }
+
+  const { data, error } = await (createAdminClient() as unknown as LooseDb)
+    .from('clients')
+    .select('id, responsible_user_id')
+    .eq('id', clientId)
+    .maybeSingle()
+
+  if (error || !data) throw new PermissionDeniedError('clients', 'view')
+  const client = data as { id: string; responsible_user_id: string | null }
+  if (!resolvedContext.permissionDetails.isAdminPosition && client.responsible_user_id !== resolvedContext.userId) {
+    throw new PermissionDeniedError('clients', 'view')
+  }
+
+  return getCommercialVisibilityForClient(clientId, resolvedContext)
 }
 
 export async function requireOrderPriceManagement(clientId: string, context?: PermissionContext) {
