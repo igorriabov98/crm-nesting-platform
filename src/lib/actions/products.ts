@@ -864,14 +864,19 @@ export async function deleteProductFile(fileId: string, productId: string) {
 
 export async function getEngineerOptions() {
   try {
-    const { db } = await requireProductAccess('product_projects')
-    const technicalDepartmentIds = await getTechnicalDepartmentIds(db)
+    await requireProductAccess('product_projects')
+    // The caller is authorized by product_projects, while the employee
+    // directory is intentionally hidden from ordinary user-client RLS. Use
+    // the server-side reader here so sales managers can assign an active
+    // technical employee; creation still rechecks the department in the RPC.
+    const directoryDb = dbFrom(createAdminClient())
+    const technicalDepartmentIds = await getTechnicalDepartmentIds(directoryDb)
 
     if (technicalDepartmentIds.length === 0) {
       return { data: [] as UserSummary[], error: null }
     }
 
-    const { data, error } = await db
+    const { data, error } = await directoryDb
       .from('department_members')
       .select('department_id, user:user_id(id, full_name, role, factory_id, is_active)')
       .in('department_id', technicalDepartmentIds)
