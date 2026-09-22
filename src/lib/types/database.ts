@@ -5815,6 +5815,14 @@ export type Database = {
       inventory_transaction_type: 'receipt' | 'reserve' | 'unreserve' | 'write_off' | 'adjustment' | 'transfer_out' | 'transfer_in'
     }
     Functions: {
+      fn_detailing_request_check_state: {
+        Args: { p_request_id: string }
+        Returns: { ready: boolean; has_matches: boolean; decision: 'auto_no_matches' | 'reserved' | 'declined' | null; message?: string }
+      }
+      fn_technologist_request_numbers: {
+        Args: { p_request_ids: string[] }
+        Returns: { request_id: string; request_number: number; revision_numbers: Record<string, number> }[]
+      }
       crm_set_machine_material_type: { Args: { p_machine_id: string; p_material_type: Database["public"]["Enums"]["material_type"] }; Returns: undefined }
       crm_user_is_admin: { Args: {p_user_id: string}; Returns: boolean }
       crm_access_snapshot: { Args: {p_user_id?: string}; Returns: Json }

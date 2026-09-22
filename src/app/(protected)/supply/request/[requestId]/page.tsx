@@ -3,7 +3,6 @@ import { notFound } from 'next/navigation'
 import { SupplyRequestPage } from '@/components/features/supply-request/SupplyRequestPage'
 import { getRequestForSupply } from '@/lib/actions/supply-request'
 import { getDetailingRequestWorkspace } from '@/lib/actions/detailing'
-import { isBusinessScrapReservationStatus } from '@/lib/supply-request-flow'
 
 export const metadata = {
   title: 'Заявка для снабжения | CRM Завода',
@@ -19,7 +18,7 @@ async function SupplyRequestRoute({
 
   if (error || !data) notFound()
 
-  const detailing = isBusinessScrapReservationStatus(data.request.status) && !data.positionRevision
+  const detailing = ['pending_stock_check', 'stock_checked'].includes(data.request.status)
     ? (await getDetailingRequestWorkspace(requestId)).data
     : null
 

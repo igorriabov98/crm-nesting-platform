@@ -1,5 +1,6 @@
 'use server'
 
+import { getDetailingCheckState } from '@/lib/server/detailing-request-check'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { ROUTES } from '@/lib/constants/routes'
@@ -460,13 +461,13 @@ export async function getDetailingRequestWorkspace(requestId: string): Promise<{
     const requestResult = await db.from('technologist_requests').select('id, machine_id').eq('id', id).single()
     if (requestResult.error || !requestResult.data) throw new Error(requestResult.error?.message || 'Заявка технолога не найдена')
     const request = requestResult.data as { id: string; machine_id: string }
-    const [machineResult, itemsResult, warehouse, reservationsResult, allocationsResult, checkResult] = await Promise.all([
+    const [machineResult, itemsResult, warehouse, reservationsResult, allocationsResult, checkState] = await Promise.all([
       db.from('machines').select('id, name, factory_id').eq('id', request.machine_id).single(),
       db.from('machine_items').select('id, product_id, product_version_id, product_name, product_name_uk, drawing_number, quantity').eq('machine_id', request.machine_id).order('sort_order', { ascending: true }),
       loadWarehouse(db),
       db.from('detailing_reservations').select('id, request_id, machine_item_id, part_id, requested_quantity, consumed_quantity, released_quantity, status').eq('request_id', id).order('created_at', { ascending: true }),
       db.from('detailing_reservation_allocations').select('id, reservation_id, factory_id, quantity').gt('quantity', 0),
-      db.from('detailing_request_checks').select('decision, machine_item_signature').eq('request_id', id).maybeSingle(),
+      getDetailingCheckState(id),
     ])
     if (machineResult.error || itemsResult.error || reservationsResult.error || allocationsResult.error) throw new Error('Не удалось загрузить проверку деталировки')
     const machine = machineResult.data as { id: string; name: string; factory_id: string | null }
@@ -510,7 +511,7 @@ export async function getDetailingRequestWorkspace(requestId: string): Promise<{
       data: {
         requestId: id, machineId: machine.id, machineName: machine.name,
         destinationFactoryId: machine.factory_id, destinationFactoryName: machine.factory_id ? factoryMap.get(machine.factory_id) || null : null,
-        decision: ((checkResult.data as { decision?: DetailingRequestWorkspace['decision'] } | null)?.decision || null),
+        decision: checkState.decision,
         matches, reservations,
       },
       error: null,

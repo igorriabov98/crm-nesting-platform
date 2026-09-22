@@ -35,6 +35,7 @@ function fixture(options: {
   versionId?: string | null
   requestStatus?: string
   createdBy?: string
+  detailingReady?: boolean
   errorTable?: string
 } = {}) {
   const categories = options.categories ?? ['request_pipe']
@@ -119,6 +120,7 @@ function fixture(options: {
     '@/lib/request-completion-material-scope': materialScope,
     '@/lib/materials/pipe-profile': pipeProfile,
     '@/lib/metal-scrap': metalScrap,
+    '@/lib/server/detailing-request-check': { getDetailingCheckState: async () => ({ ready: options.detailingReady !== false }) },
     '@/lib/server/technologist-approval-snapshot': { buildTechnologistApprovalSnapshot: forbiddenMutation },
     '@/lib/technologist-request-access': { requireTechnologistRequestAccess: async (id: string, access: { workflowOperation: string; inventoryOperation: string }) => {
       assert.equal(id, requestId)
@@ -241,4 +243,13 @@ test('completion keeps request access and lifecycle checks before loading any sc
   const completed = fixture({ requestStatus: 'submitted_to_supply' })
   assert.equal((await completed.load()).redirectTo, `${routes.ROUTES.TECHNOLOGIST_REQUEST_RESULTS}/${requestId}`)
   assert.equal(completed.calls.length, 1)
+})
+
+test('direct completion URL returns to detailing check when no decision was recorded', async () => {
+  const f = fixture({ detailingReady: false })
+  const result = await f.load()
+  assert.equal(result.data, null)
+  assert.equal(result.error, null)
+  assert.equal(result.redirectTo, `/supply/request/${requestId}`)
+  assert.ok(!f.calls.some(call => call.table === 'long_stock_cutting_business_scraps'))
 })

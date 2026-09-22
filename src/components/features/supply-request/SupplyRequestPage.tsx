@@ -62,7 +62,7 @@ export function SupplyRequestPage({ data, detailing }: Props) {
   const canReserve = (isStockCheckMode || isWarehouseReservationMode) && canReserveByRole
   const canUnreserve = (isStockCheckMode || isWarehouseReservationMode) && data.can_unreserve
   const canCompleteReservation = (isStockCheckMode || isWarehouseReservationMode) && data.can_complete_reservation
-  const canManageDetailing = isStockCheckMode && data.can_manage_detailing
+  const canManageDetailing = (isStockCheckMode || isWarehouseReservationMode) && data.can_manage_detailing
   const totalWeight = [
     ...data.sections.sheetMetal,
     ...data.sections.circles,
@@ -134,7 +134,7 @@ export function SupplyRequestPage({ data, detailing }: Props) {
             </h1>
             {data.positionRevision && (
               <p className="mt-2 text-sm text-amber-800">
-                После проверки склада эта единственная позиция заменит возвращённую и станет доступна снабжению.
+                После проверки склада и финансового согласования исправленные позиции заменят возвращённую позицию и станут доступны снабжению.
               </p>
             )}
             <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-[#6B7280]">
@@ -153,11 +153,11 @@ export function SupplyRequestPage({ data, detailing }: Props) {
                 {isStockCheckMode ? 'Забронировать деловой остаток' : 'Забронировать доступное со склада'}
               </Button>
             )}
-            {canCompleteReservation && (
-              <Button type="button" onClick={completeReservation} disabled={isPending} className="bg-emerald-700 text-white hover:bg-emerald-800">
+            {(isStockCheckMode || isWarehouseReservationMode) && (
+              <Button type="button" onClick={completeReservation} disabled={isPending || !canCompleteReservation} className="bg-emerald-700 text-white hover:bg-emerald-800">
                 {isStockCheckMode
                   ? 'Перейти к основному складу'
-                  : data.positionRevision ? 'Завершить бронь и вернуть снабжению' : 'Завершить бронь склада и продолжить'}
+                  : 'Завершить бронь склада и продолжить'}
               </Button>
             )}
             <Button type="button" variant="outline" onClick={() => router.push(`${ROUTES.SALES_PLAN}/${request.machine_id}`)}>
@@ -177,7 +177,7 @@ export function SupplyRequestPage({ data, detailing }: Props) {
         )}
         {(isStockCheckMode || isWarehouseReservationMode) && !canCompleteReservation && (
           <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700" role="status">
-            Завершение этапа недоступно: требуется право управления заявками технолога.
+            Завершение этапа недоступно: {data.completion_block_reason || 'требуется право управления заявками технолога.'}
           </p>
         )}
         {isWarehouseReservationMode && (
@@ -187,7 +187,7 @@ export function SupplyRequestPage({ data, detailing }: Props) {
         )}
       </section>
 
-      {isStockCheckMode && detailing && <DetailingRequestPanel workspace={detailing} canManage={canManageDetailing} />}
+      {(isStockCheckMode || isWarehouseReservationMode) && detailing && <DetailingRequestPanel key={`${detailing.requestId}:${detailing.decision}`} workspace={detailing} canManage={canManageDetailing} />}
 
       <section className="rounded-xl border border-[#E8ECF0] bg-white p-4" aria-labelledby="factory-switch-title">
         <div className="mb-3 flex items-center gap-2">

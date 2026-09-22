@@ -224,6 +224,7 @@ assert.deepEqual(
     '20260921151000_atomic_supply_schedule_status.sql',
     '20260921152000_supply_task_wording.sql',
     '20260921153000_reconcile_civ19_ordered_status.sql',
+    '20260922120000_request_series_and_detailing_gate.sql',
 
   ],
   'После cutover разрешены только проверенные follow-up миграции',
