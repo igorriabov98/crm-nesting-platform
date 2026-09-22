@@ -47,9 +47,24 @@ BEGIN
     ON candidate.version_id = version.id
     AND candidate.candidate_number = version.selected_candidate_number
   JOIN public.long_stock_cutting_plan_items item ON item.id = v_item_id
-  WHERE version.plan_id = v_plan_id AND version.status = 'approved'
+  WHERE version.plan_id = v_plan_id
     AND item.link_state = 'active'
-    AND item.cutting_status IN ('plan_approved', 'accepted');
+    AND (
+      (version.status = 'approved' AND item.cutting_status IN ('plan_approved', 'accepted'))
+      OR (
+        -- A measured length discrepancy invalidates the map after the first
+        -- technical row. Finish that same atomic batch against its original
+        -- layout, while keeping the map blocked for subsequent receipts/cutting.
+        version.status = 'invalid' AND item.cutting_status = 'requires_recalculation'
+        AND current_setting('app.receiving_batch_mode', true) = 'on'
+        AND EXISTS (
+          SELECT 1 FROM public.supply_order_delivery_schedules receipt
+          WHERE receipt.id = version.invalidation_receipt_schedule_id
+            AND receipt.status = 'delivered'
+            AND receipt.xmin::text = pg_current_xact_id()::text
+        )
+      )
+    );
   IF v_candidate_id IS NULL THEN
     RAISE EXCEPTION 'Для приёмки нужна актуальная утверждённая карта раскроя';
   END IF;

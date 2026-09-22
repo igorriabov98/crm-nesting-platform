@@ -2,8 +2,11 @@
 BEGIN;
 
 DO $$
+DECLARE v_received_length numeric;
+BEGIN
+FOR v_received_length IN SELECT unnest(ARRAY[6000, 5900]) LOOP
 DECLARE
-  v_actor uuid;
+  v_actor uuid := gen_random_uuid();
   v_factory uuid;
   v_machine uuid := gen_random_uuid();
   v_request uuid := gen_random_uuid();
@@ -21,9 +24,12 @@ DECLARE
   v_settings jsonb;
   v_error text;
 BEGIN
-  SELECT id INTO v_actor FROM public.users WHERE is_active AND public.crm_user_is_admin(id) LIMIT 1;
   SELECT id INTO v_factory FROM public.factories ORDER BY created_at NULLS LAST LIMIT 1;
-  IF v_actor IS NULL OR v_factory IS NULL THEN RAISE EXCEPTION 'Full-schema admin/factory fixture is required'; END IF;
+  IF v_factory IS NULL THEN RAISE EXCEPTION 'Full-schema factory fixture is required'; END IF;
+  INSERT INTO public.users(id, email, full_name, role, factory_id, is_active)
+  VALUES (v_actor, 'approved-bar-' || v_actor || '@example.test', 'Approved bar receiving test', 'technologist', v_factory, true);
+  INSERT INTO public.user_system_roles(user_id, role) VALUES (v_actor, 'crm_admin');
+  IF NOT public.crm_user_is_admin(v_actor) THEN RAISE EXCEPTION 'Test administrator fixture is required'; END IF;
   PERFORM set_config('request.jwt.claim.sub', v_actor::text, true);
 
   INSERT INTO public.machines(id, factory_id, name, created_by)
@@ -70,6 +76,25 @@ BEGIN
   VALUES
     (v_first, 'request_circle', v_item, current_date, 6000, 'мм', v_supplier, 6000, 1, v_actor, v_actor),
     (v_second, 'request_circle', v_item, current_date, 6000, 'мм', v_supplier, 6000, 1, v_actor, v_actor);
+
+  IF v_received_length <> 6000 THEN
+    PERFORM public.fn_receive_supply_order_schedule_batch_v1(jsonb_build_array(
+      jsonb_build_object('schedule_id', v_first, 'received_quantity', v_received_length,
+        'received_piece_length_mm', v_received_length, 'received_piece_count', 1,
+        'allocations', jsonb_build_array(jsonb_build_object('table', 'request_circle', 'id', v_item,
+          'quantity', 5500, 'physical_quantity', v_received_length, 'piece_count', 1))),
+      jsonb_build_object('schedule_id', v_second, 'received_quantity', v_received_length,
+        'received_piece_length_mm', v_received_length, 'received_piece_count', 1,
+        'allocations', jsonb_build_array(jsonb_build_object('table', 'request_circle', 'id', v_item,
+          'quantity', 500, 'physical_quantity', v_received_length, 'piece_count', 1)))
+    ), v_actor);
+    IF (SELECT status FROM public.long_stock_cutting_plan_versions WHERE id = v_version) <> 'invalid'
+      OR (SELECT sum(allocated_piece_count) FROM public.supply_order_delivery_schedules WHERE id IN (v_first, v_second)) <> 2
+      OR (SELECT sum(allocated_quantity) FROM public.supply_order_delivery_schedules WHERE id IN (v_first, v_second)) <> 6000 THEN
+      RAISE EXCEPTION 'Measured-length batch must finish both rows and require recalculation';
+    END IF;
+    CONTINUE;
+  END IF;
 
   -- Direct RPC: extra physical bars cannot be hidden behind a valid net length.
   BEGIN
@@ -121,6 +146,8 @@ BEGIN
   IF has_function_privilege('authenticated', 'public.fn_assert_whole_bar_receipt_allocation_v1(text,uuid,numeric,numeric,numeric,numeric,numeric)', 'EXECUTE') THEN
     RAISE EXCEPTION 'Internal guard must not be independently executable';
   END IF;
+END;
+END LOOP;
 END;
 $$;
 ROLLBACK;
