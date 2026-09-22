@@ -893,7 +893,7 @@ function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {
     const physicalIds = new Set(physicalReceiptSchedules(activeItems.flatMap((item) => item.delivery_schedules)).map((row) => row.id))
     for (const item of activeItems) {
       for (const schedule of item.delivery_schedules) {
-        if (schedule.status === 'cancelled') continue
+        if (schedule.status === 'cancelled' || (schedule.status === 'delivered' && !physicalIds.has(schedule.id))) continue
         const dateKey = schedule.delivery_date || factory.production_date || aggregate.planned_material_date || 'no_supply_date'
         const slice = getSlice(dateKey)
         const plannedQuantity = Math.max(Number(schedule.quantity || 0), 0)
@@ -906,7 +906,6 @@ function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {
           // distributed between several requests. Their allocated quantities
           // are parts of the parent receipt, not additional supplier volume.
           // Count the physical parent once; allocations cover request demand separately.
-          if (!physicalIds.has(schedule.id)) continue
           const deliveredQuantity = deliveredSupplyQuantity(schedule)
           slice.shortReceipt ||= deliveredQuantity + 0.000001 < plannedQuantity
           slice.quantity += deliveredQuantity

@@ -816,7 +816,7 @@ const distributedReceiptAggregate = makeDateScheduleAggregate([
   }),
   makeDeliverySchedule({
     id: 'distributed-receipt-child',
-    delivery_date: '2026-09-23',
+    delivery_date: '2026-09-24',
     quantity: 2,
     received_quantity: 0,
     allocated_quantity: 2,
@@ -839,6 +839,7 @@ distributedReceiptAggregate.requested_quantity = 7
 distributedReceiptAggregate.factories[0].quantity = 7
 distributedReceiptAggregate.factories[0].requested_quantity = 7
 distributedReceiptAggregate.factories[0].items[0].quantity = 7
+assert.equal(groupSupplyOrderAggregatesBySupplyDate([distributedReceiptAggregate], 'date_asc').length, 1, 'an allocation child must not create a separate shipment date')
 const distributedReceiptSlice = groupSupplyOrderAggregatesBySupplyDate(
   [distributedReceiptAggregate],
   'date_asc',
