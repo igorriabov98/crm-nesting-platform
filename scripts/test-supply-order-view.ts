@@ -59,13 +59,13 @@ assert.match(
 )
 
 assert.equal(
-  supplyOrdersAction.match(/loadLongStockPurchasePlanMap\(createTrustedLongStockReadDb\(\), rawItems\)/gu)?.length,
+  supplyOrdersAction.match(/loadLongStockPurchasePlanMap\(createTrustedLongStockReadDb\(\), rawItems(?:, includeReceiptBars)?\)/gu)?.length,
   3,
   'Every supply-order cutting-plan read must use the trusted server client',
 )
 assert.doesNotMatch(
   supplyOrdersAction,
-  /loadLongStockPurchasePlanMap\(db, rawItems\)/u,
+  /loadLongStockPurchasePlanMap\(db, rawItems(?:, [^)]+)?\)/u,
   'Authenticated supply-order clients must never read closed cutting-plan tables directly',
 )
 assert.match(

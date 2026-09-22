@@ -45,6 +45,8 @@ export function committedScheduleQuantity(schedule) {
  *     cuttingDate?: string | null,
  *     materialDate?: string | null,
  *     outstandingQuantity: number,
+ *     neededPieceCount?: number,
+ *     logicalQuantitiesByPiece?: number[] | null,
  *     hasOtherPlannedSchedule?: boolean,
  *     isSource?: boolean,
  *   }>,
@@ -75,7 +77,7 @@ export function allocateReceiptByPriority(input) {
     for (const candidate of candidates) {
       if (availablePieces <= 0) break
       const outstanding = positiveNumber(candidate.outstandingQuantity)
-      const neededPieces = Math.ceil(outstanding / pieceLengthMm)
+      const neededPieces = candidate.neededPieceCount ?? Math.ceil(outstanding / pieceLengthMm)
       const allocatedPieces = Math.min(availablePieces, neededPieces)
       if (allocatedPieces <= 0) continue
       const physicalQuantity = allocatedPieces * pieceLengthMm
@@ -83,7 +85,9 @@ export function allocateReceiptByPriority(input) {
         table: candidate.table,
         id: candidate.id,
         key: candidate.key,
-        quantity: Math.min(outstanding, physicalQuantity),
+        quantity: Math.min(outstanding, physicalQuantity, candidate.logicalQuantitiesByPiece == null
+          ? physicalQuantity
+          : candidate.logicalQuantitiesByPiece.slice(0, allocatedPieces).reduce((sum, quantity) => sum + quantity, 0)),
         physical_quantity: physicalQuantity,
         piece_count: allocatedPieces,
       })

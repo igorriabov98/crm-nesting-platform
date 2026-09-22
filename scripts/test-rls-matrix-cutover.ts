@@ -225,6 +225,7 @@ assert.deepEqual(
     '20260921152000_supply_task_wording.sql',
     '20260921153000_reconcile_civ19_ordered_status.sql',
     '20260922120000_request_series_and_detailing_gate.sql',
+    '20260922133000_receiving_approved_bar_allocation_guard.sql',
 
   ],
   'После cutover разрешены только проверенные follow-up миграции',
