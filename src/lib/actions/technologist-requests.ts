@@ -1,5 +1,6 @@
 ﻿'use server'
 
+import { getRequestNumbers } from '@/lib/server/technologist-request-numbers'
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
@@ -82,6 +83,7 @@ export type TechnologistRequestListItem = Pick<
   'id' | 'machine_id' | 'status' | 'submitted_at' | 'created_at' | 'updated_at'
 > & {
   request_number: number
+  display_revision_number: number
   lifecycle_status: RequestLifecycleStatus
   lifecycle_label: string
 }
@@ -479,7 +481,8 @@ export async function getRequestsForMachine(machineId: string) {
     for (const version of (approvalVersions.data || []) as Array<{ request_id: string; state: string }>) {
       if (!latestApprovalState.has(version.request_id)) latestApprovalState.set(version.request_id, version.state)
     }
-    const data: TechnologistRequestListItem[] = requests.map((request, index) => {
+    const numbering = await getRequestNumbers(requestIds)
+    const data: TechnologistRequestListItem[] = requests.map((request) => {
       const lifecycleStatus = deriveRequestLifecycleStatus(request, statusesByRequest.get(request.id) || [], latestApprovalState.get(request.id))
       return {
         id: request.id,
@@ -488,7 +491,8 @@ export async function getRequestsForMachine(machineId: string) {
         submitted_at: request.submitted_at,
         created_at: request.created_at,
         updated_at: request.updated_at,
-        request_number: requests.length - index,
+        request_number: numbering.get(request.id)!.request_number,
+        display_revision_number: Math.max(...Object.values(numbering.get(request.id)!.revision_numbers)),
         lifecycle_status: lifecycleStatus,
         lifecycle_label: REQUEST_LIFECYCLE_LABELS[lifecycleStatus],
       }
@@ -680,26 +684,17 @@ export async function completeStockReservation(
       status: access.request.status as RequestStatus,
     }
 
-    const admin = createAdminClient() as unknown as LooseDb
-    const { data: revisionData, error: revisionError } = await admin
-      .from('supply_position_revisions')
-      .select('id, department_request_id')
-      .eq('replacement_request_id', requestId)
-    if (revisionError) throw new Error(revisionError.message || 'Не удалось проверить корректирующую заявку')
-    const revision = ((revisionData || []) as Array<{ id: string; department_request_id: string }>)[0] || null
+    const { data: detailingCheckData, error: detailingCheckError } = await db.rpc('fn_validate_detailing_request_check', {
+      p_request_id: requestId,
+      p_actor: userId,
+    })
+    if (detailingCheckError) throw new Error(detailingCheckError.message || 'Не удалось проверить деталировку')
+    const detailingCheck = detailingCheckData as { ready?: boolean; message?: string } | null
+    if (!detailingCheck?.ready) {
+      throw new Error(detailingCheck?.message || 'Проверьте подходящую деталировку перед продолжением')
+    }
 
     if (request.status === 'pending_stock_check') {
-      if (!revision) {
-        const { data: detailingCheckData, error: detailingCheckError } = await db.rpc('fn_validate_detailing_request_check', {
-          p_request_id: requestId,
-          p_actor: userId,
-        })
-        if (detailingCheckError) throw new Error(detailingCheckError.message || 'Не удалось проверить деталировку')
-        const detailingCheck = detailingCheckData as { ready?: boolean; message?: string } | null
-        if (!detailingCheck?.ready) {
-          throw new Error(detailingCheck?.message || 'Проверьте подходящую деталировку перед переходом к основному складу')
-        }
-      }
       await validateRequestReadyForSupply(db, requestId, userId)
       const { error: advanceError } = await db.rpc('fn_complete_business_scrap_stage_v1', {
         p_request_id: requestId,
@@ -715,21 +710,6 @@ export async function completeStockReservation(
           advancedToWarehouse: true,
         },
       }
-    }
-
-    if (revision) {
-      await validateRequestReadyForSupply(db, requestId, userId)
-      return { success: true, data: { href: `/technologist/requests/${requestId}/complete` } }
-    }
-
-    const { data: detailingCheckData, error: detailingCheckError } = await db.rpc('fn_validate_detailing_request_check', {
-      p_request_id: requestId,
-      p_actor: userId,
-    })
-    if (detailingCheckError) throw new Error(detailingCheckError.message || 'Не удалось проверить деталировку')
-    const detailingCheck = detailingCheckData as { ready?: boolean; message?: string } | null
-    if (!detailingCheck?.ready) {
-      throw new Error(detailingCheck?.message || 'Проверьте подходящую деталировку перед отправкой заявки в снабжение')
     }
 
     await validateRequestReadyForSupply(db, requestId, userId)

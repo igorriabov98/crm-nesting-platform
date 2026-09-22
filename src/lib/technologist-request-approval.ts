@@ -34,8 +34,8 @@ export type WasteAggregate = {
   averagePercent: number | null
 }
 
-export function formatApprovalVersion(revisionNumber: number) {
-  return revisionNumber === 0 ? '1' : `1.${revisionNumber}`
+export function formatApprovalVersion(revisionNumber: number, requestNumber: number) {
+  return revisionNumber === 0 ? String(requestNumber) : `${requestNumber}.${revisionNumber}`
 }
 
 export function calculateWasteAggregate(items: Pick<ApprovalSummaryItem, 'weightKg' | 'wastePercent'>[]): WasteAggregate {

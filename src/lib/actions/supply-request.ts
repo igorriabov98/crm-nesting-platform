@@ -1,5 +1,6 @@
 ﻿'use server'
 
+import { getDetailingCheckState } from '@/lib/server/detailing-request-check'
 import { revalidatePath } from 'next/cache'
 import { ROUTES } from '@/lib/constants/routes'
 import { reserveForMachine, unreserveFromMachine } from '@/lib/actions/inventory'
@@ -124,6 +125,7 @@ export type SupplyRequestPayload = {
   can_reserve: boolean
   can_unreserve: boolean
   can_complete_reservation: boolean
+  completion_block_reason?: string | null
   reservation_block_reason: string | null
   can_manage_detailing: boolean
   request: RequestWithRelations
@@ -986,6 +988,11 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
     result.data.can_unreserve = reservationCapability.allowed
     result.data.can_complete_reservation = reservationCapability.allowed
     result.data.reservation_block_reason = reservationCapability.reason
+    if (['pending_stock_check', 'stock_checked'].includes(request.status)) {
+      const detailingCheck = await getDetailingCheckState(requestId)
+      result.data.completion_block_reason = reservationCapability.reason || (detailingCheck.ready ? null : detailingCheck.message)
+      result.data.can_complete_reservation = reservationCapability.allowed && detailingCheck.ready
+    }
     return result
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить заявку' }
@@ -1028,6 +1035,11 @@ export async function getRequestForBusinessScrap(requestId: string): Promise<{ d
     result.data.can_unreserve = reservationCapability.allowed
     result.data.can_complete_reservation = reservationCapability.allowed
     result.data.reservation_block_reason = reservationCapability.reason
+    if (['pending_stock_check', 'stock_checked'].includes(request.status)) {
+      const detailingCheck = await getDetailingCheckState(requestId)
+      result.data.completion_block_reason = reservationCapability.reason || (detailingCheck.ready ? null : detailingCheck.message)
+      result.data.can_complete_reservation = reservationCapability.allowed && detailingCheck.ready
+    }
     return result
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить деловой остаток' }

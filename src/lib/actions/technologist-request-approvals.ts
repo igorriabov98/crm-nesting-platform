@@ -1,6 +1,7 @@
 'use server'
 /* eslint-disable @typescript-eslint/no-explicit-any -- approval schema is introduced by the accompanying migration */
 
+import { getRequestNumbers } from '@/lib/server/technologist-request-numbers'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { ROUTES } from '@/lib/constants/routes'
@@ -41,28 +42,22 @@ export async function getTechnologistApprovalList() {
     if (requestResult.error) throw requestResult.error
     const visibleRequests = requestResult.data || []
     const requestIds = visibleRequests.map((row: any) => row.id)
-    const machineIds = [...new Set(visibleRequests.map((row: any) => row.machine_id))]
-    const numberRows = machineIds.length
-      ? await db().from('technologist_requests').select('id,machine_id,created_at').in('machine_id', machineIds).order('created_at', { ascending: true }).order('id', { ascending: true })
-      : { data: [], error: null }
-    if (numberRows.error) throw numberRows.error
-    const requestNumberById = new Map<string, number>()
-    const indexByMachine = new Map<string, number>()
-    for (const row of numberRows.data || []) {
-      const next = (indexByMachine.get(row.machine_id) || 0) + 1
-      indexByMachine.set(row.machine_id, next)
-      requestNumberById.set(row.id, next)
-    }
     const versions = requestIds.length
       ? await db().from('technologist_request_approval_versions').select('id,request_id,revision_number,state,material_type_snapshot:summary_snapshot->>materialType').in('request_id', requestIds).order('revision_number', { ascending: false })
       : { data: [], error: null }
     if (versions.error) throw versions.error
+    const numbering = await getRequestNumbers(requestIds)
     return {
-      data: visibleRequests.map((request: any) => ({
-        ...request,
-        request_number: requestNumberById.get(request.id) || 1,
-        currentVersion: (versions.data || []).find((version: any) => version.request_id === request.id) || null,
-      })),
+      data: visibleRequests.map((request: any) => {
+        const numbers = numbering.get(request.id)!
+        const current = (versions.data || []).find((version: any) => version.request_id === request.id)
+        return {
+          ...request,
+          request_number: numbers.request_number,
+          display_revision_number: Math.max(...Object.values(numbers.revision_numbers)),
+          currentVersion: current ? { ...current, display_revision_number: numbers.revision_numbers[current.revision_number] } : null,
+        }
+      }),
       error: null,
     }
   } catch (error) {
@@ -92,9 +87,6 @@ export async function getTechnologistApprovalDetail(requestId: string) {
     if (assignedVersion.error) throw assignedVersion.error
     const assignedRevision = (assignedVersion.data || []).length > 0
     if (!isAdmin && !reviewer && requestResult.data.created_by !== userId && !assignedRevision) throw new Error('Недостаточно прав для просмотра заявки')
-    const numberRows = await db().from('technologist_requests').select('id').eq('machine_id', requestResult.data.machine_id).order('created_at', { ascending: true }).order('id', { ascending: true })
-    if (numberRows.error) throw numberRows.error
-    const requestNumber = (numberRows.data || []).findIndex((row: any) => row.id === id) + 1
     const versionsResult = await db().from('technologist_request_approval_versions')
       .select('id,revision_number,state,is_legacy,submitted_by')
       .eq('request_id', id).order('revision_number', { ascending: false })
@@ -121,15 +113,20 @@ export async function getTechnologistApprovalDetail(requestId: string) {
     const draft = await db().from('technologist_request_revision_drafts')
       .select('revision_number,editor_id').eq('request_id', id).maybeSingle()
     if (draft.error) throw draft.error
+    const numbering = (await getRequestNumbers([id])).get(id)!
     const firstSubmitter = versions.find((version: any) => version.revision_number === 0)?.submitted_by
     return {
       data: {
-        request: { ...requestResult.data, request_number: Math.max(requestNumber, 1) },
-        versions: versions.map((version: any) => ({ id: version.id, revision_number: version.revision_number, state: version.state, is_legacy: version.is_legacy })),
+        request: { ...requestResult.data, request_number: numbering.request_number },
+        versions: versions.map((version: any) => ({ id: version.id, revision_number: version.revision_number, display_revision_number: numbering.revision_numbers[version.revision_number], state: version.state, is_legacy: version.is_legacy })),
         currentSnapshot,
         currentDraft,
         canReview: reviewer || isAdmin,
-        revisionDraft: draft.data,
+        revisionDraft: draft.data
+          ? { ...draft.data, display_revision_number: numbering.revision_numbers[draft.data.revision_number] }
+          : !versions.length && numbering.revision_numbers[0] > 0
+            ? { revision_number: 0, display_revision_number: numbering.revision_numbers[0], editor_id: requestResult.data.created_by }
+            : null,
         canEdit: (isAdmin || firstSubmitter === userId || requestResult.data.created_by === userId || assignedRevision)
           && ['pending_financial_approval', 'pending_stock_check', 'stock_checked'].includes(requestResult.data.status)
           && versions.length > 0,

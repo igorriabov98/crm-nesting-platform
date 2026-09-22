@@ -7,10 +7,10 @@ import {
   type ApprovalSummarySnapshot,
 } from './technologist-request-approval'
 
-test('formats revisions as 1, 1.1, 1.2', () => {
-  assert.equal(formatApprovalVersion(0), '1')
-  assert.equal(formatApprovalVersion(1), '1.1')
-  assert.equal(formatApprovalVersion(2), '1.2')
+test('uses the actual request number for its revision series', () => {
+  assert.equal(formatApprovalVersion(0, 3), '3')
+  assert.equal(formatApprovalVersion(1, 3), '3.1')
+  assert.equal(formatApprovalVersion(2, 3), '3.2')
 })
 
 test('calculates simple and weight-adjusted waste and excludes missing percentages', () => {
