@@ -2,6 +2,15 @@
 
 begin;
 
+DO $$ BEGIN
+  IF has_function_privilege('authenticated','public.fn_technologist_request_numbers(uuid[])','execute')
+     OR has_function_privilege('authenticated','public.fn_detailing_request_check_state(uuid)','execute')
+     OR has_function_privilege('authenticated','private.reserve_technologist_revision_number(uuid,integer)','execute')
+     OR has_table_privilege('authenticated','private.technologist_number_series','update') THEN
+    RAISE EXCEPTION 'Private numbering/readiness helpers exposed to direct clients';
+  END IF;
+END $$;
+
 create or replace function pg_temp.insert_revision_item(
   p_table text,
   p_request_id uuid,
@@ -98,6 +107,11 @@ declare
   v_replacement_item_id uuid;
   v_other_table text := case when p_table = 'request_components' then 'request_mesh' else 'request_components' end;
   v_other_item uuid := gen_random_uuid();
+  v_product uuid := gen_random_uuid();
+  v_product_version uuid := gen_random_uuid();
+  v_machine_item uuid := gen_random_uuid();
+  v_part uuid;
+  v_numbers record;
   v_row jsonb;
   v_error text;
   v_requires_plan boolean := p_table in ('request_circle', 'request_knives')
@@ -121,6 +135,9 @@ begin
   perform set_config('request.jwt.claim.sub', v_technologist::text, true);
   insert into public.machines(id, factory_id, name, created_by)
   values (v_machine, v_factory, 'REVISION-' || p_table || '-' || coalesce(p_variant, 'default'), v_technologist);
+  -- Independent requests keep their numbers; the tested source is request No. 3.
+  insert into public.technologist_requests(machine_id,created_by,status)
+    values(v_machine,v_technologist,'draft'),(v_machine,v_technologist,'draft');
   insert into public.technologist_requests(
     id, machine_id, created_by, status, submitted_at
   ) values (v_source_request, v_machine, v_technologist, 'submitted_to_supply', now());
@@ -173,6 +190,11 @@ begin
   end if;
   v_replacement_request_id := (v_create->>'request_id')::uuid;
   v_replacement_item_id := (v_create->>'request_item_id')::uuid;
+  select * into strict v_numbers from public.fn_technologist_request_numbers(array[v_replacement_request_id]);
+  if v_numbers.request_number<>3 or v_numbers.revision_numbers<>'{"0":1}'::jsonb then
+    raise exception 'Supply return must retain No. 3 and allocate 3.1: %',v_numbers;
+  end if;
+
 
   execute format('select to_jsonb(item) from public.%I item where id = $1', p_table)
     into v_row using v_replacement_item_id;
@@ -276,9 +298,59 @@ begin
     raise exception 'Rejected regular-stock bypass changed request status for %/%', p_table, p_variant;
   end if;
 
+  if p_table='request_sheet_metal' then
+    insert into public.products(id,name_uk,name_en,uktzed,drawing_number,unit_weight_kg,base_price_eur,status,created_by,updated_by)
+    values(v_product,'Виріб','Product','0000','SERIES-3',10,0,'active',v_technologist,v_technologist);
+    insert into public.product_versions(id,product_id,version_number,status,drawing_number,created_by)
+    values(v_product_version,v_product,1,'current','SERIES-3',v_technologist);
+    insert into public.machine_items(id,machine_id,drawing_number,product_name,weight,price,quantity,product_id,product_version_id)
+    values(v_machine_item,v_machine,'SERIES-3','Product',10,0,2,v_product,v_product_version);
+    v_part:=public.fn_create_detailing_part('Detail','SERIES-3-DETAIL',2,v_factory,5,
+      jsonb_build_array(jsonb_build_object('product_id',v_product,'all_versions',true,'version_ids','[]'::jsonb)),v_technologist);
+    if (public.fn_detailing_request_check_state(v_replacement_request_id)->>'ready')::boolean then
+      raise exception 'Undecided correction was considered ready';
+    end if;
+    if exists(select 1 from public.detailing_request_checks where request_id=v_replacement_request_id) then
+      raise exception 'Read-only readiness check recorded a decision';
+    end if;
+    begin
+      perform public.fn_complete_business_scrap_stage_v1(v_replacement_request_id,v_technologist);
+      raise exception 'Correction bypassed detailing at the business scrap stage';
+    exception when raise_exception then
+      if SQLERRM not like '%Не использовать деталировку%' then raise; end if;
+    end;
+    if (select status from public.technologist_requests where id=v_replacement_request_id)<>'pending_stock_check' then
+      raise exception 'Rejected stage transition changed the request';
+    end if;
+  end if;
+
   update public.technologist_requests
   set status = 'stock_checked', updated_at = now()
   where id = v_replacement_request_id;
+  if p_table='request_sheet_metal' then
+    -- Even direct submit from stock_checked must recheck detailing, before file/work-item writes.
+    begin
+      perform public.fn_submit_technologist_request_for_approval(v_replacement_request_id,v_technologist,
+        jsonb_build_object('archives','[]'::jsonb),
+        jsonb_build_object('sourceData',public.fn_technologist_approval_source(v_replacement_request_id)),'[]');
+      raise exception 'Direct approval RPC bypassed detailing';
+    exception when raise_exception then
+      if SQLERRM not like '%Не использовать деталировку%' then raise; end if;
+    end;
+    if exists(select 1 from public.technologist_request_approval_versions where request_id=v_replacement_request_id) then
+      raise exception 'Rejected submit created an approval version';
+    end if;
+    perform public.fn_decline_detailing_for_request(v_replacement_request_id,v_technologist);
+    if not (public.fn_detailing_request_check_state(v_replacement_request_id)->>'ready')::boolean then
+      raise exception 'Explicit decline must allow continuation';
+    end if;
+    update public.machine_items set quantity=3 where id=v_machine_item;
+    if (public.fn_detailing_request_check_state(v_replacement_request_id)->>'ready')::boolean then
+      raise exception 'Stale detailing decision must be rechecked';
+    end if;
+    perform public.fn_decline_detailing_for_request(v_replacement_request_id,v_technologist);
+  end if;
+
 
   begin
     perform public.fn_submit_supply_position_revision_v1(v_replacement_request_id, v_technologist);
@@ -332,6 +404,11 @@ begin
     perform public.fn_begin_technologist_request_revision(v_replacement_request_id,v_technologist);
     perform public.fn_begin_technologist_request_revision(v_replacement_request_id,v_technologist);
     if (select count(*) from public.technologist_request_revision_drafts where request_id=v_replacement_request_id)<>1 then raise exception 'Duplicate revision draft'; end if;
+    select * into strict v_numbers from public.fn_technologist_request_numbers(array[v_replacement_request_id]);
+    if v_numbers.request_number<>3 or v_numbers.revision_numbers<>'{"0":1,"1":2}'::jsonb then
+      raise exception 'Finance return must allocate 3.2 once, including repeated begin: %',v_numbers;
+    end if;
+
     perform pg_temp.insert_revision_item(p_table,v_replacement_request_id,v_other_item,p_variant);
     update public.request_sheet_metal set thickness_mm=10,sheet_size='1000x1000',remainder_qty=2 where id=v_other_item;
     v_waste:=v_waste || jsonb_build_array(jsonb_build_object('sourceTable',p_table,'sourceId',v_other_item,'wastePercent',10,'itemName','Металл','materialName','Металл'));
@@ -366,6 +443,15 @@ begin
     or (select status from public.department_requests where id = v_department_request_id) <> 'done'
     or (select count(*) from public.tasks where department_request_id = v_department_request_id and status = 'completed') <> 1 then
     raise exception 'Submission lifecycle is incomplete for %/%', p_table, p_variant;
+  end if;
+  if p_table='request_sheet_metal' then
+    -- Return the approved correction again: the new internal request is still No. 3.
+    v_return:=public.fn_return_supply_position_to_technologist_v1(p_table,v_replacement_item_id,'Повторный возврат снабжением',v_supply,false);
+    v_create:=public.fn_create_supply_position_revision_request_v1((v_return->>'department_request_id')::uuid,v_technologist);
+    select * into strict v_numbers from public.fn_technologist_request_numbers(array[(v_create->>'request_id')::uuid]);
+    if v_numbers.request_number<>3 or v_numbers.revision_numbers<>'{"0":3}'::jsonb then
+      raise exception 'Repeated supply return must allocate 3.3: %',v_numbers;
+    end if;
   end if;
 end;
 $$;

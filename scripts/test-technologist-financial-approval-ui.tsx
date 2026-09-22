@@ -107,7 +107,7 @@ test('version comparison displays before and after values', () => {
 })
 
 test('history does not fetch or render snapshots before opening', () => {
-  const history = load<{ ApprovalVersionHistory: React.ComponentType<{ requestId: string; versions: Array<{id:string;revision_number:number;state:string;is_legacy:boolean}> }> }>('src/components/features/technologist/ApprovalVersionHistory.tsx', {
+  const history = load<{ ApprovalVersionHistory: React.ComponentType<{ requestId: string; requestNumber: number; versions: Array<{id:string;revision_number:number;display_revision_number:number;state:string;is_legacy:boolean}> }> }>('src/components/features/technologist/ApprovalVersionHistory.tsx', {
     react: React, 'react/jsx-runtime': jsx, 'lucide-react': icons, '@/components/ui/badge': { Badge: 'span' },
     '@/components/ui/button': buttons, '@/lib/actions/technologist-request-approvals': {
       getTechnologistApprovalHistoryVersion() { throw new Error('History must be loaded on demand') },
@@ -115,9 +115,9 @@ test('history does not fetch or render snapshots before opening', () => {
     '@/lib/technologist-approval-badge': approvalBadge,
     './ApprovalSummary': { ApprovalSummary, ApprovalDiff },
   })
-  const html = renderToStaticMarkup(<history.ApprovalVersionHistory requestId="request" versions={[{ id:'version', revision_number:1, state:'returned', is_legacy:false }]} />)
+  const html = renderToStaticMarkup(<history.ApprovalVersionHistory requestId="request" requestNumber={3} versions={[{ id:'version', revision_number:0, display_revision_number:1, state:'returned', is_legacy:false }]} />)
   assert.ok(html.includes('<summary'))
-  assert.ok(html.includes('Версия 1.1'))
+  assert.ok(html.includes('Версия 3.1'))
   assert.ok(html.includes('Подробнее'))
   assert.ok(html.includes('focus-visible:'))
   assert.ok(!html.includes('<table'))
@@ -205,3 +205,39 @@ test('agreed procurement uses exact saved candidate and remains stable for histo
   assert.ok(html.includes('К закупке по согласованию'))
   assert.ok(html.includes('2 шт × 6'))
 })
+
+for (const status of ['pending_stock_check', 'stock_checked'] as const) {
+  test(`${status}: correction displays detailing and disables continuation until a decision`, () => {
+    const empty = () => null
+    const tables = ['SupplyChainCordTable','SupplyCircleTable','SupplyComponentsTable','SupplyKnivesTable','SupplyMeshTable','SupplyPaintTable','SupplyPipeTable','SupplyRequestSummary','SupplySheetMetalTable']
+    const page = load<{ SupplyRequestPage: React.ComponentType<Record<string, unknown>> }>('src/components/features/supply-request/SupplyRequestPage.tsx', {
+      react: React, 'react/jsx-runtime': jsx, 'next/link': { default: 'a' },
+      'next/navigation': { useRouter: () => ({}) }, 'date-fns': { format: () => '22.09.2026' }, 'date-fns/locale': { ru: {} },
+      'lucide-react': icons, sonner: { toast: {} }, '@/components/ui/button': buttons, '@/components/ui/badge': { Badge: 'span' },
+      '@/components/features/requests/RequestStatusBadge': { RequestStatusBadge: empty }, '@/lib/constants/routes': { ROUTES: {} },
+      '@/lib/actions/supply-request': {}, '@/lib/actions/technologist-requests': {},
+      '@/lib/supply-request-flow': {
+        isBusinessScrapReservationStatus: (value: string) => value === 'pending_stock_check',
+        isSupplyWarehouseReservationStatus: (value: string) => value === 'stock_checked',
+      },
+      ...Object.fromEntries(tables.map(name => [`./${name}`, { [name]: empty }])),
+      './DetailingRequestPanel': { DetailingRequestPanel: ({canManage}: {canManage: boolean}) => <div>Проверка деталировки {canManage ? 'Можно выбрать решение' : 'Только просмотр'}</div> },
+    })
+    const reason = 'Забронируйте детали или выберите «Не использовать деталировку».'
+    const data = {
+      request: {id: 'request', status, created_at: '2026-09-22', machine: {name: 'CIV-19-2026'}},
+      factories: [], sections: {sheetMetal: [], circles: [], pipes: [], knives: [], paint: [], components: [], meshItems: [], chainCords: []},
+      can_reserve: true, can_unreserve: true, can_complete_reservation: false, can_manage_detailing: true,
+      completion_block_reason: reason, positionRevision: {id: 'correction'},
+    }
+    const html = renderToStaticMarkup(<page.SupplyRequestPage data={data} detailing={{requestId:'request', decision:null}} />)
+    assert.ok(html.includes(reason))
+    assert.ok(html.includes('Можно выбрать решение'))
+    const label = status === 'pending_stock_check' ? 'Перейти к основному складу' : 'Завершить бронь склада и продолжить'
+    const button = html.match(new RegExp(`<button([^>]*)>${label}</button>`))
+    assert.ok(button, 'Stage continuation button is visible')
+    assert.ok(button[1].includes('disabled=""'), 'Undecided detailing blocks continuation')
+    const ready = renderToStaticMarkup(<page.SupplyRequestPage data={{...data,can_complete_reservation:true,completion_block_reason:null}} detailing={{requestId:'request',decision:'declined'}} />)
+    assert.ok(!ready.match(new RegExp(`<button([^>]*)>${label}</button>`))![1].includes('disabled=""'))
+  })
+}

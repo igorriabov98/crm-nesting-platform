@@ -1,5 +1,6 @@
 'use client'
 
+import { formatApprovalVersion } from '@/lib/technologist-request-approval'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, ExternalLink, FileText, Loader2, Plus, Trash2 } from 'lucide-react'
@@ -133,6 +134,7 @@ export function RequestListPage({ machine, requests, canCreate }: Props) {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="text-base font-semibold text-slate-950">Заявка #{request.request_number}</h2>
+                    {request.display_revision_number > 0 && <p className="text-sm text-slate-600">Версия {formatApprovalVersion(request.display_revision_number, request.request_number)}</p>}
                     <Badge variant="outline" className={cn('w-fit', lifecycleClasses[request.lifecycle_status])}>
                       {request.lifecycle_label}
                     </Badge>
