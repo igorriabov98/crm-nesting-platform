@@ -41,6 +41,9 @@ const manualReconciliationTestSql = readFileSync(
   'utf8',
 )
 for (const [label, sql] of [
+  ['All-category receipt surplus protection', readFileSync(
+    path.join(root, 'supabase', 'tests', 'supply_receipt_surplus_test.sql'), 'utf8',
+  )],
   ['Supply receiving plan/fact', testSql],
   ['Material receiving batch', batchTestSql],
   ['Manual quantity receipt reconciliation', manualReconciliationTestSql],
@@ -63,6 +66,7 @@ for (const [label, sql] of [
 }
 await testConcurrentBatchReceipt()
 await testConcurrentManualQuantityReceipt()
+run(process.execPath, [path.join(root, 'scripts', 'test-civ19-receipt-surplus-repair.mjs')])
 console.log('[supply-receiving-plan-fact] all assertions passed')
 
 async function testConcurrentBatchReceipt() {
