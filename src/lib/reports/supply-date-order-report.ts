@@ -8,7 +8,6 @@ import {
 import {
   groupSupplyOrderAggregatesBySupplyDate,
   isSupplyOrderBarMaterial,
-  partitionSupplyOrderAggregatesByRedelivery,
   summarizeSupplyOrderUnscheduledMachineRoutes,
 } from '@/components/features/supply-orders/supply-order-view'
 
@@ -39,8 +38,7 @@ export function buildSupplyDateOrderReport(
   aggregates: readonly SupplyOrderAggregate[],
   dateKey: string,
 ): SupplyDateOrderReport {
-  const regularAggregates = partitionSupplyOrderAggregatesByRedelivery([...aggregates]).regular
-  const dateGroup = groupSupplyOrderAggregatesBySupplyDate(regularAggregates, 'date_asc')
+  const dateGroup = groupSupplyOrderAggregatesBySupplyDate([...aggregates], 'date_asc')
     .find((group) => group.dateKey === dateKey)
 
   const rows = (dateGroup?.rows || [])

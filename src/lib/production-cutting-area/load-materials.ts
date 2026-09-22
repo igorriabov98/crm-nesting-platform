@@ -8,6 +8,7 @@ import {
   type CuttingAreaMaterialSummary,
   type CuttingAreaMaterialTable,
 } from './materials'
+import { plannedLogicalCoverage } from './planned-logical-coverage'
 
 type DbResult = { data: unknown; error: { message?: string } | null }
 type Query = PromiseLike<DbResult> & {
@@ -79,12 +80,63 @@ export async function loadCuttingAreaMaterialSummaries(db: Db, factoryIds: strin
     const items = rows.map((row) => ({ ...row, table })) as CuttingAreaMaterialItem[]
     const schedules = await readBatches<CuttingAreaMaterialSchedule>(items.map((item) => item.id), (ids) => db
       .from('supply_order_delivery_schedules')
-      .select('id,request_item_table,request_item_id,delivery_date,status,quantity,received_quantity,allocated_quantity')
+      .select('id,request_item_table,request_item_id,delivery_date,status,quantity,received_quantity,allocated_quantity,allocated_physical_quantity,allocated_piece_count,received_piece_length_mm,planned_piece_length_mm,planned_piece_count')
       .eq('request_item_table', table)
       .in('request_item_id', ids))
     return { items, schedules }
   }))
-  const summaries = buildCuttingAreaMaterialSummaries(requests, rowsByTable.flatMap((rows) => rows.items), rowsByTable.flatMap((rows) => rows.schedules))
+  const items = rowsByTable.flatMap((rows) => rows.items)
+  const revisions = await readBatches<{ source_request_item_table: string; source_request_item_id: string }>(items.map((item) => item.id), (ids) => db
+    .from('supply_position_revisions').select('id,source_request_item_table,source_request_item_id')
+    .in('source_request_item_id', ids).in('status', ['requested', 'editing', 'stock_check', 'cancelled']))
+  const planItems = await readBatches<{ id: string; plan_id: string; request_item_table: string; request_item_id: string; cutting_status: string; link_state: string }>(
+    items.filter((item) => ['request_circle', 'request_pipe', 'request_knives'].includes(item.table)).map((item) => item.id),
+    (ids) => db.from('long_stock_cutting_plan_items').select('id,plan_id,request_item_table,request_item_id,cutting_status,link_state')
+      .in('request_item_id', ids))
+  const inactive = new Set([
+    ...revisions.map((row) => `${row.source_request_item_table}:${row.source_request_item_id}`),
+    ...planItems.filter((row) => row.cutting_status === 'cancelled' || (row.link_state === 'active' && row.cutting_status === 'requires_recalculation'))
+      .map((row) => `${row.request_item_table}:${row.request_item_id}`),
+  ])
+  // Match scheduled whole bars to the actual cuts in the approved candidate.
+  // Physical bar length is not the logical quantity supplied to the order.
+  const activePlans = planItems.filter((row) => row.link_state === 'active'
+    && ['plan_approved', 'accepted'].includes(row.cutting_status))
+  const versions = await readBatches<{ id: string; plan_id: string; version_number: number; selected_candidate_number: number }>(
+    [...new Set(activePlans.map((row) => row.plan_id))], (ids) => db.from('long_stock_cutting_plan_versions')
+      .select('id,plan_id,version_number,selected_candidate_number').in('plan_id', ids).eq('status', 'approved'))
+  const selectedVersions = new Map<string, typeof versions[number]>()
+  for (const version of versions.sort((a, b) => b.version_number - a.version_number)) {
+    if (!selectedVersions.has(version.plan_id)) selectedVersions.set(version.plan_id, version)
+  }
+  const candidates = await readBatches<{ id: string; version_id: string; candidate_number: number }>(
+    [...selectedVersions.values()].map((row) => row.id), (ids) => db.from('long_stock_cutting_candidates')
+      .select('id,version_id,candidate_number').in('version_id', ids))
+  const selectedCandidates = candidates.filter((candidate) => [...selectedVersions.values()]
+    .some((version) => version.id === candidate.version_id && version.selected_candidate_number === candidate.candidate_number))
+  const bars = await readBatches<{ id: string; candidate_id: string; bar_number: number; stock_length_mm: number;
+    cuts: Array<{ cut_length_mm: number; segment: { plan_item_id: string } }> }>(
+    selectedCandidates.map((row) => row.id), (ids) => db.from('long_stock_cutting_candidate_bars')
+      .select('id,candidate_id,bar_number,stock_length_mm,cuts:long_stock_cutting_bar_cuts(cut_length_mm,segment:long_stock_cutting_segments(plan_item_id))')
+      .in('candidate_id', ids).eq('source_type', 'new_stock'))
+  const allSchedules = rowsByTable.flatMap((rows) => rows.schedules)
+  const logicalCoverage = new Map<string, number>()
+  for (const planItem of activePlans) {
+    const version = selectedVersions.get(planItem.plan_id)
+    const candidate = selectedCandidates.find((row) => row.version_id === version?.id)
+    if (!candidate) continue
+    const itemBars = bars.filter((bar) => bar.candidate_id === candidate.id)
+      .sort((a, b) => a.bar_number - b.bar_number)
+      .map((bar) => ({ length: Number(bar.stock_length_mm), logical: bar.cuts
+        .filter((cut) => cut.segment?.plan_item_id === planItem.id)
+        .reduce((sum, cut) => sum + Number(cut.cut_length_mm), 0) }))
+    const schedules = allSchedules.filter((row) => row.request_item_table === planItem.request_item_table
+      && row.request_item_id === planItem.request_item_id)
+    logicalCoverage.set(`${planItem.request_item_table}:${planItem.request_item_id}`, plannedLogicalCoverage(itemBars, schedules))
+  }
+  const summaries = buildCuttingAreaMaterialSummaries(requests,
+    items.map((item) => ({ ...item, inactive: inactive.has(`${item.table}:${item.id}`),
+      plannedLogicalQuantity: logicalCoverage.get(`${item.table}:${item.id}`) })), allSchedules)
   const targets = new Set(targetRequestIds)
   return new Map([...summaries].filter(([id]) => targets.has(id)))
 }

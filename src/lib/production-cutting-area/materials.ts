@@ -3,6 +3,7 @@ import {
   getMaterialRequestStockCoverage,
   type MaterialRequestItemTable,
 } from '@/lib/material-request-stock-coverage'
+import { materialFulfillment } from '@/lib/supply-orders/material-fulfillment'
 import { CHAIN_CORD_SUBTYPE_LABELS, PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
 
 export type CuttingAreaMaterialTable = MaterialRequestItemTable | 'request_round_tube'
@@ -14,6 +15,9 @@ export type CuttingAreaMaterialDetail = {
   label: string
   description: string | null
   quantity: string
+  demandQuantity: string
+  stockQuantity: string
+  notes: string[]
 }
 export type CuttingAreaMaterialSummary = {
   counts: Record<CuttingAreaMaterialState, number>
@@ -38,6 +42,8 @@ export type CuttingAreaMaterialItem = Record<string, unknown> & {
   ordered_at?: string | null
   material_id?: string | null
   material_variant_id?: string | null
+  plannedLogicalQuantity?: number
+  inactive?: boolean
   custom_delivery_date?: string | null
   steel_types?: { name?: string | null } | null
 }
@@ -51,6 +57,11 @@ export type CuttingAreaMaterialSchedule = {
   quantity: number | string | null
   received_quantity: number | string | null
   allocated_quantity: number | string | null
+  allocated_piece_count?: number | string | null
+  received_piece_length_mm?: number | string | null
+  allocated_physical_quantity?: number | string | null
+  planned_piece_length_mm?: number | string | null
+  planned_piece_count?: number | string | null
 }
 
 const EPSILON = 0.000001
@@ -169,7 +180,7 @@ function itemKey(table: string, id: string) { return `${table}:${id}` }
 
 function receivedQuantity(schedule: CuttingAreaMaterialSchedule) {
   return schedule.status === 'delivered'
-    ? positive(schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity)
+    ? positive(schedule.allocated_quantity)
     : 0
 }
 
@@ -231,7 +242,7 @@ export function buildCuttingAreaMaterialSummaries(
   }
   const sharedSchedules = new Map<string, CuttingAreaMaterialSchedule[]>()
   for (const item of items) {
-    if (item.order_status === 'cancelled') continue
+    if (item.order_status === 'cancelled' || item.inactive) continue
     const key = groupKey(item)
     if (!key) continue
     const own = schedulesByItem.get(itemKey(item.table, item.id)) || []
@@ -241,57 +252,93 @@ export function buildCuttingAreaMaterialSummaries(
     sharedSchedules.set(key, group)
   }
 
+  const sharedGroupKeys = new Set<string>()
+  for (const item of items) {
+    const key = groupKey(item)
+    const own = schedulesByItem.get(itemKey(item.table, item.id)) || []
+    const c = coverage(item)
+    const outstanding = c.needed - c.reserved - own.reduce((sum, row) => sum + receivedQuantity(row), 0)
+    if (key && !item.inactive && ['ordered', 'delivered'].includes(item.order_status || '') && outstanding > EPSILON
+      && !own.some((row) => row.status === 'planned')
+      && !dateOnly(item.custom_delivery_date) && (sharedSchedules.get(key) || []).length) {
+      sharedGroupKeys.add(key)
+    }
+  }
+
   const datesByRequest = new Map<string, Set<string>>()
   for (const item of items) {
     const summary = summaries.get(item.request_id)
     if (!summary || item.order_status === 'cancelled') continue
+    if (item.inactive) continue
     const { needed, reserved, unit } = coverage(item)
-    const required = Math.max(needed - reserved, 0)
+    if (needed <= EPSILON) continue
     const own = schedulesByItem.get(itemKey(item.table, item.id)) || []
-    const delivered = own.reduce((sum, schedule) => sum + receivedQuantity(schedule), 0)
-    let state: CuttingAreaMaterialState
-    if (required > EPSILON && own.length > 0 && delivered >= required - EPSILON) state = 'received'
-    else if ((own.length === 0 || required <= EPSILON) && item.order_status === 'delivered') state = 'received'
-    else if (needed > EPSILON && required <= EPSILON) state = 'stock'
-    else if (required <= EPSILON) continue
-    else if (item.order_status === 'ordered' || item.order_status === 'delivered' || own.length > 0) state = 'delivery'
-    else state = 'not_ordered'
-    summary.counts[state] += 1
-    const identity = materialIdentity(item)
-    summary.details[state].push({
-      id: item.id,
-      requestId: item.request_id,
-      category: categoryLabels[item.table],
-      label: identity.label,
-      description: identity.description || null,
-      quantity: formatMaterialRequestStockQuantity(state === 'stock' ? needed : Math.max(needed - reserved, 0), unit),
-    })
-    if (state === 'stock') continue
-
     const key = groupKey(item)
-    const shared = own.length === 0 && !dateOnly(item.custom_delivery_date) && state === 'delivery' && item.order_status === 'ordered' && key
-      ? sharedSchedules.get(key) || [] : []
-    const effective = own.length > 0 ? own : shared
+    const shared = key && sharedGroupKeys.has(key) && (['ordered', 'delivered'].includes(item.order_status || '') || own.some((row) => row.status === 'planned'))
+      && !dateOnly(item.custom_delivery_date) ? sharedSchedules.get(key) || [] : []
+    const effective = shared.length > 0 ? [...own.filter((row) => row.status === 'delivered'), ...shared] : own
+    const plannedRows = effective.filter((row) => row.status === 'planned')
+    const planned = plannedRows.reduce((sum, row) => sum + positive(row.quantity), 0)
+    const delivered = own.reduce((sum, row) => sum + receivedQuantity(row), 0)
+    // Receipt allocation is the fact. Lifecycle flags and supplier surplus do not cover demand.
+    const progress = materialFulfillment({ demand: needed, stock: reserved,
+      allocated: delivered, planned: shared.length > 0 ? 0 : item.plannedLogicalQuantity ?? planned })
+    const identity = materialIdentity(item)
+    const format = (quantity: number) => formatMaterialRequestStockQuantity(quantity, unit)
+    const isBar = item.table === 'request_circle' || item.table === 'request_knives'
+      || (item.table === 'request_pipe' && item.pipe_type !== 'wire')
+    const notes = plannedRows.map((row) => {
+      const date = dateOnly(row.delivery_date)
+      const label = date ? date.split('-').reverse().join('.') : 'дата не указана'
+      const pieces = positive(row.planned_piece_count)
+      const length = positive(row.planned_piece_length_mm)
+      return `Поставка ${label} — ${format(positive(row.quantity))}${isBar ? ` физического материала${pieces && length ? ` (${pieces} хлыстов по ${value(length)} мм)` : ''}` : ''}`
+    })
+    if (!isBar && !shared.length && progress.plannedExcess > EPSILON) {
+      notes.push(`По всем будущим поставкам сверх потребности: ${format(progress.plannedExcess)}`)
+    }
+    if (isBar) notes.push('Потребность показана в длине для заказа; поставка — в физических хлыстах.')
+    const add = (state: CuttingAreaMaterialState, quantity: number, stateNotes: string[] = [], sharedQuantity = false) => {
+      if (quantity <= EPSILON) return
+      summary.counts[state] += 1
+      summary.details[state].push({ id: item.id, requestId: item.request_id,
+        category: categoryLabels[item.table], label: identity.label, description: identity.description || null,
+        quantity: sharedQuantity ? 'Распределение при приёмке' : format(quantity),
+        demandQuantity: format(needed), stockQuantity: format(progress.stock), notes: stateNotes })
+    }
+    add('stock', progress.stock)
+    add('received', progress.received)
+    if (shared.length && progress.outstanding > EPSILON) {
+      const groupOutstanding = items.filter((member) => groupKey(member) === key && !member.inactive && member.order_status !== 'cancelled')
+        .reduce((sum, member) => {
+          const c = coverage(member)
+          const receipts = schedulesByItem.get(itemKey(member.table, member.id)) || []
+          return sum + materialFulfillment({ demand: c.needed, stock: c.reserved,
+            allocated: receipts.reduce((amount, row) => amount + receivedQuantity(row), 0), planned: 0 }).outstanding
+        }, 0)
+      if (!isBar && groupOutstanding > planned + EPSILON) {
+        notes.push(`Не заказано по всей группе: ${format(groupOutstanding - planned)}; распределение остатка между заявками не задано.`)
+        summary.hasUndatedDelivery = true
+      }
+      add('delivery', progress.outstanding, [
+        'Общий график; распределение при приёмке',
+        `Осталось обеспечить эту заявку: ${format(progress.outstanding)}`, ...notes,
+      ], true)
+    } else {
+      add('delivery', progress.expected, notes)
+      add('not_ordered', progress.notOrdered, ['Для этого количества нет подтверждённого графика поставки.'])
+    }
     const dates = datesByRequest.get(item.request_id) || new Set<string>()
-    for (const schedule of effective) {
-      const date = dateOnly(schedule.delivery_date)
+    for (const row of effective) {
+      const date = dateOnly(row.delivery_date)
       if (date) dates.add(date)
     }
     const customDate = effective.length === 0 ? dateOnly(item.custom_delivery_date) : null
-    if (customDate) dates.add(customDate)
+    if (customDate && progress.outstanding > EPSILON) dates.add(customDate)
     datesByRequest.set(item.request_id, dates)
     summary.hasSharedSchedule ||= shared.length > 0
-
-    if (state === 'delivery' || state === 'not_ordered') {
-      const planned = effective.filter((schedule) => schedule.status === 'planned')
-      summary.hasUndatedDelivery ||= effective.length === 0
-        ? !customDate
-        : planned.length === 0 || planned.some((schedule) => !dateOnly(schedule.delivery_date))
-      // A receipt can close a shipment without closing the entire request need.
-      if (own.length > 0 && delivered + planned.reduce((sum, schedule) => sum + positive(schedule.quantity), 0) < required - EPSILON) {
-        summary.hasUndatedDelivery = true
-      }
-    }
+    summary.hasUndatedDelivery ||= !shared.length && progress.notOrdered > EPSILON
+      || (progress.outstanding > EPSILON && plannedRows.some((row) => !dateOnly(row.delivery_date)))
   }
   for (const [id, summary] of summaries) summary.deliveryDates = [...(datesByRequest.get(id) || [])].sort()
   return summaries

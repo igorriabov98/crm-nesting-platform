@@ -182,7 +182,7 @@ const report = buildSupplyDateOrderReport(
 
 assert.equal(report.dateLabel, '10 сентября 2026 г.')
 assert.equal(report.factoryLabel, 'Ужгород')
-assert.equal(report.rows.length, 6, 'multi-length bar purchases must use one order row per stock length')
+assert.equal(report.rows.length, 7, 'multi-length bar purchases must use one order row per stock length')
 assert.equal(
   report.rows.find((row) => row.material === 'Круг')?.quantity,
   6_000,
@@ -217,7 +217,7 @@ assert.match(
 )
 assert.equal(report.rows.find((row) => row.material === 'Лист Hardox')?.supplier, 'Не назначен')
 assert.equal(report.rows.some((row) => row.material === 'Труба'), false, 'fully ordered material must be excluded')
-assert.equal(report.rows.some((row) => row.material === 'Редуктор'), false, 'redelivery belongs to the separate redelivery workflow')
+assert.equal(report.rows.find((row) => row.material === 'Редуктор')?.quantity, 9, 'export includes only the uncovered redelivery remainder, once')
 assert.equal(supplyDateOrderFilename(reportDate), 'zakaz-materialov-2026-09-10.xlsx')
 assert.equal(supplyDateOrderFilename('no_supply_date'), 'zakaz-materialov-bez-daty.xlsx')
 
@@ -247,7 +247,7 @@ assert.deepEqual((worksheet.getRow(6).values as unknown[]).slice(1), [
 assert.equal(worksheet.views[0]?.state, 'frozen')
 assert.equal(worksheet.views[0]?.ySplit, 6)
 assert.equal(worksheet.views[0]?.showGridLines, false)
-assert.equal(worksheet.autoFilter, 'A6:L12')
+assert.equal(worksheet.autoFilter, 'A6:L13')
 const dataRows = Array.from(
   { length: worksheet.rowCount - 6 },
   (_, index) => worksheet.getRow(index + 7),

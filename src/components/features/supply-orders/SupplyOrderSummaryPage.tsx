@@ -58,6 +58,7 @@ import type { SupplierWithRelations } from '@/lib/actions/suppliers'
 import { ReturnLongStockPositionButton } from './ReturnLongStockPositionButton'
 import { CancelReturnedSupplyPositionDialog } from '@/components/features/requests/CancelReturnedSupplyPositionDialog'
 import type { SupplyPositionTable } from '@/lib/supply-orders/position-revisions'
+import { SupplyQuantitySummary } from './SupplyQuantitySummary'
 import { SupplyDateOrderExportButton } from './SupplyDateOrderExportButton'
 import { SupplyOrderFactoryToggle } from './SupplyOrderFactoryToggle'
 import {
@@ -129,32 +130,22 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
   const prioritizedAggregates = useMemo(() => {
     return partitionSupplyOrderAggregatesByRedelivery(visibleAggregates)
   }, [visibleAggregates])
-  const grouped = useMemo(() => {
-    return groupSupplyOrderAggregatesBySupplyDate(
-      filters.status === 'unscheduled' ? [] : prioritizedAggregates.regular,
-      filters.sort,
-    )
-  }, [filters.sort, filters.status, prioritizedAggregates.regular])
-  const exportableCountByDate = useMemo(() => {
-    const regular = partitionSupplyOrderAggregatesByRedelivery(aggregates).regular
-    return new Map(groupSupplyOrderAggregatesBySupplyDate(regular, 'date_asc').map((group) => [
-      group.dateKey,
-      group.rows.filter((slice) => slice.unscheduledQuantity > 0.000001).length,
-    ]))
-  }, [aggregates])
-  const metricAggregates = filters.status === 'unscheduled'
-    ? prioritizedAggregates.redeliveries
-    : visibleAggregates
-
+  const grouped = useMemo(() => groupSupplyOrderAggregatesBySupplyDate(visibleAggregates, filters.sort)
+    .map((group) => ({ ...group, rows: filters.status === 'unscheduled'
+      ? group.rows.filter((row) => row.kind === 'unscheduled') : group.rows }))
+    .filter((group) => group.rows.length > 0), [filters.sort, filters.status, visibleAggregates])
+  const exportableCountByDate = useMemo(() => new Map(
+    groupSupplyOrderAggregatesBySupplyDate(aggregates, 'date_asc').map((group) => [
+      group.dateKey, group.rows.filter((slice) => slice.unscheduledQuantity > 0.000001).length,
+    ]),
+  ), [aggregates])
+  // Count demand groups once, before expanding them into dated shipment cards.
   const totals = useMemo(() => ({
-    aggregateCount: metricAggregates.length,
-    itemCount: metricAggregates.reduce((sum, aggregate) => sum + aggregate.item_count, 0),
-    pendingCount: metricAggregates.reduce((sum, aggregate) => sum + aggregate.pending_count, 0),
-    orderedCount: metricAggregates.reduce((sum, aggregate) => sum + aggregate.ordered_count, 0),
-    plannedQuantity: metricAggregates.reduce((sum, aggregate) => sum + aggregate.planned_schedule_quantity, 0),
-    deliveredQuantity: metricAggregates.reduce((sum, aggregate) => sum + aggregate.delivered_schedule_quantity, 0),
-    remainingQuantity: metricAggregates.reduce((sum, aggregate) => sum + aggregate.unscheduled_quantity, 0),
-  }), [metricAggregates])
+    aggregateCount: visibleAggregates.length,
+    itemCount: visibleAggregates.reduce((sum, aggregate) => sum + aggregate.item_count, 0),
+    awaitingCount: visibleAggregates.filter((aggregate) => aggregate.planned_schedule_quantity > 0.000001).length,
+    unscheduledCount: visibleAggregates.filter((aggregate) => aggregate.unscheduled_quantity > 0.000001).length,
+  }), [visibleAggregates])
 
   const toggle = (id: string) => {
     setExpanded((current) => {
@@ -213,26 +204,12 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
                     <h2 id="redelivery-heading" className="text-base font-semibold text-amber-950 sm:text-lg">
                       Нужно довезти
                     </h2>
-                    <p className="text-xs text-amber-800/80">После приёмки поступила только часть заявленного объёма. Остатку нужна новая дата</p>
+                    <p className="text-xs text-amber-800/80">Остатки после частичной приёмки показаны ниже как «Не заказано» на требуемую производством дату.</p>
                   </div>
                 </div>
                 <Badge variant="outline" className="w-fit border-amber-300 bg-white/80 text-amber-900">
                   {prioritizedAggregates.redeliveries.length} материалов
                 </Badge>
-              </div>
-
-              <div className="space-y-3">
-                {prioritizedAggregates.redeliveries.map((aggregate) => (
-                  <MaterialOrderCard
-                    key={aggregate.id}
-                    aggregate={aggregate}
-                    factory={aggregate.factories[0]}
-                    suppliers={suppliers}
-                    isExpanded={expanded.has(aggregate.id)}
-                    onToggle={() => toggle(aggregate.id)}
-                    attentionKind="redelivery"
-                  />
-                ))}
               </div>
             </section>
           )}
@@ -240,12 +217,8 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
           <div className="grid grid-cols-2 gap-2 text-sm xl:grid-cols-4">
             <Metric label="Материалы" value={totals.aggregateCount} />
             <Metric label="Позиции" value={totals.itemCount} />
-            <Metric label="Не зак. / зак." value={`${totals.pendingCount} / ${totals.orderedCount}`} />
-            <Metric
-              label="План / факт"
-              value={`${formatAmount(totals.plannedQuantity)} / ${formatAmount(totals.deliveredQuantity)}`}
-              hint={`Остаток ${formatAmount(totals.remainingQuantity)}`}
-            />
+            <Metric label="Ожидают поставку" value={totals.awaitingCount} hint="Материалов с будущим графиком" />
+            <Metric label="Нужно заказать" value={totals.unscheduledCount} hint="Материалов с незапланированным остатком" />
           </div>
 
           {grouped.map((group) => (
@@ -257,7 +230,7 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
                     <h2 id={`aggregate-date-${group.dateKey}`} className="text-base font-semibold text-foreground sm:text-lg">
                       {group.dateKey === 'no_supply_date' ? 'Без даты поставки' : formatDate(group.dateKey)}
                     </h2>
-                    <p className="text-xs text-muted-foreground">{group.rows.length} поставок материалов</p>
+                    <p className="text-xs text-muted-foreground">{group.rows.length} поставок и потребностей</p>
                   </div>
                 </div>
                 <SupplyDateOrderExportButton
@@ -340,6 +313,7 @@ function MaterialOrderCard({
   const hasCancelledReturn = factory?.items.some(isCancelledReturnedSupplyOrderSource) ?? false
   const requiresRecalculation = (hasGenericPositionReturn && activeFactoryItems.length === 0)
     || longStockPlans.some((plan) => plan.cutting_status === 'requires_recalculation')
+  const isUnscheduledSlice = dateSlice?.kind === 'unscheduled'
   const hasMixedPlannedAndUnscheduled = Boolean(
     dateSlice && dateSlice.plannedScheduleCount > 0 && dateSlice.unscheduledQuantity > 0,
   )
@@ -364,11 +338,11 @@ function MaterialOrderCard({
                   {dateSlice.plannedScheduleCount > 0 && (
                     <div className="flex items-center gap-1.5 font-medium text-primary">
                       <Check className="h-3.5 w-3.5" />
-                      В графике
+                      Ожидается поставка
                     </div>
                   )}
-                  {dateSlice.deliveredScheduleCount > 0 && <div className="font-medium text-emerald-700">Принято</div>}
-                  {dateSlice.unscheduledQuantity > 0 && <div className="font-medium text-amber-700">Без графика</div>}
+                  {dateSlice.deliveredScheduleCount > 0 && <div className="font-medium text-emerald-700">{dateSlice.shortReceipt || dateSlice.plannedScheduleCount > 0 ? 'Поставка принята частично' : 'Поставка принята'}</div>}
+                  {dateSlice.unscheduledQuantity > 0 && <div className="font-medium text-amber-700">Не заказано</div>}
                 </>
               ) : (
                 <>
@@ -423,60 +397,9 @@ function MaterialOrderCard({
           )}
         </header>
 
-        <dl className="border-t border-border bg-muted/20 p-4 lg:border-l lg:border-t-0 lg:p-5">
-          {dateSlice ? (
-            <>
-              <div className="flex items-baseline justify-between gap-3 lg:block">
-                <dt className="text-sm text-muted-foreground">Потребность по заявкам</dt>
-                <dd className="text-xl font-semibold text-foreground tabular-nums lg:mt-1">
-                  {formatAmount(quantitySummary.demandQuantity)} {aggregate.unit}
-                </dd>
-              </div>
-              <div className="mt-2 flex items-center justify-between gap-3 text-sm">
-                <dt className="text-muted-foreground">Поставка на дату</dt>
-                <dd className="font-medium text-foreground tabular-nums">
-                  {formatAmount(quantitySummary.deliveryQuantity)} {aggregate.unit}
-                </dd>
-              </div>
-              {quantitySummary.deliveryExcess > 0 && (
-                <div className="mt-1 flex items-center justify-between gap-3 text-sm">
-                  <dt className="text-muted-foreground">Избыток графика</dt>
-                  <dd className="font-medium text-amber-700 tabular-nums">
-                    {formatAmount(quantitySummary.deliveryExcess)} {aggregate.unit}
-                  </dd>
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="flex items-baseline justify-between gap-3 lg:block">
-              <dt className="text-sm text-muted-foreground">{hasCancelledReturn ? 'Активный объём' : attentionKind === 'redelivery' ? 'Было заявлено' : 'Количество'}</dt>
-              <dd className="text-xl font-semibold text-foreground tabular-nums lg:mt-1">
-                {formatAmount(displayQuantity)} {aggregate.unit}
-              </dd>
-            </div>
-          )}
-          <div className="mt-2 flex items-center justify-between gap-3 text-sm">
-            <dt className="text-muted-foreground">Осталось заказать</dt>
-            <dd className={`font-medium tabular-nums ${quantitySummary.remainingToOrder > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
-              {formatAmount(quantitySummary.remainingToOrder)} {aggregate.unit}
-            </dd>
-          </div>
-          <div className="mt-2 flex items-center justify-between gap-3 text-sm">
-            <dt className="text-muted-foreground">Вес</dt>
-            <dd className="font-medium text-foreground tabular-nums">
-              {displayWeight || 'Не рассчитан'}
-            </dd>
-          </div>
-          <div className="mt-1 flex items-center justify-between gap-3 text-sm">
-            <dt className="text-muted-foreground">Позиций</dt>
-            <dd className="font-medium text-foreground tabular-nums">{aggregate.item_count}</dd>
-          </div>
-          {dateSlice && (
-            <p className="mt-3 text-xs leading-5 text-muted-foreground">
-              Потребность указана по заявкам с учётом складской брони. Поставка на дату может быть больше потребности из-за перепоставки.
-            </p>
-          )}
-        </dl>
+        <SupplyQuantitySummary summary={quantitySummary} unit={aggregate.unit} dateSlice={dateSlice}
+          productionDate={factory?.production_date ?? aggregate.planned_material_date}
+          weight={displayWeight} itemCount={aggregate.item_count} isBar={isSupplyOrderBarMaterial(aggregate)} />
       </div>
 
       <div className="border-t border-border lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
@@ -518,7 +441,7 @@ function MaterialOrderCard({
                     </span>
                     <span className="flex shrink-0 flex-col items-end gap-0.5 tabular-nums">
                       <span className="font-semibold text-foreground">
-                        {dateSlice && <span className="mr-1 text-xs font-normal text-muted-foreground">Потребность</span>}
+                        {dateSlice && <span className="mr-1 text-xs font-normal text-muted-foreground">Всего по заявке</span>}
                         {formatAmount(route.quantity)} {aggregate.unit}
                       </span>
                       {attentionByRequest.get(route.requestId) && (
@@ -571,7 +494,7 @@ function MaterialOrderCard({
                         Дата {dateSlice.dateKey === 'no_supply_date' ? 'не указана' : formatDate(dateSlice.dateKey)} · {dateSlice.plannedScheduleCount + dateSlice.deliveredScheduleCount > 0 ? 'из графика снабжения' : 'по Мат.план производства'}
                       </span>
                       <span className="block text-xs leading-5 text-muted-foreground">
-                        {formatAmount(dateSlice.quantity - dateSlice.unscheduledQuantity)} по графику / {formatAmount(dateSlice.deliveredQuantity)} принято
+                        {isUnscheduledSlice ? 'Нужно назначить поставку' : `${formatAmount(dateSlice.plannedQuantity)} ожидается / ${formatAmount(dateSlice.deliveredQuantity)} принято`}
                         {dateSlice.unscheduledQuantity > 0 && ` · без графика ${formatAmount(dateSlice.unscheduledQuantity)} ${aggregate.unit}`}
                       </span>
                     </>
@@ -605,7 +528,8 @@ function MaterialOrderCard({
             factory={factory}
             suppliers={suppliers}
             dateSlice={plannedOnlyDateSlice}
-            appendUnscheduled={attentionKind === 'redelivery'}
+            appendUnscheduled={attentionKind === 'redelivery' || isUnscheduledSlice}
+            allowFinance={!isUnscheduledSlice}
           />
           {hasMixedPlannedAndUnscheduled && (
             <FactoryDeliveryEditor
