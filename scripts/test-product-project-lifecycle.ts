@@ -27,6 +27,7 @@ for (const label of ['Ожидает инженера', 'В работе', 'Пр
 }
 
 const productActions = source('src/lib/actions/products.ts')
+assert.match(productActions, /export async function getEngineerOptions\(\)[\s\S]*requireProductAccess\('product_projects'\)[\s\S]*dbFrom\(createAdminClient\(\)\)/, 'engineer options must use the server-side directory reader after product-project authorization')
 assert.match(productActions, /engineer_description/, 'engineering result must include an engineer description')
 assert.match(productActions, /application\/pdf/, 'engineering drawing must be validated as PDF')
 assert.match(productActions, /status: 'added_to_products'/, 'shipped project must be closed after product promotion')
