@@ -120,10 +120,11 @@ for (const [table, fields] of quantities) {
 const civSheet = { ...item, table: 'request_sheet_metal' as const, remainder_qty: 20, reserved_from_stock_kg: 0 }
 const civReceipt = { ...partial, request_item_table: civSheet.table, received_quantity: 10, allocated_quantity: 10 }
 const civFuture = { ...schedule, request_item_table: civSheet.table, quantity: 15, delivery_date: '2026-10-09' }
-const civ = summarize([civSheet], [civReceipt, civFuture])
+const civ = summarize([civSheet], [civReceipt, { ...civFuture, quantity: 10 }, { ...civFuture, id: 'extra-five', quantity: 5 }])
 assert.equal(civ.details.received[0].quantity, '10 шт')
 assert.equal(civ.details.delivery[0].quantity, '10 шт')
 assert(civ.details.delivery[0].notes.includes('Поставка 09.10.2026 — 15 шт'))
+assert.equal(civ.details.delivery[0].notes.filter((note) => note.startsWith('Поставка ')).length, 1, 'Строки графика одного дня показываются общей поставкой')
 assert(civ.details.delivery[0].notes.some((note) => note.includes('сверх потребности: 5 шт')))
 assert.equal(summarize([{ ...item, order_status: 'delivered' }], [{ ...partial, allocated_quantity: 0 }]).counts.received, 0)
 const barSchedules = [

@@ -287,12 +287,22 @@ export function buildCuttingAreaMaterialSummaries(
     const format = (quantity: number) => formatMaterialRequestStockQuantity(quantity, unit)
     const isBar = item.table === 'request_circle' || item.table === 'request_knives'
       || (item.table === 'request_pipe' && item.pipe_type !== 'wire')
-    const notes = plannedRows.map((row) => {
-      const date = dateOnly(row.delivery_date)
+    const plannedByDate = new Map<string, CuttingAreaMaterialSchedule[]>()
+    for (const row of plannedRows) {
+      const date = dateOnly(row.delivery_date) || ''
+      plannedByDate.set(date, [...plannedByDate.get(date) || [], row])
+    }
+    const notes = [...plannedByDate].sort(([a], [b]) => a.localeCompare(b)).map(([date, rows]) => {
       const label = date ? date.split('-').reverse().join('.') : 'дата не указана'
-      const pieces = positive(row.planned_piece_count)
-      const length = positive(row.planned_piece_length_mm)
-      return `Поставка ${label} — ${format(positive(row.quantity))}${isBar ? ` физического материала${pieces && length ? ` (${pieces} хлыстов по ${value(length)} мм)` : ''}` : ''}`
+      const quantity = rows.reduce((sum, row) => sum + positive(row.quantity), 0)
+      const piecesByLength = new Map<number, number>()
+      for (const row of rows) {
+        const length = positive(row.planned_piece_length_mm)
+        const pieces = positive(row.planned_piece_count)
+        if (length && pieces) piecesByLength.set(length, (piecesByLength.get(length) || 0) + pieces)
+      }
+      const composition = [...piecesByLength].map(([length, pieces]) => `${pieces} хлыстов по ${value(length)} мм`).join('; ')
+      return `Поставка ${label} — ${format(quantity)}${isBar ? ` физического материала${composition ? ` (${composition})` : ''}` : ''}`
     })
     if (!isBar && !shared.length && progress.plannedExcess > EPSILON) {
       notes.push(`По всем будущим поставкам сверх потребности: ${format(progress.plannedExcess)}`)
