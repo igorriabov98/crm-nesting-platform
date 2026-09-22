@@ -10,6 +10,8 @@ const productActions = await readFile('src/lib/actions/products.ts', 'utf8')
 const productList = await readFile('src/components/features/products/ProductList.tsx', 'utf8')
 const productForm = await readFile('src/components/features/products/ProductForm.tsx', 'utf8')
 const productDetails = await readFile('src/app/(protected)/products/[id]/page.tsx', 'utf8')
+const clientActions = await readFile('src/lib/actions/clients.ts', 'utf8')
+const commercialVisibility = await readFile('src/lib/permissions/commercial-visibility.ts', 'utf8')
 const protectedFileRoutes = await Promise.all([
   'src/app/api/machine-cutting/files/[id]/route.ts',
   'src/app/api/production/cutting-area/archives/[id]/route.ts',
@@ -49,6 +51,10 @@ assert.match(cutover, /private\.crm_has_permission\('client_prices', 'manage'\)/
 assert.doesNotMatch(productList, />Цена<\/th>/, 'Базовая цена не должна отображаться в списке изделий')
 assert.doesNotMatch(productForm, /label="Базовая цена"|htmlFor="base_price_eur"/, 'Базовая цена не должна отображаться или редактироваться в карточке изделия')
 assert.doesNotMatch(productDetails, /Базовая цена|canViewProductPrices/, 'Базовая цена не должна отображаться в сводке изделия')
+assert.match(clientActions, /export async function getClientOptions\(\)[\s\S]*requireClientPermission\('view'\)/)
+assert.doesNotMatch(clientActions, /export async function getClientOptions\(\)[\s\S]*requirePermission\('client_identity', 'view'\)/)
+assert.match(commercialVisibility, /export async function requireClientCardAccess\([\s\S]*hasPermission\(resolvedContext\.permissions, 'clients', 'view'\)/)
+assert.match(commercialVisibility, /responsible_user_id !== resolvedContext\.userId/)
 for (const route of protectedFileRoutes) {
   assert.match(route, /requireClientCommercialDocumentVisibility/)
   assert.match(route, /PermissionDeniedError[\s\S]*403/)

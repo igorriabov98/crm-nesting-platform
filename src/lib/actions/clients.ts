@@ -13,7 +13,6 @@ import type { Client, ClientContact, MachineDetails } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
 import { normalizeScheduledDays } from '@/lib/payments/terms'
 import {
-  getCommercialVisibilityForClients,
   requireClientCardAccess,
 } from '@/lib/permissions/commercial-visibility'
 
@@ -158,25 +157,16 @@ async function createSignedImageUrl(path: string | null | undefined) {
 
 export async function getClientOptions() {
   try {
-    const context = await requirePermission('client_identity', 'view')
+    const context = await requireClientPermission('view')
 
-    const { data, error } = await looseDb(createAdminClient()).from('clients')
-      .select('id, name')
+    let query = looseDb(createAdminClient()).from('clients')
+      .select('id, name, responsible_user_id')
       .order('name', { ascending: true })
+    if (!context.permissionDetails.isAdminPosition) query = query.eq('responsible_user_id', context.userId)
 
+    const { data, error } = await query
     if (error) throw error
-    const clients = (data || []) as unknown as Array<Pick<Client, 'id' | 'name'>>
-    const visibility = await getCommercialVisibilityForClients(clients.map((client) => client.id), context)
-    return {
-      data: clients.map((client) => {
-        const access = visibility.get(client.id)
-        return {
-          id: client.id,
-          name: access?.displayName || 'КЛИЕНТ',
-        }
-      }),
-      error: null,
-    }
+    return { data: ((data || []) as unknown as Array<Pick<Client, 'id' | 'name'>>), error: null }
   } catch (error) {
     return { data: null, error: getErrorMessage(error) }
   }
