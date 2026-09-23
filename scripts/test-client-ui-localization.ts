@@ -94,6 +94,7 @@ for (const label of ['Не назначен', 'От даты инвойса', '�
 for (const [segment, expected] of Object.entries({
   clients: 'База клиентов',
   tasks: 'Задачи',
+  'steel-types': 'Марки стали',
   fact: 'Факт производства',
   people: 'Планирование людей',
   workers: 'Работники',
