@@ -50,6 +50,7 @@ import type { SteelType } from '@/lib/types/database'
 const MaterialSearch = dynamic(() => import('@/components/features/requests/MaterialSearch').then((mod) => mod.MaterialSearch), {
   loading: () => <div className="h-10 rounded-md border border-[#E8ECF0] bg-[#F8F9FA]" />,
 })
+const SheetInventoryImportDialog = dynamic(() => import('./SheetInventoryImportDialog').then(mod => mod.SheetInventoryImportDialog))
 
 type Props = {
   items: InventoryWithMaterial[]
@@ -59,6 +60,7 @@ type Props = {
   steelTypes: SteelType[]
   resultLimit?: number
   canManageInventory: boolean
+  sheetImportFactoryIds?: string[]
   initialStockMode?: 'main' | 'business_scrap' | 'future_business_scrap'
 }
 
@@ -93,7 +95,7 @@ function formatInventoryDateTime(value: string) {
   }).format(new Date(value))
 }
 
-export function InventoryPage({ items, factories, activeFactoryId, suppliers, steelTypes, resultLimit, canManageInventory: initialCanManageInventory, initialStockMode = 'main' }: Props) {
+export function InventoryPage({ items, factories, activeFactoryId, suppliers, steelTypes, resultLimit, canManageInventory: initialCanManageInventory, sheetImportFactoryIds = [], initialStockMode = 'main' }: Props) {
   const router = useRouter()
   const { can } = usePermissions()
   const canManageInventory = initialCanManageInventory && can('inventory', 'manage')
@@ -454,6 +456,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
 
   return (
     <div className="space-y-4">
+      {stockMode === 'main' && canManageInventory && sheetImportFactoryIds.length > 0 && <div className="flex justify-end"><SheetInventoryImportDialog factories={factories.filter(factory => sheetImportFactoryIds.includes(factory.id))} activeFactoryId={sheetImportFactoryIds.includes(activeFactoryId || '') ? activeFactoryId : null} /></div>}
       <div className="rounded-xl border border-[#E8ECF0] bg-white p-4">
         <div className="mb-4 flex flex-col gap-3 border-b border-[#E8ECF0] pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2 text-sm font-medium text-[#1B3A6B]">

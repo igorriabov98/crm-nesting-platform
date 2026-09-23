@@ -382,10 +382,27 @@ const apiRoutesWithDedicatedAuthorization = new Set([
   'src/app/api/version/route.ts',
   'src/app/api/access/snapshot/route.ts',
 ])
+const sheetImportHandlers: Record<string, string> = {
+  'src/app/api/inventory/sheet-import/template/route.ts': 'sheetImportTemplateResponse',
+  'src/app/api/inventory/sheet-import/preview/route.ts': 'sheetImportUploadResponse',
+  'src/app/api/inventory/sheet-import/commit/route.ts': 'sheetImportUploadResponse',
+}
 for (const filePath of walk(join(root, 'src/app/api'), 'route.ts')) {
   const relativePath = relative(root, filePath)
   if (apiRoutesWithDedicatedAuthorization.has(relativePath)) continue
   const source = readFileSync(filePath, 'utf8')
+  const sheetImportHandler = sheetImportHandlers[relativePath]
+  if (sheetImportHandler) {
+    assert(source.includes(`import { ${sheetImportHandler} } from '@/lib/inventory/sheet-import-server'`), 'Импорт должен использовать общий защищённый обработчик')
+    assert(source.includes(`return ${sheetImportHandler}(`) || source.includes(`export const GET = ${sheetImportHandler}`), 'Маршрут импорта должен вызывать защищённый обработчик')
+    const handlers = readFileSync(join(root, 'src/lib/inventory/sheet-import-server.ts'), 'utf8')
+    const handler = handlers.split(`export async function ${sheetImportHandler}(`)[1]?.split('export async function ')[0]
+    assert(handler && /await requirePermission\('inventory', 'manage'\)/u.test(handler), 'Каждый обработчик импорта должен проверять inventory.manage')
+    if (sheetImportHandler === 'sheetImportUploadResponse') {
+      assert(/assertFactoryAccess\(access, 'inventory', 'manage', factoryId\)/u.test(handler), 'Загрузка должна проверять доступ к выбранному заводу')
+    }
+    continue
+  }
   if (relativePath === 'src/app/api/materials/search/route.ts') {
     assert(/await searchMaterialsWithVariants\(/u.test(source), 'Поиск должен делегировать защищённому действию')
     const materialActions = readFileSync(join(root, 'src/lib/actions/materials.ts'), 'utf8')
