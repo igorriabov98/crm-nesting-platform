@@ -5,11 +5,7 @@ import { requirePermission } from '@/lib/permissions/server'
 export const metadata = { title: 'Марки стали - CRM Завода' }
 
 export default async function SteelTypesPage() {
-  try {
-    await requirePermission('materials', 'manage')
-  } catch {
-    await requirePermission('nesting_catalog', 'manage')
-  }
+  await requirePermission('nesting_catalog', 'manage')
   return <main className="mx-auto max-w-5xl p-4 sm:p-6">
     <SteelTypesSection initialSteelTypes={await getSteelTypes()} />
   </main>

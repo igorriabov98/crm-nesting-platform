@@ -82,7 +82,7 @@ export async function sheetImportUploadResponse(request: Request, commit: boolea
       p_factory_id: factoryId, p_rows: parsed.rows, p_file_name: file.name,
       p_operation_id: operationId, p_preview_hash: previewHash, p_previous_import_id: previousId || null,
     })
-    for (const path of [ROUTES.INVENTORY, ROUTES.INVENTORY_HISTORY, ROUTES.SUPPLY_ORDERS, ROUTES.TASKS, '/admin/materials', '/steel-types']) revalidatePath(path)
+    for (const path of [ROUTES.INVENTORY, ROUTES.INVENTORY_HISTORY, ROUTES.SUPPLY_ORDERS, ROUTES.TASKS, ROUTES.ADMIN_MATERIALS, ROUTES.STEEL_TYPES]) revalidatePath(path)
     revalidatePath('/inventory/[materialId]/history', 'page')
     return Response.json(result, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) { return failure(error) }

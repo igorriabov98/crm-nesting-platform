@@ -84,7 +84,7 @@ export async function updateSteelTypeDensity(
 
   if (error) throw new Error(error.message)
   if (!data) throw new Error('Марка стали не найдена или нет права её изменять')
-  for (const path of ['/steel-types', '/admin/materials', ROUTES.TASKS, ROUTES.INVENTORY, ROUTES.INVENTORY_HISTORY]) revalidatePath(path)
+  for (const path of [ROUTES.STEEL_TYPES, ROUTES.ADMIN_MATERIALS, ROUTES.TASKS, ROUTES.INVENTORY, ROUTES.INVENTORY_HISTORY]) revalidatePath(path)
 }
 
 export async function deleteSteelType(id: string): Promise<void> {
