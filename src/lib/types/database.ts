@@ -4388,6 +4388,24 @@ export type Database = {
           updated_at?: string
         }
       }
+      inventory_sheet_imports: {
+        Row: {
+          id: string
+          factory_id: string
+          performed_by: string
+          file_name: string
+          fingerprint: string
+          input_hash: string
+          source_rows: Json
+          receipt_count: number
+          quantity: number
+          weight_kg: number
+          repeated_from: string | null
+          created_at: string
+        }
+        Insert: Omit<Database['public']['Tables']['inventory_sheet_imports']['Row'], 'created_at'> & { created_at?: string }
+        Update: Partial<Database['public']['Tables']['inventory_sheet_imports']['Row']>
+      }
       inventory_transactions: {
         Row: {
           id: string
@@ -4396,6 +4414,8 @@ export type Database = {
           material_id: string
           material_variant_id: string | null
           transaction_type: Database['public']['Enums']['inventory_transaction_type']
+          sheet_import_id?: string | null
+          sheet_import_row?: number | null
           quantity: number
           secondary_quantity: number | null
           machine_id: string | null
@@ -4413,6 +4433,8 @@ export type Database = {
           material_id: string
           material_variant_id?: string | null
           transaction_type: Database['public']['Enums']['inventory_transaction_type']
+          sheet_import_id?: string | null
+          sheet_import_row?: number | null
           quantity: number
           secondary_quantity?: number | null
           machine_id?: string | null
@@ -4430,6 +4452,8 @@ export type Database = {
           material_id?: string
           material_variant_id?: string | null
           transaction_type?: Database['public']['Enums']['inventory_transaction_type']
+          sheet_import_id?: string | null
+          sheet_import_row?: number | null
           quantity?: number
           secondary_quantity?: number | null
           machine_id?: string | null
@@ -5815,6 +5839,12 @@ export type Database = {
       inventory_transaction_type: 'receipt' | 'reserve' | 'unreserve' | 'write_off' | 'adjustment' | 'transfer_out' | 'transfer_in'
     }
     Functions: {
+      fn_sheet_inventory_import_catalog: { Args: Record<string, never>; Returns: Json }
+      fn_preview_sheet_inventory_import: { Args: { p_factory_id: string; p_rows: Json }; Returns: Json }
+      fn_commit_sheet_inventory_import: {
+        Args: { p_factory_id: string; p_rows: Json; p_file_name: string; p_operation_id: string; p_preview_hash: string; p_previous_import_id?: string | null }
+        Returns: Json
+      }
       fn_detailing_request_check_state: {
         Args: { p_request_id: string }
         Returns: { ready: boolean; has_matches: boolean; decision: 'auto_no_matches' | 'reserved' | 'declined' | null; message?: string }

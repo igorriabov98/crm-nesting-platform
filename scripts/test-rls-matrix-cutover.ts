@@ -227,6 +227,7 @@ assert.deepEqual(
     '20260922115830_protect_supply_receipt_surplus.sql',
     '20260922120000_request_series_and_detailing_gate.sql',
     '20260922133000_receiving_approved_bar_allocation_guard.sql',
+    '20260922183000_sheet_inventory_import.sql',
 
   ],
   'После cutover разрешены только проверенные follow-up миграции',

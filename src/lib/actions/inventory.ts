@@ -18,7 +18,7 @@ import {
   unreserveInventoryReservation,
 } from '@/lib/inventory/secure-rpc'
 import { requirePermission } from '@/lib/permissions/server'
-import { assertFactoryAccess, type FactoryScopedPermissionContext } from '@/lib/permissions/factory-scope'
+import { assertFactoryAccess, canAccessFactory, type FactoryScopedPermissionContext } from '@/lib/permissions/factory-scope'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { type PermissionOperation } from '@/lib/permissions/resources'
@@ -714,6 +714,15 @@ export async function canManageInventory() {
   } catch {
     return false
   }
+}
+
+export async function getSheetImportFactoryIds(): Promise<string[]> {
+  try {
+    const access = await requireAccess('manage')
+    const { data, error } = await access.db.from('factories').select('id')
+    if (error) return []
+    return ((data || []) as { id: string }[]).filter(factory => canAccessFactory(access, 'inventory', 'manage', factory.id)).map(factory => factory.id)
+  } catch { return [] }
 }
 
 const businessScrapConversionSchema = z.array(z.string().uuid())
