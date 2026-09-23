@@ -1,3 +1,5 @@
+import { rectangularDimensions } from '@/lib/materials/rotatable-dimensions'
+
 export type PipeProfileSource = {
   pipe_type?: unknown
   diameter_mm?: unknown
@@ -27,13 +29,7 @@ export function singlePipeDimension(value: unknown) {
 }
 
 export function pipeSectionDimensions(value: unknown): [number, number] | null {
-  const parts = String(value ?? '')
-    .trim()
-    .replace(/[хХ×*]/g, 'x')
-    .split('x')
-    .map((part) => positivePipeNumber(part.trim()))
-  if (parts.length < 2 || parts.some((part) => part === null)) return null
-  return [parts[0] as number, parts[1] as number]
+  return rectangularDimensions(value)
 }
 
 export function roundPipeOuterDiameterMm(source: PipeProfileSource) {

@@ -222,7 +222,10 @@ export function SupplyRequestPage({ data, detailing }: Props) {
         )}
       </section>
 
-      <SupplyRequestSummary summary={data.summary} totalWeight={totalWeight} />
+      <SupplyRequestSummary summary={data.summary} totalWeight={totalWeight}
+        sheetBusinessScrapReserved={isStockCheckMode
+          ? data.sections.sheetMetal.reduce((sum, row) => sum + Number(row.reserved_quantity || 0), 0)
+          : null} />
 
       <div className="rounded-xl border border-[#E8ECF0] bg-white p-2">
         <div className="flex flex-wrap gap-2">
@@ -246,7 +249,7 @@ export function SupplyRequestPage({ data, detailing }: Props) {
         </div>
       </div>
 
-      {activeTab === 'sheet_metal' && <SupplySheetMetalTable key={selectedFactoryId} rows={filteredSections.sheetMetal} machineId={request.machine_id} canReserve={canReserve} canUnreserve={canUnreserve} />}
+      {activeTab === 'sheet_metal' && <SupplySheetMetalTable key={selectedFactoryId} rows={isStockCheckMode ? data.sections.sheetMetal : filteredSections.sheetMetal} machineId={request.machine_id} canReserve={canReserve} canUnreserve={canUnreserve} businessScrapMode={isStockCheckMode} />}
       {activeTab === 'circle' && <SupplyCircleTable key={selectedFactoryId} rows={filteredSections.circles} requestId={request.id} />}
       {activeTab === 'pipe' && <SupplyPipeTable key={selectedFactoryId} rows={filteredSections.pipes} requestId={request.id} machineId={request.machine_id} canReserve={canReserve} canUnreserve={canUnreserve} />}
       {activeTab === 'knives' && <SupplyKnivesTable key={selectedFactoryId} rows={filteredSections.knives} requestId={request.id} />}

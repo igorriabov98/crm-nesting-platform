@@ -13,9 +13,12 @@ let deny = false
 const db = {
   from(table) {
     const predicates = []
-    const data = () => (tables[table] ?? []).filter((row) => predicates.every((predicate) => predicate(row)))
+    let from = 0
+    let to = Number.POSITIVE_INFINITY
+    const data = () => (tables[table] ?? []).filter((row) => predicates.every((predicate) => predicate(row))).slice(from, to + 1)
     const query = {
       select() { return query }, order() { return query },
+      range(start, end) { from = start; to = end; return query },
       eq(key, value) { predicates.push((row) => row[key] === value); return query },
       is(key, value) { predicates.push((row) => (row[key] ?? null) === value); return query },
       in(key, values) { predicates.push((row) => values.includes(row[key])); return query },
@@ -123,6 +126,18 @@ assert.equal(foreign.factoryName, 'Берегово')
 assert.equal(foreign.sources[0].factoryName, 'Хуст')
 assert.equal(foreign.sources[0].requiresTransfer, true)
 assert.equal(writes.length, 0)
+reset('pipe', 'rectangular')
+Object.assign(tables.material_variants[0], { steel_type_id: uuid(50), material_grade: 'S235',
+  wall_thickness_mm: 4, piece_description: '100x50', diameter_mm: null })
+const rotatedVariantId = uuid(40)
+const rotatedInventoryId = uuid(41)
+tables.material_variants.push({ ...tables.material_variants[0], id: rotatedVariantId, piece_description: '50×100' })
+tables.inventory.push({ ...tables.inventory[0], id: rotatedInventoryId, material_variant_id: rotatedVariantId,
+  piece_length_mm: 6000, total_quantity: 6000, available_quantity: 6000 })
+const rotated = await actions.loadLongStockSourceOptions({ requestId: ids.request, materialId: ids.material, materialVariantId: ids.variant })
+assert.equal(rotated.sources.some((source) => source.inventoryId === rotatedInventoryId), true,
+  'rotated rectangular pipe stock must be offered for the cutting plan')
+assert.equal(writes.length, 0)
 const futureInput = reset()
 tables.inventory[0] = { ...tables.inventory[0], is_business_scrap: true, business_scrap_state: 'future',
   available_from_date: '2026-09-09', source_machine_id: uuid(30) }
@@ -142,4 +157,4 @@ deny = true
 await assert.rejects(() => actions.calculateLongStockCuttingPlan(futureInput), /Permission denied/)
 const wireInput = reset('pipe', 'wire')
 await assert.rejects(() => actions.calculateLongStockCuttingPlan(wireInput), /Проволока/)
-console.log('Scenario server actions passed: six material variants, exact reviewed layout, stale proofs before writes, factory labels, permissions and wire exclusion. No database/network used.')
+console.log('Scenario server actions passed: six material variants, rotated pipe stock, exact reviewed layout, stale proofs before writes, factory labels, permissions and wire exclusion. No database/network used.')
