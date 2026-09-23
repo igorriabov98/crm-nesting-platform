@@ -1,7 +1,9 @@
 'use server'
 
+import { revalidatePath } from 'next/cache'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { requirePermission } from '@/lib/permissions/server'
+import { ROUTES } from '@/lib/constants/routes'
 import type { SteelType } from '@/lib/types/database'
 
 type DbResult<T = unknown> = { data: T | null; error: { message?: string } | null; count?: number | null }
@@ -46,6 +48,9 @@ export async function createSteelType(
   density_g_cm3: number
 ): Promise<SteelType> {
   await requireSteelTypeManage()
+  if (!name.trim() || !Number.isFinite(density_g_cm3) || density_g_cm3 <= 0 || density_g_cm3 > 30) {
+    throw new Error('Укажите марку и плотность от 0 до 30 г/см³')
+  }
   const supabase = await getDb()
   const { data, error } = await supabase
     .from<SteelType>('steel_types')
@@ -66,13 +71,20 @@ export async function updateSteelTypeDensity(
   density_g_cm3: number
 ): Promise<void> {
   await requireSteelTypeManage()
+  if (!Number.isFinite(density_g_cm3) || density_g_cm3 <= 0 || density_g_cm3 > 30) {
+    throw new Error('Плотность должна быть больше нуля и не превышать 30 г/см³')
+  }
   const supabase = await getDb()
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('steel_types')
     .update({ density_kg_mm3: density_g_cm3 / 1_000_000 })
     .eq('id', id)
+    .select('id')
+    .single()
 
   if (error) throw new Error(error.message)
+  if (!data) throw new Error('Марка стали не найдена или нет права её изменять')
+  for (const path of ['/steel-types', '/admin/materials', ROUTES.TASKS, ROUTES.INVENTORY, ROUTES.INVENTORY_HISTORY]) revalidatePath(path)
 }
 
 export async function deleteSteelType(id: string): Promise<void> {

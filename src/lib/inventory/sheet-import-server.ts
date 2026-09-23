@@ -70,7 +70,7 @@ export async function sheetImportUploadResponse(request: Request, commit: boolea
     const client = access.supabase as unknown as RpcClient
     if (!commit) {
       const preview = parsed.rows.length ? await rpc<SheetImportPreview>(client, 'fn_preview_sheet_inventory_import', { p_factory_id: factoryId, p_rows: parsed.rows })
-        : { rows: [], errors: [], quantity: 0, weightKg: 0, fingerprint: '', previewHash: '', previous: null, newMaterials: 0, newGrades: 0, newVariants: 0 }
+        : { rows: [], errors: [], quantity: 0, weightKg: null, pendingDensityGrades: [], fingerprint: '', previewHash: '', previous: null, newMaterials: 0, newGrades: 0, newVariants: 0 }
       return Response.json({ ...preview, errors: [...parsed.errors, ...preview.errors].sort((a,b) => a.row - b.row), skippedRows: parsed.skippedRows }, { headers: { 'Cache-Control': 'no-store' } })
     }
     if (parsed.errors.length) return Response.json({ error: 'Исправьте ошибки файла', errors: parsed.errors }, { status: 400 })
@@ -82,7 +82,7 @@ export async function sheetImportUploadResponse(request: Request, commit: boolea
       p_factory_id: factoryId, p_rows: parsed.rows, p_file_name: file.name,
       p_operation_id: operationId, p_preview_hash: previewHash, p_previous_import_id: previousId || null,
     })
-    for (const path of [ROUTES.INVENTORY, ROUTES.INVENTORY_HISTORY, ROUTES.SUPPLY_ORDERS, '/admin/materials']) revalidatePath(path)
+    for (const path of [ROUTES.INVENTORY, ROUTES.INVENTORY_HISTORY, ROUTES.SUPPLY_ORDERS, ROUTES.TASKS, '/admin/materials', '/steel-types']) revalidatePath(path)
     revalidatePath('/inventory/[materialId]/history', 'page')
     return Response.json(result, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) { return failure(error) }

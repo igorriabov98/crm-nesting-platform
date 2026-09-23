@@ -1002,6 +1002,9 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
     if (taskRow.task_type === 'inventory_transfer' && (status === 'completed' || status === 'cancelled')) {
       throw new Error('Задача перемещения материалов закрывается автоматически после полной приёмки или отмены перевозки')
     }
+    if (taskRow.task_type === 'steel_density_completion' && (status === 'completed' || status === 'cancelled')) {
+      throw new Error('Задача закроется автоматически после заполнения плотности в справочнике марок стали')
+    }
     if (taskRow.task_type === 'long_stock_cutting_recalculation' && (status === 'completed' || status === 'cancelled')) {
       throw new Error('Задача пересчёта закрывается автоматически после утверждения новой версии карты')
     }

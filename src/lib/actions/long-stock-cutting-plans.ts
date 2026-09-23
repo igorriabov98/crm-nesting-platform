@@ -94,7 +94,7 @@ type MaterialRow = {
 
 type SteelTypeRow = {
   id: string
-  density_kg_mm3: number
+  density_kg_mm3: number | null
 }
 
 type LayoutCategorySnapshot = {

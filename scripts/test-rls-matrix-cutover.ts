@@ -228,6 +228,8 @@ assert.deepEqual(
     '20260922120000_request_series_and_detailing_gate.sql',
     '20260922133000_receiving_approved_bar_allocation_guard.sql',
     '20260922183000_sheet_inventory_import.sql',
+    '20260923120000_sheet_import_density_schema.sql',
+    '20260923120100_sheet_import_density_logic.sql',
 
   ],
   'После cutover разрешены только проверенные follow-up миграции',

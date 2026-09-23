@@ -12,6 +12,7 @@ import { SHEET_IMPORT_MAX_BYTES, type SheetImportPreview, type SheetImportResult
 type Factory = { id: string; name: string }
 type Props = { factories: Factory[]; activeFactoryId: string | null }
 const number = (value: number) => value.toLocaleString('ru-RU', { maximumFractionDigits: 2 })
+const weight = (value: number | null) => value === null ? 'ожидает плотности' : `${number(value)} кг`
 
 export function SheetInventoryImportDialog({ factories, activeFactoryId }: Props) {
   const router = useRouter()
@@ -75,7 +76,7 @@ export function SheetInventoryImportDialog({ factories, activeFactoryId }: Props
         </DialogHeader>
         {result ? <div role="status" className="rounded-lg border border-green-200 bg-green-50 p-5">
           <p className="font-semibold">Приход оформлен · {factoryName}</p>
-          <p className="mt-2">Добавлено {number(result.quantity)} шт. · расчётный вес {number(result.weightKg)} кг · строк {result.receiptCount}</p>
+          <p className="mt-2">Добавлено {number(result.quantity)} шт. · вес: {weight(result.weightKg)} · строк {result.receiptCount}</p>
           <p className="mt-2 text-sm">Файл: {file?.name}. Операции доступны в истории склада.</p>
         </div> : <>
           <div className="flex flex-wrap items-end gap-3">
@@ -114,8 +115,9 @@ export function SheetImportPreviewContent({ preview, factoryName }: { preview: S
   return <div className="min-w-0 space-y-3 break-words">
     <div className="rounded-lg border border-blue-100 bg-blue-50 p-3" role="status">
       <p className="font-semibold text-[#1B3A6B]">Основной склад · {factoryName}</p>
-      <p className="mt-1">К приходу: {number(preview.quantity)} шт. · расчётный вес {number(preview.weightKg)} кг</p>
-      <p className="mt-1 text-sm">Будет создано: материалов {preview.newMaterials}, марок стали {preview.newGrades}, характеристик {preview.newVariants}.</p>
+      <p className="mt-1">К приходу: {number(preview.quantity)} шт. · вес: {weight(preview.weightKg)}</p>
+      <p className="mt-1 text-sm">Будет создано: позиций {preview.newVariants}, марок стали {preview.newGrades}.</p>
+      {preview.pendingDensityGrades.length > 0 && <p className="mt-1 text-sm text-amber-900">После прихода технолог получит задачу указать плотность: {preview.pendingDensityGrades.join(', ')}. Вес появится после заполнения справочника.</p>}
       {preview.skippedRows.length > 0 && <p className="mt-1 text-sm">Пропущено строк с нулевым количеством: {preview.skippedRows.length}.</p>}
     </div>
     {preview.previous && <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm" role="alert">
@@ -129,11 +131,11 @@ export function SheetImportPreviewContent({ preview, factoryName }: { preview: S
     </div>}
     {preview.rows.length > 0 && <div className="overflow-x-auto rounded-lg border border-[#E8ECF0]">
       <table className="w-full min-w-[850px] text-left text-sm">
-        <thead className="bg-[#F8F9FA] text-[#6B7280]"><tr>{['Строка', 'Материал / марка', 'Размер, мм', 'Толщина, мм', 'Приход, шт.', 'Вес, кг', 'Поставщик', 'Справочник'].map(h => <th key={h} className="p-2 font-medium">{h}</th>)}</tr></thead>
+        <thead className="bg-[#F8F9FA] text-[#6B7280]"><tr>{['Строка', 'Материал / марка', 'Размер, мм', 'Толщина, мм', 'Приход, шт.', 'Вес, кг', 'Справочник'].map(h => <th key={h} className="p-2 font-medium">{h}</th>)}</tr></thead>
         <tbody>{preview.rows.slice(activePage * 50, (activePage + 1) * 50).map(row => <tr key={row.row} className="border-t border-[#E8ECF0]">
           <td className="p-2">{row.row}</td><td className="p-2">{row.material}<br /><span className="text-[#6B7280]">{row.grade}</span></td>
-          <td className="whitespace-nowrap p-2">{row.width} × {row.length}</td><td className="p-2">{row.thickness}</td><td className="p-2">{number(row.quantity)}</td><td className="p-2">{number(row.weightKg)}</td><td className="p-2">{row.supplier || 'Не указан'}</td>
-          <td className="p-2 text-xs">{row.variantId ? 'Найдена характеристика' : 'Новая характеристика'}{!row.materialId && <><br />Новый материал</>}{!row.steelTypeId && <><br />Новая марка · {row.density} г/см³</>}</td>
+          <td className="whitespace-nowrap p-2">{row.width} × {row.length}</td><td className="p-2">{row.thickness}</td><td className="p-2">{number(row.quantity)}</td><td className="p-2">{row.weightKg === null ? 'Ожидает плотности' : number(row.weightKg)}</td>
+          <td className="p-2 text-xs">{row.variantId ? 'Найдена позиция' : 'Новая позиция'}{!row.steelTypeId && <><br />Новая марка</>}{row.density === null && <><br />Плотность не задана</>}</td>
         </tr>)}</tbody>
       </table>
     </div>}

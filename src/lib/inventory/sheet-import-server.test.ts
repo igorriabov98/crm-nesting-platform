@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url)
 let denied = false
 const calls: Array<{name:string;args?:Record<string,unknown>}> = []
 let rpcError: {message:string;code:string} | null = null
-const preview = { rows:[], errors:[], quantity:10,weightKg:314,fingerprint:'b'.repeat(64),previewHash:'a'.repeat(64),previous:null,newMaterials:0,newGrades:0,newVariants:0 }
+const preview = { rows:[], errors:[], quantity:10,weightKg:314,pendingDensityGrades:[],fingerprint:'b'.repeat(64),previewHash:'a'.repeat(64),previous:null,newMaterials:0,newGrades:0,newVariants:0 }
 const changedPaths: string[] = []
 const moduleRef = {exports:{} as {
   sheetImportUploadResponse: (request:Request,commit:boolean)=>Promise<Response>
@@ -30,7 +30,7 @@ vm.runInNewContext(source,{module:moduleRef,exports:moduleRef.exports,Buffer,Fil
     if(denied){const e=new Error('Недостаточно прав');e.name='PermissionDeniedError';throw e}
     return {factoryId:factory,role:'engineer',permissionDetails:{isAdminPosition:false,factoryScopes:{inventory:{manage:'own'}}},supabase:{rpc:async(name:string,args?:Record<string,unknown>)=>{
       calls.push({name,args})
-      return {data:name==='fn_sheet_inventory_import_catalog'?{grades:[],suppliers:[]}:name==='fn_preview_sheet_inventory_import'?preview:{batchId:'done',quantity:10,weightKg:314,receiptCount:1,replayed:false},error:rpcError}
+      return {data:name==='fn_sheet_inventory_import_catalog'?{grades:[]}:name==='fn_preview_sheet_inventory_import'?preview:{batchId:'done',quantity:10,weightKg:314,receiptCount:1,replayed:false},error:rpcError}
     }}}
   }}
   if(name==='@/lib/permissions/factory-scope')return {assertFactoryAccess}

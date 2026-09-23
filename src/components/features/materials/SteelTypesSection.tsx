@@ -12,11 +12,13 @@ type Props = {
   initialSteelTypes: SteelType[]
 }
 
-function densityToInput(value: number) {
+function densityToInput(value: number | null) {
+  if (value === null) return ''
   return Number((value * 1_000_000).toFixed(4)).toString()
 }
 
-function densityLabel(value: number) {
+function densityLabel(value: number | null) {
+  if (value === null) return 'Ожидает заполнения'
   return Number((value * 1_000_000).toFixed(4)).toLocaleString('ru-RU', {
     maximumFractionDigits: 4,
   })
@@ -155,7 +157,7 @@ export function SteelTypesSection({ initialSteelTypes }: Props) {
             </thead>
             <tbody className="divide-y divide-[#E8ECF0]">
               {rows.map((row) => (
-                <tr key={row.id}>
+                <tr key={row.id} id={`steel-type-${row.id}`}>
                   <td className="px-4 py-3 font-medium text-[#1B3A6B]">{row.name}</td>
                   <td className="px-4 py-3">
                     {editingId === row.id ? (

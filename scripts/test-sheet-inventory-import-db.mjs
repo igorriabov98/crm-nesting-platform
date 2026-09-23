@@ -14,22 +14,24 @@ function query(sql, actor) {
   if(result.status !== 0) throw new Error(result.stderr)
   return result.stdout.trim()
 }
-const id = { factory:randomUUID(), otherFactory:randomUUID(), admin:randomUUID(), manager:randomUUID(), viewer:randomUUID(), dept:randomUUID(), viewDept:randomUUID(), supplier:randomUUID() }
+const id = { factory:randomUUID(), otherFactory:randomUUID(), admin:randomUUID(), manager:randomUUID(), viewer:randomUUID(), technologist:randomUUID(), dept:randomUUID(), viewDept:randomUUID(), techDept:randomUUID() }
 const prefix = `Import ${randomUUID()}`
 query(`
   INSERT INTO public.factories(id,name) VALUES (${lit(id.factory)},${lit(prefix)}),(${lit(id.otherFactory)},${lit(prefix+' other')});
   INSERT INTO public.users(id,email,full_name,role,factory_id,is_active) VALUES
     (${lit(id.admin)},${lit(id.admin+'@import.test')},'Import admin','engineer',${lit(id.factory)},true),
     (${lit(id.manager)},${lit(id.manager+'@import.test')},'Import manager','engineer',${lit(id.factory)},true),
-    (${lit(id.viewer)},${lit(id.viewer+'@import.test')},'Import viewer','engineer',${lit(id.factory)},true);
+    (${lit(id.viewer)},${lit(id.viewer+'@import.test')},'Import viewer','engineer',${lit(id.factory)},true),
+    (${lit(id.technologist)},${lit(id.technologist+'@import.test')},'Import technologist','technologist',${lit(id.factory)},true);
   INSERT INTO public.user_system_roles(user_id,role) VALUES (${lit(id.admin)},'crm_admin');
-  INSERT INTO public.departments(id,name,is_active,factory_id) VALUES (${lit(id.dept)},${lit(prefix+' department')},true,${lit(id.factory)}),(${lit(id.viewDept)},${lit(prefix+' viewers')},true,${lit(id.factory)});
-  INSERT INTO public.department_members(user_id,department_id,is_department_head) VALUES (${lit(id.manager)},${lit(id.dept)},false),(${lit(id.viewer)},${lit(id.viewDept)},false);
+  INSERT INTO public.departments(id,name,is_active,factory_id) VALUES (${lit(id.dept)},${lit(prefix+' department')},true,${lit(id.factory)}),(${lit(id.viewDept)},${lit(prefix+' viewers')},true,${lit(id.factory)}),(${lit(id.techDept)},${lit(prefix+' technologists')},true,${lit(id.factory)});
+  INSERT INTO public.department_members(user_id,department_id,is_department_head) VALUES (${lit(id.manager)},${lit(id.dept)},false),(${lit(id.viewer)},${lit(id.viewDept)},false),(${lit(id.technologist)},${lit(id.techDept)},false);
   INSERT INTO public.department_access_permissions(department_id,subject_scope,resource_key,can_view,can_manage,factory_scope) VALUES
-    (${lit(id.dept)},'member','inventory',true,true,'own'),(${lit(id.viewDept)},'member','inventory',true,false,'own');
-  INSERT INTO public.suppliers(id,name,is_active) VALUES (${lit(id.supplier)},${lit(prefix+' supplier')},true);
+    (${lit(id.dept)},'member','inventory',true,true,'own'),(${lit(id.viewDept)},'member','inventory',true,false,'own'),
+    (${lit(id.techDept)},'member','nesting_catalog',true,true,'own');
+  INSERT INTO public.steel_types(name,density_kg_mm3) VALUES (${lit(prefix+' Сталь')},0.00000785);
 `)
-const base = {row:2,material:prefix+' Лист',grade:prefix+' Сталь',thickness:2,width:1000,length:2000,quantity:10,density:7.85,supplier:null,comment:'Тест'}
+const base = {row:2,material:prefix+' Лист',grade:prefix+' Сталь',thickness:2,width:1000,length:2000,quantity:10}
 function preview(rows,actor=id.admin,factory=id.factory) { return JSON.parse(query(`SELECT public.fn_preview_sheet_inventory_import(${lit(factory)},${json(rows)});`,actor)) }
 function commitSQL(rows,p,operation=randomUUID(),previous=null,factory=id.factory) {
   return `SELECT public.fn_commit_sheet_inventory_import(${lit(factory)},${json(rows)},'stock.xlsx',${lit(operation)},${lit(p.previewHash)},${lit(previous)});`
@@ -39,7 +41,7 @@ const count = table => Number(query(`SELECT count(*) FROM public.${table}`))
 const before = ['inventory','inventory_transactions','materials','material_variants','steel_types','inventory_sheet_imports'].map(count)
 const p = preview([base])
 assert.deepEqual(p.errors,[])
-assert.equal(p.quantity,10); assert.equal(p.weightKg,314); assert.equal(p.newMaterials,1); assert.equal(p.newGrades,1)
+assert.equal(p.quantity,10); assert.equal(p.weightKg,314); assert.equal(p.newMaterials,1); assert.equal(p.newGrades,0)
 assert.throws(()=>commit([base],p,randomUUID(),null,id.viewer),/Нет права/)
 assert.throws(()=>commit([base],p,randomUUID(),null,id.manager,id.otherFactory),/Нет права/)
 assert.deepEqual(['inventory','inventory_transactions','materials','material_variants','steel_types','inventory_sheet_imports'].map(count),before,'Preview must be read-only')
@@ -68,21 +70,17 @@ const repeated = commit([base],p2,randomUUID(),operation,id.manager)
 assert.equal(repeated.quantity,10)
 assert.equal(query(`SELECT total_quantity || '|' || reserved_quantity || '|' || available_quantity || '|' || calculated_weight_kg FROM public.inventory WHERE id=${lit(row.id)}`),'20|3|17|628.00')
 assert.equal(query(`SELECT count(*) FROM public.inventory_sheet_imports WHERE factory_id=${lit(id.factory)}`,id.viewer),'2','Read-only role can read journal')
-assert.equal(preview([{...base,density:null}]).weightKg,314)
-assert.match(preview([{...base,density:7.9}]).errors[0].message,/отличается/)
-assert.match(preview([{...base,grade:prefix+' Missing',density:null}]).errors[0].message,/плотность/)
-assert.match(preview([{...base,grade:prefix+' Conflict'},{...base,row:3,grade:prefix+' Conflict',density:8}]).errors[0].message,/разные плотности/)
-assert.match(preview([{...base,supplier:'Unknown'}]).errors[0].message,/Поставщик/)
+assert.match(preview([{...base,density:7.85}]).errors[0].message,/старого шаблона/)
 assert.match(preview([{...base,quantity:-1}]).errors[0].message,/Некорректные/)
 assert.match(preview([{...base,quantity:1.5}]).errors[0].message,/Некорректные/)
 assert.match(preview([base,base]).errors[0].message,/номера строки/)
 
-const split = [{...base,quantity:4,comment:'Different'},{...base,row:3,quantity:6,material:'  '+base.material.toUpperCase()+'  '}]
-assert.equal(preview(split).fingerprint,p2.fingerprint,'Split rows, whitespace and comments must not bypass duplicate protection')
-const supplied = [{...base,quantity:2,supplier:prefix+' supplier'},{...base,row:3,material:prefix+' Лист рифленный',quantity:1}]
-const suppliedResult = commit(supplied,preview(supplied))
-assert.equal(query(`SELECT supplier_id FROM public.inventory_transactions WHERE sheet_import_id=${lit(suppliedResult.batchId)} AND sheet_import_row=2`),id.supplier)
-assert.equal(query(`SELECT count(DISTINCT material_id) FROM public.inventory_transactions WHERE sheet_import_id=${lit(suppliedResult.batchId)}`),'2')
+const split = [{...base,quantity:4},{...base,row:3,quantity:6,material:'  '+base.material.toUpperCase()+'  '}]
+assert.equal(preview(split).fingerprint,p2.fingerprint,'Split rows and whitespace must not bypass duplicate protection')
+const mixed = [{...base,quantity:2},{...base,row:3,material:prefix+' Лист рифленный',quantity:1}]
+const mixedResult = commit(mixed,preview(mixed))
+assert.equal(query(`SELECT supplier_id IS NULL FROM public.inventory_transactions WHERE sheet_import_id=${lit(mixedResult.batchId)} AND sheet_import_row=2`),'t')
+assert.equal(query(`SELECT count(DISTINCT material_id) FROM public.inventory_transactions WHERE sheet_import_id=${lit(mixedResult.batchId)}`),'2')
 const otherPreview=preview([base],id.admin,id.otherFactory)
 assert.equal(otherPreview.previous,null)
 commit([base],otherPreview,randomUUID(),null,id.admin,id.otherFactory)
@@ -109,6 +107,57 @@ finally { query('DROP TRIGGER sheet_import_test_failure ON public.inventory_tran
 assert.equal(query(`SELECT count(*) FROM public.materials WHERE name=${lit(prefix+' Rollback')}`),'0')
 assert.equal(query(`SELECT count(*) FROM public.steel_types WHERE name=${lit(prefix+' Rollback steel')}`),'0')
 assert.equal(query(`SELECT count(*) FROM public.inventory_sheet_imports WHERE id=${lit(failOp)}`),'0')
+assert.equal(query(`SELECT count(*) FROM public.tasks WHERE title=${lit('Указать плотность стали: '+prefix+' Rollback steel')}`),'0')
+
+const duplicateName = prefix+' Duplicate Лист'
+const duplicateMaterialA = randomUUID(), duplicateMaterialB = randomUUID()
+const knownSteel = query(`SELECT id FROM public.steel_types WHERE name=${lit(base.grade)}`)
+query(`INSERT INTO public.materials(id,name,category,created_by) VALUES
+  (${lit(duplicateMaterialA)},${lit(duplicateName)},'sheet_metal',${lit(id.admin)}),
+  (${lit(duplicateMaterialB)},${lit(duplicateName)},'sheet_metal',${lit(id.admin)});
+  INSERT INTO public.material_variants(material_id,category,steel_type_id,material_grade,thickness_mm,sheet_size,default_unit) VALUES
+  (${lit(duplicateMaterialA)},'sheet_metal',${lit(knownSteel)},${lit(base.grade)},2,'1000x2000','шт'),
+  (${lit(duplicateMaterialB)},'sheet_metal',${lit(knownSteel)},${lit(base.grade)},3,'1000x2000','шт');`)
+const existingDuplicateRows = [{...base,material:duplicateName,quantity:2}]
+const existingDuplicatePreview = preview(existingDuplicateRows)
+assert.deepEqual(existingDuplicatePreview.errors,[])
+assert.equal(existingDuplicatePreview.rows[0].materialId,duplicateMaterialA)
+const existingDuplicateReceipt = commit(existingDuplicateRows,existingDuplicatePreview)
+assert.equal(query(`SELECT material_id FROM public.inventory_transactions WHERE sheet_import_id=${lit(existingDuplicateReceipt.batchId)}`),duplicateMaterialA)
+const newDuplicateRows = [{...base,material:duplicateName,thickness:1.5,quantity:2}]
+const newDuplicatePreview = preview(newDuplicateRows)
+assert.deepEqual(newDuplicatePreview.errors,[])
+assert.equal(newDuplicatePreview.rows[0].variantId,null)
+commit(newDuplicateRows,newDuplicatePreview)
+assert.equal(query(`SELECT count(*) FROM public.materials WHERE name=${lit(duplicateName)}`),'3')
+query(`INSERT INTO public.material_variants(material_id,category,steel_type_id,material_grade,thickness_mm,sheet_size,default_unit)
+VALUES(${lit(duplicateMaterialB)},'sheet_metal',${lit(knownSteel)},${lit(base.grade)},2,'1000x2000','шт')`)
+assert.match(preview([{...base,material:duplicateName,quantity:3}]).errors[0].message,/Несколько одинаковых позиций/)
+
+const unknownGrade = prefix+' 235'
+const unknownRows = [{...base,material:prefix+' Density pending',grade:unknownGrade,thickness:1.5,quantity:20}]
+const unknownPreview = preview(unknownRows)
+assert.deepEqual(unknownPreview.errors,[])
+assert.equal(unknownPreview.weightKg,null)
+assert.deepEqual(unknownPreview.pendingDensityGrades,[unknownGrade])
+const unknownReceipt = commit(unknownRows,unknownPreview)
+const unknownSteel = query(`SELECT id FROM public.steel_types WHERE name=${lit(unknownGrade)}`)
+assert.equal(query(`SELECT density_kg_mm3 IS NULL FROM public.steel_types WHERE id=${lit(unknownSteel)}`),'t')
+assert.equal(query(`SELECT calculated_weight_kg IS NULL FROM public.inventory i JOIN public.material_variants v ON v.id=i.material_variant_id WHERE v.steel_type_id=${lit(unknownSteel)} AND i.factory_id=${lit(id.factory)}`),'t')
+assert.equal(query(`SELECT weight_kg IS NULL FROM public.inventory_sheet_imports WHERE id=${lit(unknownReceipt.batchId)}`),'t')
+assert.equal(query(`SELECT count(*) FROM public.tasks WHERE steel_type_id=${lit(unknownSteel)} AND status='pending'`),'1')
+assert.equal(query(`SELECT u.role FROM public.tasks t JOIN public.users u ON u.id=t.assigned_to WHERE t.steel_type_id=${lit(unknownSteel)}`),'technologist')
+assert.throws(()=>query(`UPDATE public.tasks SET status='completed' WHERE steel_type_id=${lit(unknownSteel)}`),/Задача закроется после заполнения/)
+const unknownRepeatPreview = preview(unknownRows)
+commit(unknownRows,unknownRepeatPreview,randomUUID(),unknownReceipt.batchId)
+assert.equal(query(`SELECT count(*) FROM public.tasks WHERE steel_type_id=${lit(unknownSteel)}`),'1')
+// The local reconstructed DB lacks Supabase's platform grants; retain RLS as the subject of this check.
+query('GRANT SELECT, UPDATE ON public.steel_types TO authenticated')
+assert.equal(query(`UPDATE public.steel_types SET density_kg_mm3=0.00000785 WHERE id=${lit(unknownSteel)} RETURNING id`,id.viewer),'')
+query(`UPDATE public.steel_types SET density_kg_mm3=0.00000785 WHERE id=${lit(unknownSteel)}`,id.technologist)
+assert.equal(query(`SELECT status FROM public.tasks WHERE steel_type_id=${lit(unknownSteel)}`),'completed')
+assert.equal(query(`SELECT calculated_weight_kg FROM public.inventory i JOIN public.material_variants v ON v.id=i.material_variant_id WHERE v.steel_type_id=${lit(unknownSteel)} AND i.factory_id=${lit(id.factory)}`),'942.00')
+assert.equal(query(`SELECT string_agg(weight_kg::text,',' ORDER BY created_at) FROM public.inventory_sheet_imports WHERE source_rows @> ${json([{steelTypeId:unknownSteel}])}`),'471.00,471.00')
 
 function concurrent(sql) {
   return new Promise(resolve=>{
