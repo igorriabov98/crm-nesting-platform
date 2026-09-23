@@ -178,7 +178,7 @@ async function loadTransferCards(db: TransferDb, activeOnly: boolean): Promise<I
   const steelTypes = new Map(((steelTypesResult.data || []) as Array<{
     id: string
     name: string
-    density_kg_mm3: number
+    density_kg_mm3: number | null
   }>).map((row) => [row.id, row]))
   const sourceInventories = new Map(((sourceInventoriesResult.data || []) as Array<{
     id: string

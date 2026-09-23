@@ -4,7 +4,7 @@
 export interface SteelType {
   id: string
   name: string
-  density_kg_mm3: number
+  density_kg_mm3: number | null
   created_at: string
 }
 
@@ -4153,19 +4153,19 @@ export type Database = {
         Row: {
           id: string
           name: string
-          density_kg_mm3: number
+          density_kg_mm3: number | null
           created_at: string
         }
         Insert: {
           id?: string
           name: string
-          density_kg_mm3: number
+          density_kg_mm3?: number | null
           created_at?: string
         }
         Update: {
           id?: string
           name?: string
-          density_kg_mm3?: number
+          density_kg_mm3?: number | null
           created_at?: string
         }
       }
@@ -4762,6 +4762,7 @@ export type Database = {
       tasks: {
         Row: {
           id: string
+          steel_type_id: string | null
           machine_id: string | null
           client_id: string | null
           related_meeting_id: string | null
@@ -4792,6 +4793,7 @@ export type Database = {
         }
         Insert: {
           id?: string
+          steel_type_id?: string | null
           machine_id?: string | null
           client_id?: string | null
           related_meeting_id?: string | null
@@ -4822,6 +4824,7 @@ export type Database = {
         }
         Update: {
           id?: string
+          steel_type_id?: string | null
           machine_id?: string | null
           client_id?: string | null
           related_meeting_id?: string | null
@@ -5828,7 +5831,7 @@ export type Database = {
       inventory_transfer_status: InventoryTransferStatus
       detailing_movement_type: DetailingMovementType
       employee_assignment_status: EmployeeAssignmentStatus
-      task_type: 'supply_start' | 'technologist_request' | 'technologist_request_approval' | 'technologist_request_revision' | 'order_discount_approval' | 'engineer_confirm' | 'sales_order_confirmation' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'shipping_documents' | 'customs_clearance' | 'client_delivery_date' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'supply_schedule_reconciliation_review' | 'production_cutting_rollback_review' | 'long_stock_cutting_recalculation' | 'long_stock_cutting_supply_shortage' | 'production_plan_date_change_approval' | 'transport_trip_date_approval' | 'business_scrap_correction_approval' | 'production_plan_preparation' | 'outsourcing_transport' | 'vrb_outsourcing_approval' | 'product_version_incomplete' | 'detailing_transfer' | 'inventory_transfer' | 'department_request'
+      task_type: 'supply_start' | 'technologist_request' | 'technologist_request_approval' | 'technologist_request_revision' | 'order_discount_approval' | 'engineer_confirm' | 'sales_order_confirmation' | 'material_type_selection' | 'steel_density_completion' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'shipping_documents' | 'customs_clearance' | 'client_delivery_date' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'supply_schedule_reconciliation_review' | 'production_cutting_rollback_review' | 'long_stock_cutting_recalculation' | 'long_stock_cutting_supply_shortage' | 'production_plan_date_change_approval' | 'transport_trip_date_approval' | 'business_scrap_correction_approval' | 'production_plan_preparation' | 'outsourcing_transport' | 'vrb_outsourcing_approval' | 'product_version_incomplete' | 'detailing_transfer' | 'inventory_transfer' | 'department_request'
       task_status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       consumable_request_priority: 'standard' | 'high'
       consumable_request_status: 'draft' | 'new' | 'invoice_taken' | 'delivery' | 'received' | 'received_partial' | 'cancelled'

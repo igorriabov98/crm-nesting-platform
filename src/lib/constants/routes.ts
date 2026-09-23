@@ -16,6 +16,7 @@ export const ROUTES = {
   ADMIN_SUPPLIERS:'/admin/suppliers',
   ADMIN_SUPPLIERS_NEW:'/admin/suppliers/new',
   ADMIN_MATERIALS:'/admin/materials',
+  STEEL_TYPES: '/steel-types',
   ADMIN_SETTINGS:'/admin/settings',
   ADMIN_DEPARTMENTS:'/admin/settings/departments',
   ADMIN_ACCESS_SETTINGS:'/admin/settings/access',

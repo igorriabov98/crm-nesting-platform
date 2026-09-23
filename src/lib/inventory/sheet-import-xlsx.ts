@@ -62,6 +62,9 @@ export async function parseSheetImportXlsx(buffer: Buffer, fileName: string) {
   try { await workbook.xlsx.load(buffer as unknown as ExcelJS.Buffer) } catch { throw new Error('Не удалось прочитать книгу .xlsx') }
   const sheet = workbook.getWorksheet('Импорт')
   if (!sheet) throw new Error('В книге отсутствует лист «Импорт». Скачайте шаблон CRM')
+  if (scalar(sheet.getCell('G1')) === 'Плотность, г/см³') {
+    throw new Error('Это старый шаблон с колонками G–I. Скачайте новый шаблон и перенесите данные в колонки A–F')
+  }
   SHEET_IMPORT_HEADERS.forEach((header, index) => {
     if (scalar(sheet.getCell(1, index + 1)) !== header) throw new Error(`Колонка ${index + 1}: ожидается «${header}»`)
   })
@@ -76,7 +79,7 @@ export async function parseSheetImportXlsx(buffer: Buffer, fileName: string) {
     filled++
     if (filled > SHEET_IMPORT_MAX_ROWS) return
     try {
-      if (row.cellCount > 9 && row.values && (row.values as ExcelJS.CellValue[]).slice(10).some(v => v !== null && v !== undefined && v !== '')) {
+      if (row.cellCount > 6 && row.values && (row.values as ExcelJS.CellValue[]).slice(7).some(v => v !== null && v !== undefined && v !== '')) {
         throw new Error('Данные за пределами колонок шаблона')
       }
       const values = SHEET_IMPORT_HEADERS.map((header, index) => {
@@ -92,12 +95,7 @@ export async function parseSheetImportXlsx(buffer: Buffer, fileName: string) {
       if (material.length > 200 || grade.length > 200) throw new Error('Название не должно превышать 200 символов')
       const dimensions = values.slice(2, 5).map(v => numeric(v)!)
       if (dimensions.some(v => v <= 0 || v > 1_000_000)) throw new Error('Толщина и размеры должны быть больше нуля и не превышать 1 000 000 мм')
-      const density = numeric(values[6], true)
-      if (density !== null && (density <= 0 || density > 30)) throw new Error('Плотность должна быть больше нуля и не превышать 30 г/см³')
-      const supplier = values[7] === null ? null : String(values[7])
-      const comment = values[8] === null ? null : String(values[8])
-      if ((supplier?.length ?? 0) > 200 || (comment?.length ?? 0) > 1000) throw new Error('Поставщик: до 200 символов; комментарий: до 1000')
-      rows.push({ row: rowNumber, material, grade, thickness: dimensions[0], width: dimensions[1], length: dimensions[2], quantity, density, supplier, comment })
+      rows.push({ row: rowNumber, material, grade, thickness: dimensions[0], width: dimensions[1], length: dimensions[2], quantity })
     } catch (error) { errors.push({ row: rowNumber, message: (error as Error).message }) }
   })
   if (filled > SHEET_IMPORT_MAX_ROWS) throw new Error('В файле допускается не более 2 000 заполненных строк')
@@ -109,14 +107,14 @@ export async function buildSheetImportTemplate(catalog: SheetImportCatalog) {
   const workbook = new ExcelJS.Workbook()
   workbook.creator = 'CRM Завода'
   const sheet = workbook.addWorksheet('Импорт', { views: [{ state: 'frozen', ySplit: 1 }] })
-  sheet.columns = SHEET_IMPORT_HEADERS.map((header, i) => ({ header, width: [25, 24, 16, 16, 16, 23, 20, 30, 40][i] }))
-  sheet.autoFilter = 'A1:I2001'
+  sheet.columns = SHEET_IMPORT_HEADERS.map((header, i) => ({ header, width: [25, 24, 16, 16, 16, 29][i] }))
+  sheet.autoFilter = 'A1:F2001'
   sheet.getRow(1).height = 44
   sheet.getColumn(2).numFmt = '@'
-  for (let i = 3; i <= 7; i++) sheet.getColumn(i).numFmt = i === 6 ? '0' : '0.###'
+  for (let i = 3; i <= 6; i++) sheet.getColumn(i).numFmt = i === 6 ? '0' : '0.###'
   for (let row = 2; row <= 201; row++) {
     sheet.getRow(row).height = 23
-    for (let col = 3; col <= 7; col++) {
+    for (let col = 3; col <= 6; col++) {
       sheet.getCell(row, col).dataValidation = { type: col === 6 ? 'whole' : 'decimal', operator: col === 6 ? 'greaterThanOrEqual' : 'greaterThan', formulae: [0], allowBlank: true, showErrorMessage: true, errorTitle: 'Проверьте число', error: col === 6 ? 'Введите целое число от нуля' : 'Введите положительное число' }
     }
   }
@@ -126,28 +124,27 @@ export async function buildSheetImportTemplate(catalog: SheetImportCatalog) {
     ['Импорт листового металла', 'Основной склад'],
     ['Порядок загрузки', 'Заполните лист «Импорт». В CRM выберите один завод для всего файла, проверьте строки и подтвердите приход.'],
     ['Количество', 'Количество прибавляется к остатку. Целые листы: 1, 2, 3… Ноль пропускается. Брони сохраняются.'],
-    ['Новая марка стали', 'Укажите плотность в г/см³. Для существующей марки используется справочник CRM. Названия 235 и S235 считаются разными.'],
-    ['Поставщик', 'Можно оставить пустым. Если указан, название должно совпадать с активным поставщиком CRM.'],
+    ['Новая марка стали', 'Названия 235 и S235 считаются разными. Если плотность новой марки неизвестна, CRM создаст задачу технологу. До заполнения плотности вес не рассчитывается.'],
     ['Формат', 'Только значения, без формул и объединённых ячеек. Размеры в мм. Допустима десятичная запятая. До 2 000 строк и 3 МБ.'],
     ['Повторный импорт', 'CRM покажет предыдущий импорт. Повторное пополнение требует отдельного подтверждения нового прихода.'],
     ['Вес', 'Расчётный вес определяется в CRM по размерам, толщине и плотности стали.'],
-    ['Пример (не импортируется)', 'Лист | Новая марка | 2 | 1250 | 2500 | 10 | 7,85 | (пусто) | Перенос остатков'],
-    ['Пример рифлёного листа', 'Лист рифленный | Новая марка | 3 | 1500 | 6000 | 2 | 7,85 | (пусто) | Перенос остатков'],
+    ['Пример (не импортируется)', 'Лист | 235 | 1,5 | 1000 | 2000 | 20'],
+    ['Пример рифлёного листа', 'Лист рифленный | S235 | 3 | 1500 | 6000 | 2'],
   ])
   instructions.eachRow((row, i) => { row.height = i === 1 ? 32 : 45; row.alignment = { vertical: 'middle', wrapText: true } })
   const reference = workbook.addWorksheet('Справочники', { views: [{ state: 'frozen', ySplit: 1 }] })
-  reference.columns = [{ header: 'Марка стали', width: 30 }, { header: 'Плотность, г/см³', width: 23 }, { width: 4 }, { header: 'Поставщик', width: 48 }]
-  for (let i = 0; i < Math.max(catalog.grades.length, catalog.suppliers.length); i++) {
+  reference.columns = [{ header: 'Марка стали', width: 30 }, { header: 'Плотность, г/см³', width: 23 }]
+  for (let i = 0; i < catalog.grades.length; i++) {
     const grade = catalog.grades[i]?.name ?? null
-    const supplier = catalog.suppliers[i]?.name ?? null
-    const row = reference.addRow([grade, catalog.grades[i]?.density ?? null, null, supplier])
+    const row = reference.addRow([grade, catalog.grades[i]?.density ?? 'Ожидает заполнения'])
     row.alignment = { wrapText: true, vertical: 'middle' }
-    row.height = Math.max(23, 16 * Math.max(Math.ceil((grade?.length ?? 0) / 27), Math.ceil((supplier?.length ?? 0) / 44)))
+    row.height = Math.max(23, 16 * Math.ceil((grade?.length ?? 0) / 27))
   }
   reference.getColumn(1).numFmt = '@'
   reference.getColumn(2).numFmt = '0.###'
   reference.getRow(1).height = 32
   for (const tab of workbook.worksheets) {
+    tab.pageSetup = { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 }
     tab.eachRow(row => row.eachCell(cell => { cell.font = { name: 'Arial', size: 11 }; cell.alignment = { ...cell.alignment, vertical: 'middle' } }))
     tab.getRow(1).eachCell(cell => {
       cell.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FFFFFFFF' } }

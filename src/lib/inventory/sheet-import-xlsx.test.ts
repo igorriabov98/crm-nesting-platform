@@ -10,28 +10,28 @@ async function file(rows: ExcelJS.CellValue[][], mutate?: (sheet: ExcelJS.Worksh
   sheet.addRow([...SHEET_IMPORT_HEADERS]); rows.forEach(row => sheet.addRow(row)); mutate?.(sheet)
   return Buffer.from(await book.xlsx.writeBuffer())
 }
-const row: ExcelJS.CellValue[] = ['Лист', 'S235', 2, 1250, 2500, 10, null, null, 'Начальный перенос']
+const row: ExcelJS.CellValue[] = ['Лист', 'S235', 2, 1250, 2500, 10]
 
 test('template has empty input, instructions, typed catalogue and frozen header', async () => {
-  const bytes = await buildSheetImportTemplate({ grades: [{ name: 'S235', density: 7.85 }], suppliers: [{ name: 'Поставщик А' }] })
+  const bytes = await buildSheetImportTemplate({ grades: [{ name: 'S235', density: 7.85 }] })
   const book = new ExcelJS.Workbook(); await book.xlsx.load(bytes as unknown as ExcelJS.Buffer)
   assert.deepEqual(book.worksheets.map(s => s.name), ['Импорт', 'Инструкция', 'Справочники'])
   const input = book.getWorksheet('Импорт')!
   assert.deepEqual((input.getRow(1).values as ExcelJS.CellValue[]).slice(1), [...SHEET_IMPORT_HEADERS])
   assert.equal(input.getRow(2).hasValues, false)
   assert.equal(input.views[0].state, 'frozen')
+  assert.equal(input.autoFilter, 'A1:F2001')
   assert.equal(book.getWorksheet('Справочники')!.getCell('B2').value, 7.85)
-  assert.match(String(book.getWorksheet('Инструкция')!.getCell('B9').value), /Новая марка/)
+  assert.match(String(book.getWorksheet('Инструкция')!.getCell('B4').value), /плотность/)
   const parsed = await parseSheetImportXlsx(bytes, 'template.xlsx')
   assert.equal(parsed.rows.length, 0); assert.match(parsed.errors[0].message, /Нет строк/)
 })
 
-test('parses comma decimals, numeric grade names, blank rows and optional supplier', async () => {
-  const parsed = await parseSheetImportXlsx(await file([[], ['  Лист  рифленный ', 235, '1,5', 1000, 2000, 2, '7,85', '', '  Перенос  остатков  '], row]), 'stock.xlsx')
+test('parses comma decimals, numeric grade names and blank rows', async () => {
+  const parsed = await parseSheetImportXlsx(await file([[], ['  Лист  рифленный ', 235, '1,5', 1000, 2000, 2], row]), 'stock.xlsx')
   assert.deepEqual(parsed.errors, [])
   assert.equal(parsed.rows[0].row, 3)
-  assert.deepEqual(parsed.rows[0], { row: 3, material: 'Лист рифленный', grade: '235', thickness: 1.5, width: 1000, length: 2000, quantity: 2, density: 7.85, supplier: null, comment: 'Перенос остатков' })
-  assert.equal(parsed.rows[1].density, null)
+  assert.deepEqual(parsed.rows[0], { row: 3, material: 'Лист рифленный', grade: '235', thickness: 1.5, width: 1000, length: 2000, quantity: 2 })
 })
 
 test('zero rows are skipped, negative/fractional quantities and missing dimensions block', async () => {
@@ -45,7 +45,7 @@ for (const [label, value] of [
   ['formula', { formula: '1+1', result: 2 }], ['Excel error', { error: '#N/A' }], ['text formula', '=1+1'], ['date', new Date()],
 ] as const) {
   test(`rejects ${label} even on a zero quantity row`, async () => {
-    const parsed = await parseSheetImportXlsx(await file([[...row.slice(0,5),0,value as ExcelJS.CellValue]]), 'stock.xlsx')
+    const parsed = await parseSheetImportXlsx(await file([[...row.slice(0,5),0]], s => { s.getCell('C2').value = value as ExcelJS.CellValue }), 'stock.xlsx')
     assert.equal(parsed.errors.length,1); assert.equal(parsed.skippedRows.length,0)
   })
 }
@@ -53,6 +53,7 @@ for (const [label, value] of [
 test('rejects merged cells, extra data, invalid headers and formats', async () => {
   assert.equal((await parseSheetImportXlsx(await file([row], s => s.mergeCells('A2:B2')), 'a.xlsx')).errors.length,1)
   assert.equal((await parseSheetImportXlsx(await file([[...row,'unexpected']]), 'a.xlsx')).errors.length,1)
+  await assert.rejects(parseSheetImportXlsx(await file([row], s => { s.getCell('G1').value='Плотность, г/см³' }), 'old.xlsx'), /старый шаблон/)
   await assert.rejects(parseSheetImportXlsx(await file([row], s => { s.getCell('A1').value='Unknown' }), 'a.xlsx'), /Колонка 1/)
   await assert.rejects(parseSheetImportXlsx(Buffer.alloc(1), 'a.xls'), /\.xlsx/)
   await assert.rejects(parseSheetImportXlsx(Buffer.alloc(3*1024*1024+1), 'a.xlsx'), /3 МБ/)

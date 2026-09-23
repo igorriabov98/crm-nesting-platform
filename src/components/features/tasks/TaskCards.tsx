@@ -75,6 +75,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   engineer_confirm: 'Чертежи',
   sales_order_confirmation: 'Подтверждение заказа',
   material_type_selection: 'Тип материала',
+  steel_density_completion: 'Плотность стали',
   machine_layout: 'Расстановка машины',
   agenda_pool_distribution: 'Пул повесток',
   meeting_unresolved_agenda: 'Повестка собрания',
@@ -222,6 +223,9 @@ function formatTaskDeadline(value: string | null | undefined) {
 }
 
 function getTaskTarget(task: TaskWithRelations) {
+  if (task.task_type === 'steel_density_completion' && task.steel_type_id) {
+    return { href: `${ROUTES.STEEL_TYPES}#steel-type-${task.steel_type_id}`, label: 'Марки стали', kind: 'Справочник' }
+  }
   if ((task.task_type === 'technologist_request_approval' || task.task_type === 'technologist_request_revision') && task.approval_version?.request_id) {
     return {
       href: `${ROUTES.TECHNOLOGIST_REQUEST_RESULTS}/${task.approval_version.request_id}`,
@@ -844,6 +848,14 @@ export function TaskCards({
     }
 
     if (context === 'outgoing' && pendingDelegation) return null
+
+    if (task.task_type === 'steel_density_completion') {
+      if (!task.steel_type_id || task.status === 'completed' || task.status === 'cancelled') return null
+      return <div className={groupClass}><Link
+        href={`${ROUTES.STEEL_TYPES}#steel-type-${task.steel_type_id}`}
+        className={cn(buttonClass, 'inline-flex items-center justify-center rounded-md bg-[#1B3A6B] px-4 text-sm font-medium text-white hover:bg-[#152f59]')}
+      >Указать плотность</Link></div>
+    }
 
     if (task.task_type === 'technologist_request_approval' && task.approval_version?.request_id) {
       if (task.status === 'completed' || task.status === 'cancelled') return null

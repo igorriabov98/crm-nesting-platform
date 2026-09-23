@@ -35,6 +35,7 @@ export const BREADCRUMB_SEGMENT_LABELS: Record<string, string> = {
   departments: 'Отделы и структура',
   users: 'Пользователи',
   materials: 'Материалы',
+  'steel-types': 'Марки стали',
   suppliers: 'Поставщики',
   database: 'База данных',
   detail: 'Детали',

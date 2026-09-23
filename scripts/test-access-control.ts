@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { ROUTES } from '../src/lib/constants/routes'
 import {
   PERMISSION_RESOURCES,
   getDefaultPermissionMap,
@@ -202,6 +203,8 @@ for (const resource of PERMISSION_RESOURCES as readonly PermissionResource[]) {
 }
 
 const unprotectedProfilePages = new Set(['/profile'])
+assert.equal(getPermissionRequirementForPath(ROUTES.STEEL_TYPES)?.resourceKey, 'nesting_catalog')
+assert.equal(getPermissionRequirementForPath(ROUTES.STEEL_TYPES)?.operation, 'manage')
 for (const filePath of walk(join(root, 'src/app/(protected)'), 'page.tsx')) {
   const pathname = pagePath(filePath)
   if (unprotectedProfilePages.has(pathname)) continue

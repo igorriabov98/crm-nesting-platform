@@ -701,7 +701,10 @@ export const PERMISSION_RESOURCES = [
     defaultHref: ROUTES.NESTING_CATALOG,
     defaultViewRoles: NESTING_ROLES,
     defaultManageRoles: NESTING_ROLES,
-    routes: [{ path: ROUTES.NESTING_CATALOG, match: 'prefix', operation: 'view', priority: 90 }],
+    routes: [
+      { path: ROUTES.NESTING_CATALOG, match: 'prefix', operation: 'view', priority: 90 },
+      { path: ROUTES.STEEL_TYPES, match: 'exact', operation: 'manage', priority: 90 },
+    ],
   },
   {
     key: 'nesting_settings',
