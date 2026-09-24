@@ -10,6 +10,10 @@ BEGIN
   SELECT count(*), (array_agg(id))[1] INTO v_department_count, v_department_id
   FROM public.departments
   WHERE name = 'Отдел продаж';
+  IF v_department_count = 0 THEN
+    RAISE NOTICE 'Отдел продаж отсутствует; настройка прав будет пропущена';
+    RETURN;
+  END IF;
   IF v_department_count <> 1 THEN
     RAISE EXCEPTION 'Ожидался ровно один Отдел продаж, найдено: %', v_department_count;
   END IF;
