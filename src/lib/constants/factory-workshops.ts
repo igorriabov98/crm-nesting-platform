@@ -6,23 +6,9 @@ export type FactoryWorkshopOption = {
 }
 
 const DEFAULT_WORKSHOPS: FactoryWorkshopOption[] = [{ value: 1, label: 'Цех 1' }]
-const BERGOVO_WORKSHOPS: FactoryWorkshopOption[] = [
-  { value: 1, label: 'Цех 1' },
-  { value: 2, label: 'Цех 2' },
-]
-
-function normalizeFactoryName(name: string) {
-  return name.trim().toLowerCase()
-}
 
 export function getFactoryWorkshopOptions(factoryName?: string | null): FactoryWorkshopOption[] {
   if (!factoryName) return []
-
-  const normalizedName = normalizeFactoryName(factoryName)
-  if (normalizedName.includes('берегово') || normalizedName.includes('bergovo') || normalizedName.includes('berehovo')) {
-    return BERGOVO_WORKSHOPS
-  }
-
   return DEFAULT_WORKSHOPS
 }
 

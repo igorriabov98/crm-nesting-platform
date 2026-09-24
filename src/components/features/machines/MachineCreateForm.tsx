@@ -12,7 +12,7 @@ import { COATING_OPTIONS, COATINGS, getCoatingLabel } from '@/lib/constants/coat
 import { createMachineSchema, type CreateMachineInput } from '@/lib/types/schemas'
 import { createMachine } from '@/app/(protected)/sales-plan/actions'
 import { getOrderClientProductPrices } from '@/lib/actions/client-product-prices'
-import type { ProductOption, ProductProjectSampleOption } from '@/lib/actions/products'
+import { getProductOptions, type ProductOption, type ProductProjectSampleOption } from '@/lib/actions/products'
 import type { OrderClientPriceLookup } from '@/lib/client-prices/types'
 import type { Client, CoatingType, FactorySummary } from '@/lib/types'
 import { ClientCreateDialog } from '@/components/features/clients/ClientCreateDialog'
@@ -21,6 +21,7 @@ import { getFactoryWorkshopOptionsById } from '@/lib/constants/factory-workshops
 import { getProductionMonthOptions, monthStartValue } from '@/lib/utils/production-months'
 import { TRANSPORT_EXPENSE_CATEGORY, isTransportExpenseCategory } from '@/lib/utils/transport-expense'
 import { ProductOptionCombobox } from '@/components/features/machines/ProductOptionCombobox'
+import { QuickProductCreateDialog } from '@/components/features/machines/QuickProductCreateDialog'
 import { ProductVersionSelector } from '@/components/features/machines/ProductVersionSelector'
 import type { ProductVersionWithFiles } from '@/lib/actions/product-versions'
 
@@ -68,18 +69,22 @@ function toFiniteNumber(value: unknown, fallback = 0) {
 export function MachineCreateForm({
   clients: initialClients,
   factories,
-  products,
+  products: initialProducts,
   projectSamples,
+  canCreateProducts,
 }: {
   clients: Client[]
   factories: FactorySummary[]
   products: ProductOption[]
   projectSamples: ProductProjectSampleOption[]
+  canCreateProducts: boolean
 }) {
   const router = useRouter()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [clients, setClients] = useState(initialClients)
+  const [products, setProducts] = useState(initialProducts)
   const [isClientDialogOpen, setIsClientDialogOpen] = useState(false)
+  const [productCreateRow, setProductCreateRow] = useState<number | null>(null)
   const [transportAmount, setTransportAmount] = useState<number | undefined>(undefined)
   const [clientPriceLookup, setClientPriceLookup] = useState<OrderClientPriceLookup>({})
   const [isLoadingClientPrices, setIsLoadingClientPrices] = useState(false)
@@ -282,8 +287,8 @@ export function MachineCreateForm({
     if (resetMissing) setRowValue('items', index, 'price', 0)
   }
 
-  function applyProductToRow(name: 'items' | 'samples', index: number, productId: string) {
-    const product = products.find((item) => item.id === productId)
+  function applyProductToRow(name: 'items' | 'samples', index: number, productId: string, createdProduct?: ProductOption) {
+    const product = createdProduct || products.find((item) => item.id === productId)
     if (!product) return
     const currentCoating = (form.getValues(rowPath(name, index, 'coating')) || 'none') as CoatingType
     const clientPrice = name === 'items' ? getClientPrice(product.id, currentCoating) : null
@@ -584,7 +589,12 @@ export function MachineCreateForm({
                           <FormItem className="md:col-span-2 lg:col-span-4">
                             <FormLabel className="text-xs">Товар из базы продукции *</FormLabel>
                             <FormControl>
-                              <ProductOptionCombobox products={products} value={field.value} onChange={(value) => applyProductToRow('items', index, value)} />
+                              <ProductOptionCombobox
+                                products={products}
+                                value={field.value}
+                                onChange={(value) => applyProductToRow('items', index, value)}
+                                onCreateProduct={canCreateProducts ? () => setProductCreateRow(index) : undefined}
+                              />
                             </FormControl>
                             {selectedProduct && showVersionSelector && (
                               <FormField
@@ -1074,6 +1084,20 @@ export function MachineCreateForm({
           form.setValue('client_id', client.id)
         }}
       />
+      {canCreateProducts && (
+        <QuickProductCreateDialog
+          open={productCreateRow !== null}
+          onOpenChange={(open) => { if (!open) setProductCreateRow(null) }}
+          onCreated={async (productId) => {
+            const result = await getProductOptions()
+            if (result.error || !result.data) throw new Error(result.error || 'Не удалось обновить список продуктов')
+            const created = result.data.find((product) => product.id === productId)
+            if (!created) throw new Error('Продукт создан, но пока не появился в списке. Повторите обновление.')
+            setProducts(result.data)
+            if (productCreateRow !== null) applyProductToRow('items', productCreateRow, productId, created)
+          }}
+        />
+      )}
     </Card>
   )
 }

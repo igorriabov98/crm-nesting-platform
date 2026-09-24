@@ -23,7 +23,7 @@ import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/util
 import { MachineProgressBadge } from './MachineStatusBadge'
 
 type KanbanColumn = {
-  id: 'berehovo-1' | 'berehovo-2' | 'uzhhorod-1'
+  id: 'berehovo-1' | 'uzhhorod-1'
   title: string
   subtitle: string
   factoryId: string | null
@@ -79,16 +79,6 @@ function buildColumns(factories: FactorySummary[]): KanbanColumn[] {
       workshop: 1,
       accent: 'border-blue-200 bg-blue-50/70',
       header: 'text-blue-950',
-    },
-    {
-      id: 'berehovo-2',
-      title: 'Берегово 2 цех',
-      subtitle: 'Вторая производственная очередь',
-      factoryId: berehovo?.id || null,
-      factoryName: berehovo?.name || 'Берегово',
-      workshop: 2,
-      accent: 'border-violet-200 bg-violet-50/70',
-      header: 'text-violet-950',
     },
     {
       id: 'uzhhorod-1',
@@ -401,7 +391,7 @@ export function MachineKanban({ machines, visibleMachineIds, factories, canManag
       </div>
 
       <div className="overflow-x-auto pb-2">
-        <div className="grid min-w-[1040px] grid-cols-3 gap-4">
+        <div className="grid min-w-[720px] grid-cols-2 gap-4">
           {columns.map((column) => {
             const allColumnMachines = machinesByColumn.get(column.id) || []
             const shownMachines = allColumnMachines.filter((machine) => visibleIds.has(machine.id))

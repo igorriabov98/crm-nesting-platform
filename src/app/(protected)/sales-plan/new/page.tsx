@@ -15,6 +15,9 @@ async function NewMachinePage() {
     .then(() => true)
     .catch(() => false)
   if (!canManage) return <AccessDenied />
+  const canCreateProducts = await requirePermission('products', 'manage')
+    .then(() => true)
+    .catch(() => false)
 
   const supabase = await createServerSupabaseClient()
 
@@ -38,7 +41,7 @@ async function NewMachinePage() {
         </div>
       </div>
 
-      <MachineCreateForm clients={clients || []} factories={factories || []} products={products || []} projectSamples={projectSamples || []} />
+      <MachineCreateForm clients={clients || []} factories={factories || []} products={products || []} projectSamples={projectSamples || []} canCreateProducts={canCreateProducts} />
     </div>
   )
 }
