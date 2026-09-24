@@ -49,6 +49,18 @@ jobs:
           path: civ21-sheet-scrap-before.txt
           if-no-files-found: error
           retention-days: 30
+      - name: Read-only CIV-21 cutting write-off audit
+        run: |
+          psql "$SUPABASE_DB_URL" -X -v ON_ERROR_STOP=1 \
+            -f scripts/audit-civ21-cutting-writeoffs.sql \
+            | tee civ21-cutting-writeoffs.txt
+      - name: Save cutting write-off audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: civ21-cutting-writeoffs-${{ github.sha }}
+          path: civ21-cutting-writeoffs.txt
+          if-no-files-found: error
+          retention-days: 30
       - name: Apply guarded correction
         if: ${{ inputs.apply_correction == true }}
         run: |
