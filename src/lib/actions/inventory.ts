@@ -6,6 +6,7 @@ import { INVENTORY_LIST_LIMIT } from '@/lib/constants/performance-limits'
 import { ROUTES } from '@/lib/constants/routes'
 import { classifyBusinessScrapLength, getLongStockLayoutCategoryKey, type BusinessScrapSizeClass } from '@/lib/inventory/business-scrap-size'
 import { groupInventoryReservationOrders, type InventoryReservationLink, type ReservationOrderDetails } from '@/lib/inventory/reservation-order-details'
+import { matchCuttingWriteOffSources } from '@/lib/inventory/cutting-writeoff-source'
 import {
   adjustInventoryRecord,
   archiveInventoryItem,
@@ -202,6 +203,7 @@ export type InventoryTransactionWithRelations = InventoryTransaction & {
   supplier_name?: string | null
   machine_name?: string | null
   user_name?: string | null
+  write_off_source?: { certainty: 'exact' | 'possible'; labels: string[] } | null
 }
 
 export type InventoryWarehouseHistoryCategorySummary = {
@@ -1388,7 +1390,7 @@ export async function getTransactions(filters: {
     const to = from + pageSize - 1
     let query = db
       .from('inventory_transactions')
-      .select('id, factory_id, inventory_id, material_id, material_variant_id, transaction_type, quantity, secondary_quantity, machine_id, request_item_table, request_item_id, performed_by, supplier_id, comment, created_at', { count: 'exact' })
+      .select('id, factory_id, inventory_id, material_id, material_variant_id, transaction_type, quantity, secondary_quantity, machine_id, request_item_table, request_item_id, source_reservation_id, performed_by, supplier_id, comment, created_at', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(from, to)
     if (filters.factory_id) query = query.eq('factory_id', filters.factory_id)
@@ -1595,6 +1597,7 @@ async function archiveConsumedBusinessScrap(
 }
 
 async function hydrateTransactions(db: LooseDb, rows: InventoryTransaction[]): Promise<InventoryTransactionWithRelations[]> {
+  const writeOffSources = await loadWriteOffSources(rows)
   const materialIds = Array.from(new Set(rows.map((row) => row.material_id).filter(Boolean)))
   const variantIds = Array.from(new Set(rows.map((row) => row.material_variant_id).filter(Boolean))) as string[]
   const inventoryIds = Array.from(new Set(rows.map((row) => row.inventory_id).filter(Boolean)))
@@ -1666,8 +1669,107 @@ async function hydrateTransactions(db: LooseDb, rows: InventoryTransaction[]): P
       supplier_name: row.supplier_id ? supplierMap.get(row.supplier_id) || null : null,
       machine_name: row.machine_id ? machineMap.get(row.machine_id) || null : null,
       user_name: userMap.get(row.performed_by) || null,
+      write_off_source: writeOffSources.get(row.id) || null,
     }
   })
+}
+
+async function loadWriteOffSources(rows: InventoryTransaction[]) {
+  const result = new Map<string, NonNullable<InventoryTransactionWithRelations['write_off_source']>>()
+  const writeOffs = rows.filter((row) => row.transaction_type === 'write_off'
+    && row.comment === 'Автоматическое списание потребности по факту заготовки')
+  if (writeOffs.length === 0) return result
+
+  const adminDb = createAdminClient()
+  const machineIds = [...new Set(writeOffs.map((row) => row.machine_id).filter((id): id is string => !!id))]
+  const earliest = Math.min(...writeOffs.map((row) => Date.parse(row.created_at))) - 600_000
+  const latest = Math.max(...writeOffs.map((row) => Date.parse(row.created_at)))
+  const { data: events, error: eventError } = machineIds.length ? await adminDb
+    .from('production_fact_cutting_events')
+    .select('id,machine_id,created_at')
+    .in('machine_id', machineIds)
+    .gte('created_at', new Date(earliest).toISOString())
+    .lte('created_at', new Date(latest).toISOString())
+    : { data: [], error: null }
+  if (eventError) throw new Error(eventError.message)
+  const eventRows = (events || []) as Array<{ id: string; machine_id: string; created_at: string }>
+  const eventIds = eventRows.map((event) => event.id)
+  const { data: eventReservations, error: reservationEventError } = eventIds.length ? await adminDb
+    .from('production_fact_cutting_event_reservations')
+    .select('event_id,reservation_id,inventory_id,request_item_table,request_item_id,reserved_quantity,consumed_quantity,is_cut_reservation')
+    .in('event_id', eventIds)
+    : { data: [], error: null }
+  if (reservationEventError) throw new Error(reservationEventError.message)
+
+  const eventReservationRows = (eventReservations || []) as Array<{
+    event_id: string; reservation_id: string | null; inventory_id: string;
+    request_item_table: string; request_item_id: string;
+    reserved_quantity: number; consumed_quantity: number | null; is_cut_reservation: boolean
+  }>
+  const provisionalCandidates = matchCuttingWriteOffSources(writeOffs, eventRows, eventReservationRows)
+  const uniqueHistoricalRows = new Set<string>()
+  await Promise.all(writeOffs.filter((row) => !row.source_reservation_id
+    && provisionalCandidates.get(row.id)?.ids.length === 1).map(async (row) => {
+    const machineId = row.machine_id
+    const requestItemTable = row.request_item_table
+    const requestItemId = row.request_item_id
+    if (!machineId || !requestItemTable || !requestItemId) return
+    const rowTime = Date.parse(row.created_at)
+    const { count, error } = await adminDb.from('inventory_transactions')
+      .select('id', { count: 'exact', head: true })
+      .eq('transaction_type', 'write_off')
+      .eq('comment', 'Автоматическое списание потребности по факту заготовки')
+      .eq('machine_id', machineId)
+      .eq('inventory_id', row.inventory_id)
+      .eq('request_item_table', requestItemTable)
+      .eq('request_item_id', requestItemId)
+      .eq('quantity', row.quantity)
+      .gte('created_at', new Date(rowTime - 600_000).toISOString())
+      .lte('created_at', row.created_at)
+    if (error) throw new Error(error.message)
+    if (count === 1) uniqueHistoricalRows.add(row.id)
+  }))
+  const candidatesByTransaction = matchCuttingWriteOffSources(
+    writeOffs, eventRows, eventReservationRows, uniqueHistoricalRows,
+  )
+
+  const reservationIds = [...new Set([...candidatesByTransaction.values()].flatMap((entry) => entry.ids))]
+  const { data: reservations, error: reservationError } = reservationIds.length ? await adminDb
+    .from('inventory_reservations')
+    .select('id,supply_order_schedule_id,reservation_source')
+    .in('id', reservationIds)
+    : { data: [], error: null }
+  if (reservationError) throw new Error(reservationError.message)
+  const reservationRows = (reservations || []) as Array<{
+    id: string; supply_order_schedule_id: string | null; reservation_source: string | null
+  }>
+  const scheduleIds = [...new Set(reservationRows.map((reservation) => reservation.supply_order_schedule_id)
+    .filter((id): id is string => !!id))]
+  const { data: schedules, error: scheduleError } = scheduleIds.length ? await adminDb
+    .from('supply_order_delivery_schedules')
+    .select('id,delivery_date')
+    .in('id', scheduleIds)
+    : { data: [], error: null }
+  if (scheduleError) throw new Error(scheduleError.message)
+  const scheduleRows = (schedules || []) as Array<{ id: string; delivery_date: string }>
+  const reservationMap = new Map(reservationRows.map((reservation) => [reservation.id, reservation]))
+  const scheduleMap = new Map(scheduleRows.map((schedule) => [schedule.id, schedule]))
+  for (const row of writeOffs) {
+    const candidate = candidatesByTransaction.get(row.id)
+    if (!candidate) continue
+    result.set(row.id, {
+      certainty: candidate.certainty,
+      labels: candidate.ids.map((id) => {
+        const reservation = reservationMap.get(id)
+        const schedule = reservation?.supply_order_schedule_id
+          ? scheduleMap.get(reservation.supply_order_schedule_id) : null
+        return `Бронь ${id.slice(0, 8)}${schedule
+          ? ` · приёмка по графику ${schedule.delivery_date}`
+          : reservation?.reservation_source === 'supply_receipt' ? ' · из принятой поставки' : ' · со склада'}`
+      }),
+    })
+  }
+  return result
 }
 
 async function loadRequestItemWeightMap(db: LooseDb, rows: Array<Pick<InventoryTransaction, 'request_item_table' | 'request_item_id'>>) {

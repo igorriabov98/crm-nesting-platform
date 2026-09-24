@@ -236,6 +236,7 @@ assert.deepEqual(
     '20260924100000_sales_member_own_client_commercial_access.sql',
     '20260924101000_berehovo_single_workshop.sql',
     '20260924125000_sales_member_trimmed_department_name.sql',
+    '20260924130000_inventory_cutting_writeoff_source.sql',
 
   ],
   'После cutover разрешены только проверенные follow-up миграции',

@@ -272,7 +272,10 @@ export function InventoryWarehouseHistoryPage({
                   <td className="px-4 py-3">{machineCell(row)}</td>
                   <td className="px-4 py-3 text-[#475569]">{row.supplier_name || '-'}</td>
                   <td className="px-4 py-3 text-[#475569]">{row.user_name || '-'}</td>
-                  <td className="px-4 py-3 text-[#64748B]">{row.comment || '-'}</td>
+                  <td className="px-4 py-3 text-[#64748B]">
+                    {row.comment || '-'}
+                    {row.transaction_type === 'write_off' && <WriteOffSource row={row} />}
+                  </td>
                 </tr>
               ))}
               {rows.length === 0 && (
@@ -303,6 +306,7 @@ export function InventoryWarehouseHistoryPage({
                 <InfoLine label="Поставщик" value={row.supplier_name || '-'} />
                 <InfoLine label="Кто" value={row.user_name || '-'} />
                 <InfoLine label="Комментарий" value={row.comment || '-'} />
+                {row.transaction_type === 'write_off' && <WriteOffSource row={row} />}
               </div>
             </article>
           ))}
@@ -313,6 +317,16 @@ export function InventoryWarehouseHistoryPage({
       </section>
     </div>
   )
+}
+
+function WriteOffSource({ row }: { row: InventoryTransactionWithRelations }) {
+  if (row.comment !== 'Автоматическое списание потребности по факту заготовки') return null
+  const source = row.write_off_source
+  return <div className="mt-1 text-xs leading-5 text-[#475569]">
+    <span className="font-semibold">{source?.certainty === 'exact' ? 'Источник списания:'
+      : source ? 'Возможные брони (связь не установлена):' : 'Источник списания не установлен'}</span>
+    {source?.labels.map((label) => <span key={label} className="block">{label}</span>)}
+  </div>
 }
 
 function MetricCard({

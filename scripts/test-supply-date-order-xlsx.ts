@@ -13,6 +13,11 @@ import {
   supplyDateOrderFilename,
 } from '@/lib/reports/supply-date-order-report'
 import { buildSupplyDateOrderXlsx } from '@/lib/reports/supply-date-order-xlsx'
+import {
+  getSupplyDateOrderOptions,
+  MISSING_STEEL_TYPE,
+  selectSupplyDateOrderAggregates,
+} from '@/lib/reports/supply-date-order-selection'
 
 const reportDate = '2026-09-10'
 const pendingSheet = makeAggregate({
@@ -180,6 +185,41 @@ const report = buildSupplyDateOrderReport(
   reportDate,
 )
 
+const typedSheet = {
+  ...pendingSheet,
+  characteristics: [...pendingSheet.characteristics, { label: 'Тип стали', value: 'Hardox' }],
+}
+const otherTypedSheet = {
+  ...typedSheet,
+  id: 'pending-sheet-st3',
+  item_name: 'Лист Ст3',
+  characteristics: [...pendingSheet.characteristics, { label: 'Тип стали', value: 'Ст3' }],
+}
+const selectable = [typedSheet, otherTypedSheet, pendingKnife, pendingPipe, redelivery]
+const optionList = getSupplyDateOrderOptions(selectable, reportDate)
+assert.deepEqual(optionList.find((option) => option.category === 'sheet_metal')?.steelTypes,
+  ['Hardox', 'Ст3'].sort((left, right) => left.localeCompare(right, 'ru')))
+assert.deepEqual(optionList.find((option) => option.category === 'knives')?.steelTypes, [MISSING_STEEL_TYPE])
+const sheetOnly = buildSupplyDateOrderReport(selectSupplyDateOrderAggregates(selectable, {
+  categories: ['sheet_metal'], steelTypes: { sheet_metal: ['Hardox'] },
+}), reportDate)
+assert.deepEqual(sheetOnly.rows.map((row) => row.material), ['Лист Hardox'])
+const missingOnly = buildSupplyDateOrderReport(selectSupplyDateOrderAggregates(selectable, {
+  categories: ['knives'], steelTypes: { knives: [MISSING_STEEL_TYPE] },
+}), reportDate)
+assert.deepEqual(missingOnly.rows.map((row) => row.material), ['Ножи по карте'])
+const noSteelCategory = buildSupplyDateOrderReport(selectSupplyDateOrderAggregates(selectable, {
+  categories: ['components'], steelTypes: {},
+}), reportDate)
+assert.equal(noSteelCategory.rows[0]?.quantity, 9, 'categories without steel types keep the uncovered remainder')
+const allSelected = buildSupplyDateOrderReport(selectSupplyDateOrderAggregates(selectable, {
+  categories: optionList.map((option) => option.category),
+  steelTypes: Object.fromEntries(optionList.map((option) => [option.category, option.steelTypes])),
+}), reportDate)
+assert.deepEqual(allSelected.rows.map((row) => row.material).sort(),
+  buildSupplyDateOrderReport(selectable, reportDate).rows.map((row) => row.material).sort(),
+  'selecting every category and every steel type preserves every available order row')
+
 assert.equal(report.dateLabel, '10 сентября 2026 г.')
 assert.equal(report.factoryLabel, 'Ужгород')
 assert.equal(report.rows.length, 7, 'multi-length bar purchases must use one order row per stock length')
@@ -222,6 +262,14 @@ assert.equal(supplyDateOrderFilename(reportDate), 'zakaz-materialov-2026-09-10.x
 assert.equal(supplyDateOrderFilename('no_supply_date'), 'zakaz-materialov-bez-daty.xlsx')
 
 async function verifyWorkbook() {
+const selectedBuffer = await buildSupplyDateOrderXlsx(sheetOnly, new Date('2026-09-07T09:30:00Z'))
+const selectedWorkbook = new ExcelJS.Workbook()
+await selectedWorkbook.xlsx.load(selectedBuffer)
+const selectedWorksheet = selectedWorkbook.getWorksheet('Заказ 10.09.2026')
+assert(selectedWorksheet)
+assert.equal(selectedWorksheet.getRow(7).getCell(3).value, 'Лист Hardox')
+assert.equal(selectedWorksheet.getRow(8).getCell(3).value, null,
+  'the selected XLSX must not include another category or steel type')
 const buffer = await buildSupplyDateOrderXlsx(report, new Date('2026-09-07T09:30:00Z'))
 if (process.env.SUPPLY_DATE_ORDER_XLSX_OUTPUT) {
   await writeFile(process.env.SUPPLY_DATE_ORDER_XLSX_OUTPUT, Buffer.from(buffer))

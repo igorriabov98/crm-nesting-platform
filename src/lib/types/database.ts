@@ -4421,6 +4421,7 @@ export type Database = {
           machine_id: string | null
           request_item_table: string | null
           request_item_id: string | null
+          source_reservation_id?: string | null
           performed_by: string
           supplier_id: string | null
           comment: string | null
@@ -4440,6 +4441,7 @@ export type Database = {
           machine_id?: string | null
           request_item_table?: string | null
           request_item_id?: string | null
+          source_reservation_id?: string | null
           performed_by: string
           supplier_id?: string | null
           comment?: string | null
@@ -4459,6 +4461,7 @@ export type Database = {
           machine_id?: string | null
           request_item_table?: string | null
           request_item_id?: string | null
+          source_reservation_id?: string | null
           performed_by?: string
           supplier_id?: string | null
           comment?: string | null
