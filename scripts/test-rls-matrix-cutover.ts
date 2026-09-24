@@ -233,6 +233,8 @@ assert.deepEqual(
     '20260923150000_sheet_scrap_orientation_reservation.sql',
     '20260923151000_rotated_pipe_variant_reservation.sql',
     '20260923152000_completion_sheet_scrap_detailing_dimensions.sql',
+    '20260924100000_sales_member_own_client_commercial_access.sql',
+    '20260924101000_berehovo_single_workshop.sql',
 
   ],
   'После cutover разрешены только проверенные follow-up миграции',

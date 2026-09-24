@@ -160,10 +160,12 @@ export async function requireProductManageAccess(resourceKey: Extract<ResourceKe
 
 function canViewProductPrices(context: Awaited<ReturnType<typeof requireProductAccess>>) {
   return hasPermission(context.permissions, 'client_prices', 'view')
+    && (context.permissionDetails.isAdminPosition || context.permissionDetails.companyScopes.client_prices?.view === 'all')
 }
 
 function canManageProductPrices(context: Awaited<ReturnType<typeof requireProductManageAccess>>) {
   return hasPermission(context.permissions, 'client_prices', 'manage')
+    && (context.permissionDetails.isAdminPosition || context.permissionDetails.companyScopes.client_prices?.manage === 'all')
 }
 
 async function attachProtectedProductPrices<T extends { id: string }>(

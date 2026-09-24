@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Check, ChevronsUpDown } from 'lucide-react'
+import { Check, ChevronsUpDown, Plus } from 'lucide-react'
 
 import type { ProductOption } from '@/lib/actions/products'
 import { cn } from '@/lib/utils'
@@ -22,6 +22,7 @@ type ProductOptionComboboxProps = {
   disabled?: boolean
   placeholder?: string
   onChange: (productId: string) => void
+  onCreateProduct?: () => void
 }
 
 function productLabel(product: ProductOption) {
@@ -46,6 +47,7 @@ export function ProductOptionCombobox({
   disabled,
   placeholder = 'Выберите активный продукт',
   onChange,
+  onCreateProduct,
 }: ProductOptionComboboxProps) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -115,6 +117,16 @@ export function ProductOptionCombobox({
             </CommandGroup>
           </CommandList>
         </Command>
+        {onCreateProduct && (
+          <div className="border-t border-[#E8ECF0] p-2">
+            <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => {
+              handleOpenChange(false)
+              onCreateProduct()
+            }}>
+              <Plus className="mr-2 h-4 w-4" />Добавить продукт
+            </Button>
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   )

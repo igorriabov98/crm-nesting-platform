@@ -50,7 +50,7 @@ const machineIdSchema = z.string().uuid('Некорректный ID машин�
 const productionQueueMoveSchema = z.object({
   machineId: z.string().uuid('Некорректный ID машины'),
   targetFactoryId: z.string().uuid('Некорректный ID завода'),
-  targetWorkshop: z.number().int().min(1).max(2),
+  targetWorkshop: z.literal(1),
   targetQueueNumber: z.number().int().positive(),
 })
 type MachineInsert = Database['public']['Tables']['machines']['Insert']

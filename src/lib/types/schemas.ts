@@ -306,7 +306,7 @@ export const createMachineSchema = z.object({
   expenses: z.array(machineExpenseSchema).optional(),
   factory_id: z.string().uuid('Выберите завод').optional().nullable(),
   production_month: z.string().optional().nullable(),
-  production_workshop: z.coerce.number().int().min(1, 'Выберите цех').max(2, 'Выберите цех').optional().nullable(),
+  production_workshop: z.coerce.number().int().min(1, 'Выберите цех').max(1, 'Цех 2 больше недоступен').optional().nullable(),
   production_queue_number: z.coerce.number().int().positive().optional().nullable(),
   status: z.enum([
     'created',
