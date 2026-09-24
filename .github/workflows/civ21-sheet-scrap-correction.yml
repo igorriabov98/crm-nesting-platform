@@ -1,0 +1,70 @@
+name: CIV-21 sheet remnant review
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply_correction:
+        description: Restore the guarded CIV-21 sheet remnant to future after reviewing the preflight report.
+        type: boolean
+        default: false
+      confirm:
+        description: Type correct-civ21-business-remnant to apply the correction.
+        type: string
+        required: false
+
+jobs:
+  review:
+    name: review and guarded correction
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      CORRECTION_CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: Confirm main and correction intent
+        run: |
+          test "$GITHUB_REF_NAME" = main
+          if [ "${{ inputs.apply_correction }}" = true ]; then
+            test "$CORRECTION_CONFIRM" = correct-civ21-business-remnant
+          fi
+      - uses: actions/checkout@v4
+      - name: Install psql
+        run: |
+          if command -v psql >/dev/null 2>&1; then
+            psql --version
+            exit 0
+          fi
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      - name: Read-only preflight
+        run: |
+          psql "$SUPABASE_DB_URL" -X -v ON_ERROR_STOP=1 \
+            -f supabase/reports/civ21_sheet_scrap_reconciliation.sql \
+            | tee civ21-sheet-scrap-before.txt
+      - name: Save preflight
+        uses: actions/upload-artifact@v4
+        with:
+          name: civ21-sheet-scrap-before-${{ github.sha }}
+          path: civ21-sheet-scrap-before.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Apply guarded correction
+        if: ${{ inputs.apply_correction == true }}
+        run: |
+          psql "$SUPABASE_DB_URL" -X -v ON_ERROR_STOP=1 \
+            -f supabase/reports/civ21_sheet_scrap_guarded_correction.sql
+      - name: Read-only post-correction report
+        if: ${{ inputs.apply_correction == true }}
+        run: |
+          psql "$SUPABASE_DB_URL" -X -v ON_ERROR_STOP=1 \
+            -f supabase/reports/civ21_sheet_scrap_reconciliation.sql \
+            | tee civ21-sheet-scrap-after.txt
+      - name: Save post-correction report
+        if: ${{ inputs.apply_correction == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: civ21-sheet-scrap-after-${{ github.sha }}
+          path: civ21-sheet-scrap-after.txt
+          if-no-files-found: error
+          retention-days: 30
