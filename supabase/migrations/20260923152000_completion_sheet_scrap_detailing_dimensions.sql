@@ -8,8 +8,15 @@ alter table public.detailing_parts
 alter table public.technologist_request_waste_items
   add column waste_basis_kg numeric(14,3),
   add column business_scrap_weight_kg numeric(14,3) not null default 0;
+-- Approved completion rows are immutable to application writes. Hold the
+-- table lock and suspend only that guard while filling this new legacy column;
+-- the migration runner wraps the change and re-enable in one transaction.
+alter table public.technologist_request_waste_items
+  disable trigger financial_approval_waste_guard;
 update public.technologist_request_waste_items
 set waste_basis_kg = weight_snapshot_kg where waste_basis_kg is null;
+alter table public.technologist_request_waste_items
+  enable trigger financial_approval_waste_guard;
 alter table public.technologist_request_waste_items
   alter column waste_basis_kg set not null;
 alter table public.technologist_request_waste_items

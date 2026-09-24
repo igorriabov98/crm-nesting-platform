@@ -118,6 +118,10 @@ const replayPreludes = new Map([
     '20260923150000_sheet_scrap_orientation_reservation.sql',
     readFileSync(path.join(root, 'supabase', 'tests', 'sheet_scrap_orientation_legacy_cancelled_setup.sql'), 'utf8'),
   ],
+  [
+    '20260923152000_completion_sheet_scrap_detailing_dimensions.sql',
+    readFileSync(path.join(root, 'supabase', 'tests', 'sheet_scrap_completion_legacy_approved_setup.sql'), 'utf8'),
+  ],
 ])
 
 console.log(`[full-schema-test] rebuilding local database ${databaseName}`)
@@ -153,6 +157,27 @@ for (const migration of migrations) {
             where id = '9f000000-0000-4000-8000-000000000008') is distinct from 0 then
           raise exception 'Cancelled sheet history was changed by reservation backfill';
         end if;
+      end $$;
+    `)
+  }
+  if (migration === '20260923152000_completion_sheet_scrap_detailing_dimensions.sql') {
+    runPsql('approved completion waste basis and guard assertion', `
+      do $$
+      declare v_error text;
+      begin
+        if (select waste_basis_kg from public.technologist_request_waste_items
+            where request_id = '9f000000-0000-4000-8000-000000000013') is distinct from 100 then
+          raise exception 'Approved legacy waste basis was not backfilled';
+        end if;
+        begin
+          update public.technologist_request_waste_items
+          set item_name = 'Mutation must fail'
+          where request_id = '9f000000-0000-4000-8000-000000000013';
+          raise exception 'Approved waste guard was not restored';
+        exception when others then
+          get stacked diagnostics v_error = message_text;
+          if v_error <> 'Одобренную заявку нельзя редактировать' then raise; end if;
+        end;
       end $$;
     `)
   }
