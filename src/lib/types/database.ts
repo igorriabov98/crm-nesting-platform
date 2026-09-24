@@ -4967,6 +4967,7 @@ export type Database = {
           source_product_id: string | null
           source_nesting_project_id: string | null
           source_nesting_sheet_id: string | null
+          source_nesting_sheet_ids: string[]
         }
         Insert: {
           id?: string
@@ -5003,6 +5004,7 @@ export type Database = {
           source_product_id?: string | null
           source_nesting_project_id?: string | null
           source_nesting_sheet_id?: string | null
+          source_nesting_sheet_ids?: string[]
         }
         Update: {
           id?: string
@@ -5039,6 +5041,7 @@ export type Database = {
           source_product_id?: string | null
           source_nesting_project_id?: string | null
           source_nesting_sheet_id?: string | null
+          source_nesting_sheet_ids?: string[]
         }
       }
       request_round_tube: {

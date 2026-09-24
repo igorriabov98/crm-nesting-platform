@@ -1458,6 +1458,7 @@ declare
   v_batch_good uuid := gen_random_uuid();
   v_batch_reserved uuid := gen_random_uuid();
   v_lot uuid;
+  v_expected_weight numeric;
   v_result jsonb;
   v_plan_data jsonb;
   v_short_inventory uuid;
@@ -1496,12 +1497,13 @@ begin
     (v_batch_good, v_factory, v_material, v_variant, 600, 600, 0, 'мм', 1, 0, 'шт', 1.2, true, 'available', v_actor),
     (v_batch_reserved, v_factory, v_material, v_variant, 700, 700, 100, 'мм', 1, 0, 'шт', 1.4, true, 'available', v_actor);
 
+  select calculated_weight_kg into v_expected_weight from public.inventory where id=v_single;
   v_result := public.fn_convert_business_scrap_to_metal_v1(array[v_single], v_actor);
   select id into v_lot
   from public.metal_scrap_lots
   where source_inventory_id = v_single;
   if (v_result->>'count')::integer <> 1
-    or abs((v_result->>'total_weight_kg')::numeric - 0.8) > 0.001
+    or abs((v_result->>'total_weight_kg')::numeric - v_expected_weight) > 0.001
     or (select deleted_at from public.inventory where id = v_single) is null
     or (select total_quantity from public.inventory where id = v_single) <> 0
     or not exists (
@@ -1512,8 +1514,8 @@ begin
         and lot.waste_item_id is null
         and lot.machine_id is null
         and lot.status = 'available'
-        and abs(lot.expected_weight_kg - 0.8) <= 0.001
-        and abs(lot.available_weight_kg - 0.8) <= 0.001
+        and abs(lot.expected_weight_kg - v_expected_weight) <= 0.001
+        and abs(lot.available_weight_kg - v_expected_weight) <= 0.001
     ) then
     raise exception 'Перевод делового остатка не списал строку или создал неверный лот: %', v_result;
   end if;
@@ -1521,7 +1523,7 @@ begin
     select 1 from public.metal_scrap_movements movement
     where movement.lot_id = v_lot
       and movement.movement_type = 'inventory_conversion'
-      and abs(movement.weight_delta_kg - 0.8) <= 0.001
+      and abs(movement.weight_delta_kg - v_expected_weight) <= 0.001
   ) or not exists (
     select 1 from public.inventory_transactions transaction
     where transaction.inventory_id = v_single
