@@ -30,6 +30,9 @@ export type FutureDetailingPageItem = {
     name: string
     drawing_number: string
     unit_weight_kg: number
+    width_mm: number | null
+    height_mm: number | null
+    thickness_mm: number | null
   } | null
 }
 
@@ -87,7 +90,7 @@ export async function getFutureDetailingPage(factoryId?: string, page = 0) {
     const batchResult = await batches
     if (batchResult.error) throw batchResult.error
     const ids = (batchResult.data || []).map((batch: any) => batch.id)
-    const items = ids.length ? await client.from('future_detailing_items').select('id,batch_id,part_id,planned_quantity,actual_quantity,status,variance_reason,detailing_parts(name,drawing_number,unit_weight_kg)').in('batch_id', ids).order('created_at') : { data: [] }
+    const items = ids.length ? await client.from('future_detailing_items').select('id,batch_id,part_id,planned_quantity,actual_quantity,status,variance_reason,detailing_parts(name,drawing_number,unit_weight_kg,width_mm,height_mm,thickness_mm)').in('batch_id', ids).order('created_at') : { data: [] }
     if ('error' in items && items.error) throw items.error
     const machineIds = Array.from(new Set((batchResult.data || []).map((batch: any) => batch.machine_id))) as string[]
     const stages = machineIds.length

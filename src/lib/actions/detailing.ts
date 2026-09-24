@@ -62,6 +62,7 @@ type DetailingDb = {
     args: Database['public']['Functions'][Name]['Args'],
   ) => Promise<DbResult<Database['public']['Functions'][Name]['Returns']>>
 }
+type DimensionRpc = { rpc: (name: string, args: Record<string, unknown>) => Promise<DbResult> }
 
 export type DetailingFactory = { id: string; name: string }
 export type DetailingProductVersion = { id: string; versionNumber: number; drawingNumber: string; status: string }
@@ -108,6 +109,9 @@ export type DetailingPartCard = {
   name: string
   drawingNumber: string
   unitWeightKg: number
+  widthMm: number | null
+  heightMm: number | null
+  thicknessMm: number | null
   isActive: boolean
   compatibilities: DetailingCompatibility[]
   balances: DetailingBalance[]
@@ -202,6 +206,9 @@ type RawPart = {
   name: string
   drawing_number: string
   unit_weight_kg: number | string
+  width_mm: number | string | null
+  height_mm: number | string | null
+  thickness_mm: number | string | null
   is_active: boolean
 }
 
@@ -215,6 +222,9 @@ const createPartSchema = z.object({
   name: z.string().trim().min(1, 'Укажите название детали'),
   drawingNumber: z.string().trim().min(1, 'Укажите номер чертежа'),
   unitWeightKg: z.coerce.number().positive('Вес должен быть больше 0'),
+  widthMm: z.coerce.number().positive().nullable().optional(),
+  heightMm: z.coerce.number().positive().nullable().optional(),
+  thicknessMm: z.coerce.number().positive().nullable().optional(),
   factoryId: z.string().uuid(),
   initialQuantity: z.coerce.number().int().positive('Количество должно быть целым и больше 0'),
   compatibilities: z.array(compatibilitySchema).min(1, 'Выберите хотя бы одно изделие'),
@@ -241,7 +251,7 @@ function revalidateDetailing() {
 }
 
 async function loadWarehouse(db: DetailingDb, includeArchived = false, includeReservationDetails = false): Promise<DetailingWarehouseData> {
-  let partsQuery = db.from('detailing_parts').select('id, name, drawing_number, unit_weight_kg, is_active')
+  let partsQuery = db.from('detailing_parts').select('id, name, drawing_number, unit_weight_kg, width_mm, height_mm, thickness_mm, is_active')
   if (!includeArchived) partsQuery = partsQuery.eq('is_active', true)
 
   const [partsResult, factoriesResult, productsResult, versionsResult, linksResult, linkVersionsResult, balancesResult, movementsResult, usersResult, reservationsResult, allocationsResult] = await Promise.all([
@@ -374,6 +384,9 @@ async function loadWarehouse(db: DetailingDb, includeArchived = false, includeRe
       name: part.name,
       drawingNumber: part.drawing_number,
       unitWeightKg: numberValue(part.unit_weight_kg),
+      widthMm: part.width_mm == null ? null : numberValue(part.width_mm),
+      heightMm: part.height_mm == null ? null : numberValue(part.height_mm),
+      thicknessMm: part.thickness_mm == null ? null : numberValue(part.thickness_mm),
       isActive: part.is_active,
       compatibilities: compatibilitiesByPart.get(part.id) || [],
       balances: (balancesByPart.get(part.id) || []).sort((a, b) => a.factoryName.localeCompare(b.factoryName, 'ru')),
@@ -399,7 +412,7 @@ export async function createDetailingPart(input: z.input<typeof createPartSchema
   try {
     const parsed = createPartSchema.parse(input)
     const { supabase, userId } = await requirePermission('inventory_detailing', 'manage')
-    const { data, error } = await detailingDb(supabase).rpc('fn_create_detailing_part', {
+    const { data, error } = await (supabase as unknown as DimensionRpc).rpc('fn_create_detailing_part_with_dimensions', {
       p_name: parsed.name,
       p_drawing_number: parsed.drawingNumber,
       p_unit_weight_kg: parsed.unitWeightKg,
@@ -407,6 +420,9 @@ export async function createDetailingPart(input: z.input<typeof createPartSchema
       p_initial_quantity: parsed.initialQuantity,
       p_compatibilities: parsed.compatibilities.map((item) => ({ product_id: item.productId, all_versions: item.allVersions, version_ids: item.versionIds })),
       p_actor: userId,
+      p_width_mm: parsed.widthMm ?? null,
+      p_height_mm: parsed.heightMm ?? null,
+      p_thickness_mm: parsed.thicknessMm ?? null,
     })
     if (error) throw error
     revalidateDetailing()
@@ -414,6 +430,20 @@ export async function createDetailingPart(input: z.input<typeof createPartSchema
   } catch (error) {
     return { success: false, error: getErrorMessage(error) }
   }
+}
+
+export async function updateDetailingPartDimensions(input: { partId: string; widthMm?: number | null; heightMm?: number | null; thicknessMm?: number | null }) {
+  try {
+    const parsed = z.object({ partId: z.string().uuid(), widthMm: z.coerce.number().positive().nullable().optional(), heightMm: z.coerce.number().positive().nullable().optional(), thicknessMm: z.coerce.number().positive().nullable().optional() }).parse(input)
+    const { supabase, userId } = await requirePermission('inventory_detailing', 'manage')
+    const { error } = await (supabase as unknown as DimensionRpc).rpc('fn_update_detailing_part_dimensions', {
+      p_part_id: parsed.partId, p_width_mm: parsed.widthMm ?? null,
+      p_height_mm: parsed.heightMm ?? null, p_thickness_mm: parsed.thicknessMm ?? null, p_actor: userId,
+    })
+    if (error) throw error
+    revalidateDetailing()
+    return { success: true }
+  } catch (error) { return { success: false, error: getErrorMessage(error) } }
 }
 
 export async function receiveDetailingStock(input: { partId: string; factoryId: string; quantity: number; comment?: string }) {

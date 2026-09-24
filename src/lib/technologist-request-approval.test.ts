@@ -33,6 +33,14 @@ test('returns no weighted result for zero weight but preserves the simple averag
   assert.equal(result.weightedPercent, null)
 })
 
+test('weights sheet waste by processed weight and keeps legacy full-weight behavior', () => {
+  const result = calculateWasteAggregate([
+    { weightKg: 100, wasteBasisKg: 50, wastePercent: 10 },
+    { weightKg: 100, wastePercent: 20 },
+  ])
+  assert.equal(result.weightedPercent, (50 * 10 + 100 * 20) / 150)
+})
+
 function snapshot(items: ApprovalSummarySnapshot['items']): ApprovalSummarySnapshot {
   return {
     schemaVersion: 1, requestId: 'request', machineId: 'machine', orderName: 'Заказ', materialType: 'standard',

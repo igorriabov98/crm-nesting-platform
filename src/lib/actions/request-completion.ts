@@ -18,6 +18,13 @@ import { formatMetalScrapMaterialName } from '@/lib/metal-scrap'
 import type { CompletionFutureBusinessScrap } from '@/lib/request-completion-future-scrap'
 import { buildTechnologistApprovalSnapshot } from '@/lib/server/technologist-approval-snapshot'
 import { requireTechnologistRequestAccess } from '@/lib/technologist-request-access'
+import { calculateSheetScrap, type SheetScrapInput } from '@/lib/request-completion-sheet-scrap'
+
+const sheetScrapSchema = z.object({
+  lengthMm: z.coerce.number().positive(),
+  widthMm: z.coerce.number().positive(),
+  quantity: z.coerce.number().int().positive(),
+})
 
 const stagedArchiveSchema = z.object({
   requestId: z.string().uuid(),
@@ -37,6 +44,7 @@ const wasteSchema = z.object({
   materialName: z.string().trim().min(1),
   materialGrade: z.string().trim().nullable().optional(),
   wastePercent: z.coerce.number().min(0).max(100).refine((value) => Math.round(value * 10) === value * 10, 'Точность — до 0,1%'),
+  futureScraps: z.array(sheetScrapSchema).default([]),
 })
 
 const compatibilitySchema = z.object({
@@ -51,6 +59,9 @@ const futureItemSchema = z.object({
   name: z.string().trim().optional(),
   drawingNumber: z.string().trim().optional(),
   unitWeightKg: z.coerce.number().positive().optional(),
+  widthMm: z.coerce.number().positive().nullable().optional(),
+  heightMm: z.coerce.number().positive().nullable().optional(),
+  thicknessMm: z.coerce.number().positive().nullable().optional(),
   compatibilities: z.array(compatibilitySchema).default([]),
 }).superRefine((value, ctx) => {
   if (!value.partId && (!value.name || !value.drawingNumber || !value.unitWeightKg || value.compatibilities.length === 0)) {
@@ -90,6 +101,8 @@ export type CompletionWasteItem = {
   materialGrade: string | null
   quantityLabel: string
   weightKg: number | null
+  sheetSize: string | null
+  sheetQuantity: number | null
   accountingMode: 'manual_percent' | 'approved_plan'
   planSummary: CompletionPlanSummary | null
 }
@@ -151,6 +164,8 @@ function mapWaste(sourceTable: CompletionWasteItem['sourceTable'], row: RawWaste
     materialGrade: grade ? String(grade) : null,
     quantityLabel: quantity,
     weightKg: num(row.calculated_weight_kg),
+    sheetSize: sourceTable === 'request_sheet_metal' ? String(row.sheet_size || '') : null,
+    sheetQuantity: sourceTable === 'request_sheet_metal' ? num(row.quantity_sheets) : null,
     accountingMode: 'manual_percent',
     planSummary: null,
   }
@@ -179,7 +194,7 @@ export async function getCompletionWorkspace(requestId: string): Promise<Complet
     if (!detailingCheck.ready) return { data: null, error: null, redirectTo: `/supply/request/${id}` }
     const [machineResult, sheet, pipe, circle, knives, planFactsResult] = await Promise.all([
       client.from('machines').select('id,name,factory_id,factories(id,name)').eq('id', requestResult.data.machine_id).single(),
-      client.from('request_sheet_metal').select('id,material_id,material_variant_id,material_name,material_grade,sheet_size,quantity_sheets,calculated_weight_kg').eq('request_id', id).order('sort_order'),
+      client.from('request_sheet_metal').select('id,material_id,material_variant_id,material_name,material_grade,sheet_size,quantity_sheets,calculated_weight_kg,steel_type_id,thickness_mm').eq('request_id', id).order('sort_order'),
       client.from('request_pipe').select('id,material_id,material_variant_id,pipe_type,size,remainder_qty,calculated_weight_kg').eq('request_id', id).eq('is_cutting_plan_draft', false).order('sort_order'),
       client.from('request_circle').select('id,material_id,material_variant_id,steel_grade,diameter_mm,remainder_mm,calculated_weight_kg').eq('request_id', id).eq('is_cutting_plan_draft', false).order('sort_order'),
       client.from('request_knives').select('id,material_id,material_variant_id,knife_type,steel_grade,remainder_qty,calculated_weight_kg').eq('request_id', id).eq('is_cutting_plan_draft', false).order('sort_order'),
@@ -250,7 +265,7 @@ export async function searchFutureDetailingParts(query: string, page = 0) {
     await requirePermission('technologist_requests', 'manage')
     const parsed = z.string().trim().max(100).parse(query)
     const safePage = Math.max(0, Math.trunc(page))
-    let request = db().from('detailing_parts').select('id,name,drawing_number,unit_weight_kg', { count: 'exact' }).eq('is_active', true)
+    let request = db().from('detailing_parts').select('id,name,drawing_number,unit_weight_kg,width_mm,height_mm,thickness_mm', { count: 'exact' }).eq('is_active', true)
     if (parsed) request = request.or(`name.ilike.%${parsed.replaceAll(',', '')}%,drawing_number.ilike.%${parsed.replaceAll(',', '')}%`)
     const { data, error, count } = await request.order('name').range(safePage * 20, safePage * 20 + 19)
     if (error) throw error
@@ -291,6 +306,23 @@ export async function finalizeTechnologistRequest(input: z.input<typeof finalize
       throw new Error('Сначала завершите бронь основного склада')
     }
     const hasSheetMetal = (sheetResult.count || 0) > 0
+    const sheets = await client.from('request_sheet_metal')
+      .select('id,sheet_size,quantity_sheets,calculated_weight_kg,material_id,steel_type_id,thickness_mm')
+      .eq('request_id', parsed.requestId)
+    if (sheets.error) throw sheets.error
+    const sheetById = new Map<string, any>((sheets.data || []).map((row: any) => [row.id, row]))
+    for (const item of parsed.wasteItems) {
+      if (item.sourceTable !== 'request_sheet_metal') {
+        if (item.futureScraps.length) throw new Error('Деловой остаток в этом мастере доступен только для листового металла')
+        continue
+      }
+      const sheet = sheetById.get(item.sourceId)
+      if (!sheet) throw new Error('Листовая позиция не относится к заявке')
+      if (item.futureScraps.length && (!sheet.material_id || !sheet.steel_type_id || !(Number(sheet.thickness_mm) > 0))) {
+        throw new Error('Для делового остатка у исходного листа нужны карточка материала, тип стали и толщина')
+      }
+      calculateSheetScrap(String(sheet.sheet_size || ''), Number(sheet.quantity_sheets), Number(sheet.calculated_weight_kg), item.futureScraps as SheetScrapInput[], item.wastePercent)
+    }
     if (hasSheetMetal && stagedArchives.length === 0) throw new Error('Для заявки с листовым металлом загрузите программу порезки')
     if (!hasSheetMetal && stagedArchives.length > 0) throw new Error('Программа порезки доступна только для листового металла')
     if (!hasSheetMetal && (parsed.hours > 0 || parsed.minutes > 0)) throw new Error('Время плазмы доступно только для листового металла')

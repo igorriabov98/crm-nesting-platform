@@ -15,6 +15,7 @@ import {
   adjustDetailingStock,
   archiveDetailingPart,
   receiveDetailingStock,
+  updateDetailingPartDimensions,
   type DetailingPartCard,
   type DetailingWarehouseData,
 } from '@/lib/actions/detailing'
@@ -46,6 +47,8 @@ export function DetailingWarehousePage({
   const [stockDialog, setStockDialog] = useState<StockDialog>(null)
   const [stockQuantity, setStockQuantity] = useState('')
   const [stockComment, setStockComment] = useState('')
+  const [dimensionPart, setDimensionPart] = useState<DetailingPartCard | null>(null)
+  const [dimensionDraft, setDimensionDraft] = useState({ width: '', height: '', thickness: '' })
   const [reservationDialog, setReservationDialog] = useState<ReservationDialog>(null)
   const activeFactory = data.factories.find((factory) => factory.id === activeFactoryId) || null
   const inventoryFactoryQuery = activeFactoryId ? `factory=${encodeURIComponent(activeFactoryId)}&` : ''
@@ -71,6 +74,22 @@ export function DetailingWarehousePage({
       }
       toast.success(stockDialog.mode === 'receipt' ? 'Поступление добавлено' : 'Остаток скорректирован')
       setStockDialog(null); setStockQuantity(''); setStockComment(''); router.refresh()
+    })
+  }
+
+  const saveDimensions = () => {
+    if (!dimensionPart) return
+    startTransition(async () => {
+      const result = await updateDetailingPartDimensions({
+        partId: dimensionPart.id,
+        widthMm: dimensionDraft.width ? Number(dimensionDraft.width) : null,
+        heightMm: dimensionDraft.height ? Number(dimensionDraft.height) : null,
+        thicknessMm: dimensionDraft.thickness ? Number(dimensionDraft.thickness) : null,
+      })
+      if (!result.success) { toast.error(result.error || 'Не удалось сохранить габариты'); return }
+      toast.success('Габариты сохранены')
+      setDimensionPart(null)
+      router.refresh()
     })
   }
 
@@ -133,7 +152,7 @@ export function DetailingWarehousePage({
         <article key={part.id} className="overflow-hidden rounded-xl border border-[#E1E7EF] bg-white shadow-sm">
           <header className="flex flex-col gap-3 border-b border-[#E8ECF0] bg-[#FBFCFE] p-4 md:flex-row md:items-start md:justify-between">
             <div><div className="text-lg font-semibold text-[#1B3A6B]">{part.name}</div><div className="mt-1 font-mono text-sm text-[#4B5563]">Чертёж: {part.drawingNumber}</div></div>
-            <div className="flex items-center gap-2"><span className="rounded-full bg-[#EAF1FB] px-3 py-1 text-sm font-medium text-[#1B3A6B]">{kg(part.unitWeightKg)} / шт.</span><Button variant="ghost" size="icon" aria-label={`Архивировать ${part.name}`} onClick={() => archive(part)} disabled={isPending}><Archive /></Button></div>
+            <div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-[#EAF1FB] px-3 py-1 text-sm font-medium text-[#1B3A6B]">{kg(part.unitWeightKg)} / шт.</span><Button variant="outline" size="sm" onClick={() => { setDimensionPart(part); setDimensionDraft({ width: part.widthMm?.toString() || '', height: part.heightMm?.toString() || '', thickness: part.thicknessMm?.toString() || '' }) }}>Габариты: {[part.widthMm, part.heightMm, part.thicknessMm].every((value) => value != null) ? `${part.widthMm} × ${part.heightMm} × ${part.thicknessMm} мм` : 'Не указаны'}</Button><Button variant="ghost" size="icon" aria-label={`Архивировать ${part.name}`} onClick={() => archive(part)} disabled={isPending}><Archive /></Button></div>
           </header>
           <div className="grid gap-5 p-4 xl:grid-cols-[1fr_1.4fr]">
             <section>
@@ -185,6 +204,15 @@ export function DetailingWarehousePage({
         open={showCreate}
         onOpenChange={setShowCreate}
       />
+
+      <Dialog open={Boolean(dimensionPart)} onOpenChange={(open) => !open && setDimensionPart(null)}>
+        <DialogContent><DialogHeader><DialogTitle>Габариты деталировки</DialogTitle><DialogDescription>{dimensionPart?.name} · {dimensionPart?.drawingNumber}. Размеры в мм, необязательные.</DialogDescription></DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-3">{([
+            ['width', 'Ширина'], ['height', 'Высота'], ['thickness', 'Толщина'],
+          ] as const).map(([field, label]) => <label key={field} className="text-sm font-medium">{label}<Input className="mt-1" type="number" min="0.1" step="0.1" value={dimensionDraft[field]} onChange={(event) => setDimensionDraft((current) => ({ ...current, [field]: event.target.value }))} /></label>)}</div>
+          <DialogFooter><Button variant="outline" onClick={() => setDimensionPart(null)}>Отмена</Button><Button onClick={saveDimensions} disabled={isPending}>Сохранить</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ReservationOrdersDialog
         open={Boolean(reservationDialog)}

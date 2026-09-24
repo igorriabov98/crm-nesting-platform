@@ -296,7 +296,7 @@ function FutureBatchCard({
                   <div className="min-w-0">
                     <p className="font-semibold text-slate-950">{item.detailing_parts?.name || 'Деталь'}</p>
                     <p className="mt-1 text-sm text-slate-600">
-                      Чертёж {item.detailing_parts?.drawing_number || 'не указан'} · {numberFormatter.format(Number(item.detailing_parts?.unit_weight_kg || 0))} кг/шт.
+                      Чертёж {item.detailing_parts?.drawing_number || 'не указан'} · {numberFormatter.format(Number(item.detailing_parts?.unit_weight_kg || 0))} кг/шт. · Габариты: {item.detailing_parts && [item.detailing_parts.width_mm, item.detailing_parts.height_mm, item.detailing_parts.thickness_mm].every((value) => value != null) ? `${item.detailing_parts.width_mm} × ${item.detailing_parts.height_mm} × ${item.detailing_parts.thickness_mm} мм` : 'Не указаны'}
                     </p>
                   </div>
                   {canCorrect ? (

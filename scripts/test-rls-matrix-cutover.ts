@@ -232,6 +232,7 @@ assert.deepEqual(
     '20260923120100_sheet_import_density_logic.sql',
     '20260923150000_sheet_scrap_orientation_reservation.sql',
     '20260923151000_rotated_pipe_variant_reservation.sql',
+    '20260923152000_completion_sheet_scrap_detailing_dimensions.sql',
 
   ],
   'После cutover разрешены только проверенные follow-up миграции',
