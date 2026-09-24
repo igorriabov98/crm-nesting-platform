@@ -139,6 +139,7 @@ begin
     join public.technologist_requests request on request.id = sheet.request_id
     where request.status in ('draft', 'pending_stock_check', 'stock_checked',
       'pending_financial_approval', 'submitted_to_supply')
+      and sheet.order_status is distinct from 'cancelled'
       and exists (
         select 1 from public.inventory_reservations reservation
         where reservation.request_item_table = 'request_sheet_metal'
