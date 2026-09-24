@@ -11,6 +11,7 @@ import {
   deliveredScheduleQuantity,
   filterAndSortAggregates,
   filterAndSortHistory,
+  filterSupplyOrderDateSlices,
   filterSupplyOrderItems,
   getSupplyOrderItemOrderProgress,
   getSupplyOrderRedeliveryDates,
@@ -951,6 +952,22 @@ aggregateBatchSchedule.factories = [{
   ],
 }]
 const aggregateBatchGroups = groupSupplyOrderAggregatesBySupplyDate([aggregateBatchSchedule], 'date_asc')
+const mixedGraph = {
+  ...aggregateBatchSchedule,
+  unscheduled_quantity: 2_000,
+  factories: [{ ...aggregateBatchSchedule.factories[0], unscheduled_quantity: 2_000 }],
+}
+const mixedSlices = groupSupplyOrderAggregatesBySupplyDate([mixedGraph], 'date_asc').flatMap((group) => group.rows)
+assert.deepEqual(
+  filterSupplyOrderDateSlices(mixedSlices, 'open', 'scheduled').map((slice) => slice.quantity),
+  [16_000],
+  'the scheduled filter must show only the planned part of a mixed material',
+)
+assert.deepEqual(
+  filterSupplyOrderDateSlices(mixedSlices, 'open', 'unscheduled').map((slice) => slice.quantity),
+  [2_000],
+  'the unscheduled filter must show only the uncovered part of a mixed material',
+)
 assert.deepEqual(
   aggregateBatchGroups.map((group) => group.dateKey),
   ['2026-08-24'],

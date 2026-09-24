@@ -486,6 +486,7 @@ function sheetSize(sheet: SheetResult) {
 
 type SheetGroup = {
   key: string
+  sheetIds: string[]
   material: string
   steelTypeId: string | null
   steelTypeName: string | null
@@ -506,8 +507,9 @@ function groupSheets(sheets: SheetResult[]) {
     const current = groups.get(key)
     if (current) {
       current.count += 1
+      current.sheetIds.push(sheet.id)
     } else {
-      groups.set(key, { key, material, steelTypeId, steelTypeName, thickness, size, count: 1 })
+      groups.set(key, { key, sheetIds: [sheet.id], material, steelTypeId, steelTypeName, thickness, size, count: 1 })
     }
   }
   return Array.from(groups.values())
@@ -644,6 +646,7 @@ export async function importMachineItemNestingResult(projectId: string): Promise
         source_product_id: run.product_id,
         source_nesting_project_id: run.nesting_project_id,
         source_nesting_sheet_id: group.key,
+        source_nesting_sheet_ids: group.sheetIds,
       }
     })
 

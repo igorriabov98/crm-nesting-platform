@@ -68,6 +68,8 @@ jobs:
         run: npm run test:supply-reservation-scope
       - name: Supply order filters and sorting
         run: npm run test:supply-order-view && npm run test:approval-procurement
+      - name: Inventory cutting write-off source matching
+        run: npx tsx --test src/lib/inventory/cutting-writeoff-source.test.ts
       - name: Transport need grouping and department request contracts
         run: npm run test:transport-trips && npm run test:department-requests && npm run test:sidebar-work-queue-badges
       - name: Supply long-stock purchase plan and return contract

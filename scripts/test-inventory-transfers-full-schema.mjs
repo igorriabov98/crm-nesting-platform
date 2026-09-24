@@ -197,6 +197,11 @@ runPsql(
 if(process.env.FULL_SCHEMA_REPLAY_ONLY==='true')process.exit(0)
 
 runPsql(
+  'completion_sheet_scrap_lifecycle_test.sql',
+  readFileSync(path.join(root, 'supabase', 'tests', 'completion_sheet_scrap_lifecycle_test.sql'), 'utf8'),
+)
+
+runPsql(
   'production_cutting_area_cancelled_requests_test.sql',
   readFileSync(cuttingAreaCancelledRequestsPath, 'utf8'),
 )

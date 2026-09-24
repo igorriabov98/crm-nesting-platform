@@ -49,6 +49,7 @@ export type AggregateFiltersState = {
   supplier: string
   category: MaterialCategory | 'all'
   status: SupplyOrderAggregateStatusFilter
+  schedule?: 'all' | 'scheduled' | 'unscheduled'
   sort: SupplyOrderAggregateSort
 }
 
@@ -859,6 +860,21 @@ export function groupSupplyOrderAggregatesBySupplyDate(
       dateKey,
       rows: sortSupplyOrderDateSlices(rows, sort),
     }))
+}
+
+export function filterSupplyOrderDateSlices(
+  rows: SupplyOrderDateSlice[],
+  status: SupplyOrderAggregateStatusFilter,
+  schedule: AggregateFiltersState['schedule'],
+) {
+  return rows.filter((row) => {
+    if (status === 'unscheduled' && row.kind !== 'unscheduled') return false
+    if (schedule === 'scheduled') return row.kind === 'delivery'
+      && row.plannedQuantity + row.deliveredQuantity > 0.000001
+    if (schedule === 'unscheduled') return row.kind === 'unscheduled'
+      && row.unscheduledQuantity > 0.000001
+    return true
+  })
 }
 
 function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {

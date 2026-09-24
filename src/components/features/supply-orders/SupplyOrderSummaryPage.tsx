@@ -63,6 +63,7 @@ import { SupplyDateOrderExportButton } from './SupplyDateOrderExportButton'
 import { SupplyOrderFactoryToggle } from './SupplyOrderFactoryToggle'
 import {
   filterAndSortAggregates,
+  filterSupplyOrderDateSlices,
   getSupplyOrderItemOrderProgress,
   groupSupplyOrderAggregatesBySupplyDate,
   hasSupplyOrderRedelivery,
@@ -122,6 +123,7 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
     supplier: 'all',
     category: 'all',
     status: 'open',
+    schedule: 'all',
     sort: 'date_asc',
   }), [])
   const [filters, setFilters] = useState<AggregateFiltersState>(defaultFilters)
@@ -131,21 +133,25 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
     return partitionSupplyOrderAggregatesByRedelivery(visibleAggregates)
   }, [visibleAggregates])
   const grouped = useMemo(() => groupSupplyOrderAggregatesBySupplyDate(visibleAggregates, filters.sort)
-    .map((group) => ({ ...group, rows: filters.status === 'unscheduled'
-      ? group.rows.filter((row) => row.kind === 'unscheduled') : group.rows }))
-    .filter((group) => group.rows.length > 0), [filters.sort, filters.status, visibleAggregates])
+    .map((group) => ({ ...group, rows: filterSupplyOrderDateSlices(group.rows, filters.status, filters.schedule) }))
+    .filter((group) => group.rows.length > 0), [filters.sort, filters.status, filters.schedule, visibleAggregates])
   const exportableCountByDate = useMemo(() => new Map(
     groupSupplyOrderAggregatesBySupplyDate(aggregates, 'date_asc').map((group) => [
       group.dateKey, group.rows.filter((slice) => slice.unscheduledQuantity > 0.000001).length,
     ]),
   ), [aggregates])
-  // Count demand groups once, before expanding them into dated shipment cards.
-  const totals = useMemo(() => ({
-    aggregateCount: visibleAggregates.length,
-    itemCount: visibleAggregates.reduce((sum, aggregate) => sum + aggregate.item_count, 0),
-    awaitingCount: visibleAggregates.filter((aggregate) => aggregate.planned_schedule_quantity > 0.000001).length,
-    unscheduledCount: visibleAggregates.filter((aggregate) => aggregate.unscheduled_quantity > 0.000001).length,
-  }), [visibleAggregates])
+  const totals = useMemo(() => {
+    const slices = grouped.flatMap((group) => group.rows)
+    const materials = new Map(slices.map((slice) => [slice.aggregate.id, slice.aggregate]))
+    return {
+      aggregateCount: materials.size,
+      itemCount: Array.from(materials.values()).reduce((sum, aggregate) => sum + aggregate.item_count, 0),
+      awaitingCount: new Set(slices.filter((slice) => slice.plannedQuantity > 0.000001)
+        .map((slice) => slice.aggregate.id)).size,
+      unscheduledCount: new Set(slices.filter((slice) => slice.unscheduledQuantity > 0.000001)
+        .map((slice) => slice.aggregate.id)).size,
+    }
+  }, [grouped])
 
   const toggle = (id: string) => {
     setExpanded((current) => {
@@ -176,13 +182,13 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
       <AggregateFilters
         value={filters}
         suppliers={suppliers}
-        resultCount={visibleAggregates.length}
+        resultCount={totals.aggregateCount}
         totalCount={aggregates.length}
         onChange={setFilters}
         onReset={() => setFilters(defaultFilters)}
       />
 
-      {visibleAggregates.length === 0 ? (
+      {grouped.length === 0 ? (
         <div className="rounded-xl border border-[#E8ECF0] bg-white p-10 text-center text-[#6B7280]">
           {aggregates.length === 0
             ? 'Нет материалов для закупки или истории закрытых поставок по выбранному заводу.'
@@ -193,7 +199,7 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
         </div>
       ) : (
         <>
-          {prioritizedAggregates.redeliveries.length > 0 && (
+          {filters.schedule !== 'scheduled' && prioritizedAggregates.redeliveries.length > 0 && (
             <section className="space-y-3" aria-labelledby="redelivery-heading">
               <div className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex min-w-0 items-center gap-3">
@@ -237,6 +243,7 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
                   dateKey={group.dateKey}
                   factoryId={activeFactoryId}
                   itemCount={exportableCountByDate.get(group.dateKey) || 0}
+                  aggregates={aggregates}
                 />
               </div>
 
@@ -574,7 +581,7 @@ function DeliveryStateTabs({ value, onChange, counts }: {
   return (
     <div className="flex w-full gap-1 overflow-x-auto rounded-xl border border-border bg-card p-1" aria-label="Состояние поставки">
       {tabs.map(([key, label, count]) => (
-        <button key={key} type="button" onClick={() => onChange(key)} aria-pressed={value === key} className={`min-h-10 shrink-0 rounded-lg px-3 text-sm font-medium transition-colors ${value === key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+        <button key={key} type="button" onClick={() => onChange(key)} aria-pressed={value === key} className={`min-h-10 shrink-0 rounded-lg px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${key === 'unscheduled' && count > 0 ? 'bg-red-600 text-white hover:bg-red-700 ring-2 ring-red-700' : value === key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
           {label} <span className="ml-1 tabular-nums opacity-75">{count}</span>
         </button>
       ))}
@@ -598,7 +605,7 @@ function AggregateFilters({ value, suppliers, resultCount, totalCount, onChange,
   onChange: (value: AggregateFiltersState) => void
   onReset: () => void
 }) {
-  const activeCount = [value.query, value.supplier !== 'all', value.category !== 'all', value.status !== 'open', value.sort !== 'date_asc']
+  const activeCount = [value.query, value.supplier !== 'all', value.category !== 'all', value.status !== 'open', value.schedule && value.schedule !== 'all', value.sort !== 'date_asc']
     .filter(Boolean).length
 
   return (
@@ -646,6 +653,14 @@ function AggregateFilters({ value, suppliers, resultCount, totalCount, onChange,
           display={aggregateStatusLabels[value.status]}
           items={Object.entries(aggregateStatusLabels)}
           onValueChange={(status) => onChange({ ...value, status: status as SupplyOrderAggregateStatusFilter })}
+        />
+        <SummaryFilterSelect
+          className="md:col-span-2 xl:col-span-12"
+          label="График поставки"
+          value={value.schedule || 'all'}
+          display={{ all: 'Все', scheduled: 'С графиком', unscheduled: 'Без графика' }[value.schedule || 'all']}
+          items={Object.entries({ all: 'Все', scheduled: 'С графиком', unscheduled: 'Без графика' })}
+          onValueChange={(schedule) => onChange({ ...value, schedule: schedule as AggregateFiltersState['schedule'] })}
         />
         <SummaryFilterSelect
           className="md:col-span-2 xl:col-span-12"

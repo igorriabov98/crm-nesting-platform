@@ -924,7 +924,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
               <div key={row.id} className="flex items-start justify-between gap-3 text-sm">
                 <div>
                   <p className="font-medium text-slate-900">{row.material?.name || 'Материал'}</p>
-                  <p className="text-slate-600">{formatPieceLength(row.piece_length_mm)} · {row.variant?.material_grade || 'вариант материала'}</p>
+                  <p className="text-slate-600">{[row.piece_length_mm ? formatPieceLength(row.piece_length_mm) : null, row.variant?.material_grade].filter(Boolean).join(' · ') || 'Деловой остаток'}</p>
                 </div>
                 <span className="shrink-0 font-mono font-semibold text-slate-900">{formatWeight(businessScrapCalculatedWeight(row))}</span>
               </div>
@@ -1042,14 +1042,9 @@ function businessScrapConversionBlockReason(row: InventoryWithMaterial) {
   if ((row.business_scrap_state || 'available') !== 'available') return 'Остаток ещё не доступен'
   if (businessScrapHasReservation(row)) return 'Нельзя перевести: на остатке есть бронь'
   if (Number(row.total_quantity || 0) <= 0 || Number(row.available_quantity || 0) <= 0) return 'Остаток уже израсходован'
-  if (!row.piece_length_mm || Number(row.piece_length_mm) <= 0) return 'Не указана фактическая длина'
-  if (!row.variant || !row.material_variant_id) return 'Не указан точный вариант материала'
-  if (!row.variant.weight_per_m_kg || Number(row.variant.weight_per_m_kg) <= 0) return 'Не настроен вес погонного метра'
+  if (row.calculated_weight_kg === null || Number(row.calculated_weight_kg) <= 0) return 'Не рассчитан вес позиции'
   const pieceCount = Number(row.total_secondary_quantity ?? 1)
   if (!Number.isInteger(pieceCount) || pieceCount <= 0) return 'Некорректное количество кусков'
-  if (Math.abs(Number(row.total_quantity) - Number(row.piece_length_mm) * pieceCount) > 0.001) {
-    return 'Длина не согласована с количеством кусков'
-  }
   return null
 }
 
@@ -1059,7 +1054,7 @@ function isBusinessScrapConvertible(row: InventoryWithMaterial) {
 
 function businessScrapCalculatedWeight(row: InventoryWithMaterial) {
   if (!isBusinessScrapConvertible(row)) return 0
-  return Number(row.piece_length_mm) * Number(row.total_secondary_quantity ?? 1) * Number(row.variant?.weight_per_m_kg) / 1000
+  return Number(row.calculated_weight_kg)
 }
 
 function NewMaterialForm({
