@@ -235,6 +235,7 @@ assert.deepEqual(
     '20260923152000_completion_sheet_scrap_detailing_dimensions.sql',
     '20260924100000_sales_member_own_client_commercial_access.sql',
     '20260924101000_berehovo_single_workshop.sql',
+    '20260924125000_sales_member_trimmed_department_name.sql',
 
   ],
   'После cutover разрешены только проверенные follow-up миграции',
