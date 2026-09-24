@@ -762,7 +762,7 @@ grant execute on function public.fn_correct_technologist_completion(uuid,integer
 -- The existing rollback preview checks reserved and deleted future inventory.
 -- Also block a sheet remnant that was partially consumed without a live reserve.
 alter function public.fn_get_production_cutting_rollback_preview(uuid)
-  rename to fn_get_production_cutting_rollback_preview_before_sheet_scrap_v1;
+  rename to fn_cutting_rollback_preview_pre_sheet_v1;
 create function public.fn_get_production_cutting_rollback_preview(p_machine_id uuid)
 returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$
 declare
@@ -770,7 +770,7 @@ declare
   v_changed integer;
   v_blockers jsonb;
 begin
-  v_preview := public.fn_get_production_cutting_rollback_preview_before_sheet_scrap_v1(p_machine_id);
+  v_preview := public.fn_cutting_rollback_preview_pre_sheet_v1(p_machine_id);
   select count(*) into v_changed
   from public.technologist_sheet_scrap_plans plan
   join public.production_fact_cutting_events event on event.id=plan.promoted_event_id

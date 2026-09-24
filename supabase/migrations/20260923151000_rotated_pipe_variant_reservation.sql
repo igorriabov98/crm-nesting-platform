@@ -46,7 +46,7 @@ begin
       ('public.fn_long_stock_cutting_scrap_link_guard()'::text,
        'v_inventory.material_variant_id is distinct from v_plan_variant_id'::text,
        'not public.fn_rotated_pipe_variants_equal_v1(v_inventory.material_variant_id, v_plan_variant_id)'::text),
-      ('public.fn_approve_long_stock_cutting_plan_before_source_selection_v1(uuid,uuid)',
+      ('public.fn_approve_long_stock_cutting_plan_before_recalculation(uuid,uuid)',
        'v_source.material_variant_id is distinct from v_plan.material_variant_id',
        'not public.fn_rotated_pipe_variants_equal_v1(v_source.material_variant_id, v_plan.material_variant_id)'),
       ('public.fn_reserve_long_stock_selected_sources_v1(uuid,uuid)',
