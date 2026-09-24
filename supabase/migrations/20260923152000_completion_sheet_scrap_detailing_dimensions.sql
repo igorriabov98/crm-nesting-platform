@@ -18,6 +18,22 @@ alter table public.technologist_request_waste_items
     and waste_basis_kg >= 0 and business_scrap_weight_kg >= 0
   );
 
+-- Historical callers that do not plan sheet remnants still write the old
+-- four-weight payload. Their waste basis is the entire source weight.
+create function public.fn_default_technologist_waste_basis_v1()
+returns trigger language plpgsql set search_path = public, pg_temp as $$
+begin
+  if new.waste_basis_kg is null then
+    new.waste_basis_kg := new.weight_snapshot_kg;
+  end if;
+  return new;
+end;
+$$;
+revoke all on function public.fn_default_technologist_waste_basis_v1() from public,anon,authenticated;
+create trigger technologist_waste_basis_default
+before insert on public.technologist_request_waste_items
+for each row execute function public.fn_default_technologist_waste_basis_v1();
+
 create table public.technologist_sheet_scrap_plans (
   id uuid primary key default gen_random_uuid(),
   completion_id uuid not null references public.technologist_request_completions(id) on delete restrict,
@@ -785,7 +801,7 @@ begin
   return jsonb_set(jsonb_set(v_preview,'{blockers}',v_blockers),'{canRollback}','false'::jsonb);
 end;
 $$;
-revoke all on function public.fn_get_production_cutting_rollback_preview(uuid) from public,anon;
-grant execute on function public.fn_get_production_cutting_rollback_preview(uuid) to authenticated,service_role;
+revoke all on function public.fn_get_production_cutting_rollback_preview(uuid) from public,anon,authenticated;
+grant execute on function public.fn_get_production_cutting_rollback_preview(uuid) to service_role;
 
 notify pgrst, 'reload schema';
