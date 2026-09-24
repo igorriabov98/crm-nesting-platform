@@ -103,7 +103,7 @@ begin
     raise exception 'Mismatching sheet reservation unexpectedly succeeded';
   exception when check_violation then
     get stacked diagnostics v_error = message_text;
-    if v_error <> 'Выбранный складской остаток не совпадает с типом стали, размером или толщиной листа' then
+    if v_error <> 'Выбранный листовой остаток не совпадает с типом стали и толщиной позиции заявки' then
       raise;
     end if;
   end;
