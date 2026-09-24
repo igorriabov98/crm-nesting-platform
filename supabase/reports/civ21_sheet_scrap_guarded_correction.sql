@@ -4,14 +4,23 @@
 BEGIN;
 DO $correction$
 DECLARE
-  v_inventory_id constant uuid := '92f01d19-65a3-4067-915d-415c94e9e793';
+  v_inventory_id constant uuid := 'f77e8ad8-7428-47cc-bab3-d3b137ee79e9';
   v_plan_id uuid;
   v_event_id uuid;
 BEGIN
   SELECT plan.id, plan.promoted_event_id INTO v_plan_id, v_event_id
   FROM public.technologist_sheet_scrap_plans plan
   JOIN public.inventory inventory ON inventory.id=plan.inventory_id
+  JOIN public.technologist_request_completions completion ON completion.id=plan.completion_id
+  JOIN public.machines machine ON machine.id=completion.machine_id
+  JOIN public.production_fact_cutting_events promoted_event ON promoted_event.id=plan.promoted_event_id
   WHERE inventory.id=v_inventory_id
+    AND plan.id='1cee04c1-652f-45a7-9999-83c0ceeff8a1'::uuid
+    AND plan.source_item_id='66cfe130-0472-4c45-8dec-16a0c51b58e1'::uuid
+    AND plan.promoted_event_id='341ffbf0-7914-4edc-9daa-453f431abf5a'::uuid
+    AND machine.name='CIV-21-2026'
+    AND promoted_event.created_at < plan.created_at
+    AND promoted_event.status IN ('applied','kept')
     AND inventory.deleted_at IS NULL
     AND inventory.is_business_scrap
     AND inventory.business_scrap_state='available'
@@ -30,6 +39,10 @@ BEGIN
     )
     AND NOT EXISTS (
       SELECT 1 FROM public.metal_scrap_lots lot WHERE lot.source_inventory_id=inventory.id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM public.production_fact_cutting_event_scrap_promotions promotion
+      WHERE promotion.inventory_id=inventory.id AND promotion.event_id<>promoted_event.id
     )
     AND NOT EXISTS (
       SELECT 1 FROM public.production_fact_cutting_events event

@@ -1,6 +1,7 @@
 -- Read-only production review after migration 20260924140000 for the sheet
 -- remnant reported on CIV-21-2026.
 -- Run before considering the separate guarded correction script.
+-- The warehouse History link contains material_id, not this inventory row's id.
 SELECT
   inventory.id AS inventory_id,
   inventory.business_scrap_state,
@@ -12,6 +13,7 @@ SELECT
   plan.source_item_id,
   plan.quantity AS planned_quantity,
   plan.created_at AS plan_created_at,
+  machine.name AS machine_name,
   plan.promoted_event_id,
   event.created_at AS event_created_at,
   event.fact_date,
@@ -34,13 +36,15 @@ SELECT
    WHERE lot.source_inventory_id=inventory.id) AS metal_scrap_lots
 FROM public.inventory inventory
 LEFT JOIN public.technologist_sheet_scrap_plans plan ON plan.inventory_id=inventory.id
+LEFT JOIN public.technologist_request_completions completion ON completion.id=plan.completion_id
+LEFT JOIN public.machines machine ON machine.id=completion.machine_id
 LEFT JOIN public.production_fact_cutting_events event ON event.id=plan.promoted_event_id
-WHERE inventory.id='92f01d19-65a3-4067-915d-415c94e9e793'::uuid;
+WHERE inventory.id='f77e8ad8-7428-47cc-bab3-d3b137ee79e9'::uuid;
 
 -- Other available sheet plans lacking a consumed source are review cases,
 -- not automatic corrections. Their reservations and transactions may differ.
 SELECT inventory.id AS inventory_id, plan.id AS plan_id,
-  plan.source_item_id, plan.promoted_event_id,
+  machine.name AS machine_name, plan.source_item_id, plan.promoted_event_id,
   plan.created_at AS plan_created_at, event.created_at AS event_created_at,
   inventory.total_quantity, inventory.reserved_quantity, inventory.deleted_at,
   CASE WHEN event.id IS NULL THEN 'no linked fact'
@@ -58,6 +62,8 @@ SELECT inventory.id AS inventory_id, plan.id AS plan_id,
   END AS review_reason
 FROM public.technologist_sheet_scrap_plans plan
 JOIN public.inventory inventory ON inventory.id=plan.inventory_id
+JOIN public.technologist_request_completions completion ON completion.id=plan.completion_id
+JOIN public.machines machine ON machine.id=completion.machine_id
 LEFT JOIN public.production_fact_cutting_events event ON event.id=plan.promoted_event_id
 WHERE inventory.business_scrap_state='available'
   AND inventory.deleted_at IS NULL
