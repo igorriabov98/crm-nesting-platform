@@ -149,6 +149,18 @@ jobs:
           retention-days: 30
       - name: Apply Supabase migrations through ledger
         run: npm run supabase:migrate
+      - name: Read-only CIV-21-2026 business remnant reconciliation
+        run: |
+          psql "$SUPABASE_DB_URL" -X -v ON_ERROR_STOP=1 \
+            -f supabase/reports/civ21_sheet_scrap_reconciliation.sql \
+            | tee civ21-sheet-scrap-reconciliation.txt
+      - name: Upload CIV-21-2026 business remnant report
+        uses: actions/upload-artifact@v4
+        with:
+          name: civ21-sheet-scrap-reconciliation-${{ github.sha }}
+          path: civ21-sheet-scrap-reconciliation.txt
+          if-no-files-found: error
+          retention-days: 30
       - name: Read-only meetings v2 shadow readiness report
         run: |
           psql "$SUPABASE_DB_URL" -X -v ON_ERROR_STOP=1 -At \
