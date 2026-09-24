@@ -21,6 +21,8 @@ import { requirePermission } from '@/lib/permissions/server'
 import { assertFactoryAccess, canAccessFactory, type FactoryScopedPermissionContext } from '@/lib/permissions/factory-scope'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
+import { sameRotatedPipeVariant } from '@/lib/materials/pipe-variant-identity'
+import { sheetBusinessScrapMatchesRequest, sheetMetalVariantMatchesRequest } from '@/lib/supply-request-sheet-metal'
 import { type PermissionOperation } from '@/lib/permissions/resources'
 import {
   assertManualSupplyRequestReservationAllowed,
@@ -344,15 +346,6 @@ async function assertInventoryReservationAccess(
   const machine = machineResult.data as { factory_id: string | null }
   const requestItem = requestItemResult.data as Record<string, unknown> & { request_id: string }
   assertManualSupplyRequestReservationAllowed(input.requestItemTable, requestItem)
-  if (requestItem.material_id !== input.materialId) {
-    throw new Error('Материал резервирования не соответствует позиции заявки')
-  }
-  if (
-    requestItem.material_variant_id
-    && requestItem.material_variant_id !== (input.materialVariantId ?? null)
-  ) {
-    throw new Error('Характеристика резервирования не соответствует позиции заявки')
-  }
   assertFactoryAccess(permission, 'inventory', 'manage', machine.factory_id)
 
   if (input.inventoryId) {
@@ -374,7 +367,50 @@ async function assertInventoryReservationAccess(
       deleted_at: string | null
     }
     if (inventory.deleted_at) throw new Error('Складской остаток удалён')
-    if (inventory.business_scrap_state === 'future') throw new Error('Будущий деловой остаток ещё недоступен')
+    if (inventory.is_business_scrap && (inventory.business_scrap_state || 'available') !== 'available') {
+      throw new Error('Этот деловой остаток недоступен для бронирования')
+    }
+    let sheetBusinessScrap = false
+    if (input.requestItemTable === 'request_sheet_metal' && inventory.is_business_scrap && inventory.material_variant_id) {
+      const [requestResult, variantResult] = await Promise.all([
+        db.from('technologist_requests').select('status').eq('id', requestItem.request_id).maybeSingle(),
+        db.from('material_variants').select('category, steel_type_id, thickness_mm, material_id').eq('id', inventory.material_variant_id).maybeSingle(),
+      ])
+      if (requestResult.error || variantResult.error) throw new Error('Не удалось проверить листовой деловой остаток')
+      const status = (requestResult.data as { status?: string } | null)?.status
+      const variant = variantResult.data as MaterialVariant | null
+      sheetBusinessScrap = status === 'pending_stock_check'
+        && Boolean(variant)
+        && variant?.material_id === inventory.material_id
+        && sheetBusinessScrapMatchesRequest(requestItem as { steel_type_id?: unknown; thickness_mm?: unknown }, variant as MaterialVariant)
+    }
+    if (!sheetBusinessScrap && requestItem.material_id !== input.materialId) {
+      throw new Error('Материал резервирования не соответствует позиции заявки')
+    }
+    if (!sheetBusinessScrap && requestItem.material_variant_id
+      && requestItem.material_variant_id !== (input.materialVariantId ?? null)) {
+      let equivalentVariant = false
+      if (inventory.material_variant_id && input.requestItemTable === 'request_sheet_metal') {
+        const { data, error } = await db.from('material_variants').select('category, material_id, steel_type_id, sheet_size, thickness_mm')
+          .eq('id', inventory.material_variant_id).maybeSingle()
+        if (error) throw new Error('Не удалось проверить характеристику листа')
+        const variant = data as MaterialVariant | null
+        equivalentVariant = Boolean(variant && variant.category === 'sheet_metal'
+          && variant.material_id === requestItem.material_id
+          && sheetMetalVariantMatchesRequest(requestItem as { steel_type_id?: unknown; sheet_size?: unknown; thickness_mm?: unknown }, variant))
+      } else if (inventory.material_variant_id && input.requestItemTable === 'request_pipe') {
+        const { data, error } = await db.from('material_variants')
+          .select('id, material_id, category, pipe_type, steel_type_id, material_grade, wall_thickness_mm, piece_description, diameter_mm')
+          .in('id', [String(requestItem.material_variant_id), inventory.material_variant_id])
+        if (error) throw new Error('Не удалось проверить сечение трубы')
+        const variants = data as MaterialVariant[] | null
+        const requestVariant = variants?.find((item) => item.id === requestItem.material_variant_id)
+        const inventoryVariant = variants?.find((item) => item.id === inventory.material_variant_id)
+        equivalentVariant = Boolean(requestVariant && inventoryVariant
+          && sameRotatedPipeVariant(requestVariant, inventoryVariant))
+      }
+      if (!equivalentVariant) throw new Error('Характеристика резервирования не соответствует позиции заявки')
+    }
     if (inventory.material_id !== input.materialId) {
       throw new Error('Материал складской строки не соответствует позиции заявки')
     }

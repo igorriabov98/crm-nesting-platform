@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { ReserveButton } from './ReserveButton'
 import { UnreserveButton } from './UnreserveButton'
+import { SheetBusinessScrapMatches } from './SheetBusinessScrapMatches'
 import { EmptyRows, OrderStatusCell, formatAmount, stockText, stickyCellClass, tableClass, tdClass, thClass } from './SupplyRequestTableShared'
 import type { SupplyRequestRow } from '@/lib/actions/supply-request'
 import type { RequestSheetMetal } from '@/lib/types'
@@ -10,15 +11,16 @@ type Props = {
   machineId: string
   canReserve?: boolean
   canUnreserve?: boolean
+  businessScrapMode?: boolean
 }
 
-export function SupplySheetMetalTable({ rows, machineId, canReserve = false, canUnreserve = false }: Props) {
+export function SupplySheetMetalTable({ rows, machineId, canReserve = false, canUnreserve = false, businessScrapMode = false }: Props) {
   return (
     <Section title="Листовой металл">
       <table className={tableClass}>
         <thead className="border-b border-[#E8ECF0] bg-[#F8F9FA]">
           <tr>
-            {['Материал', 'Тип стали', 'Размер листа', 'Толщина, мм', 'Необходимо, шт', 'Вес, кг', 'На складе', 'Забронировано', 'Статус', 'Действия'].map((header, index) => (
+            {['Материал', 'Тип стали', 'Размер листа', 'Толщина, мм', 'Необходимо, шт', 'Вес, кг', businessScrapMode ? 'Остатки, все заводы' : 'На складе', businessScrapMode ? 'Бронь остатка' : 'Забронировано', 'Статус', 'Действия'].map((header, index) => (
               <th key={header} className={`${thClass} ${index === 0 ? stickyCellClass : ''}`}>{header}</th>
             ))}
           </tr>
@@ -39,11 +41,15 @@ export function SupplySheetMetalTable({ rows, machineId, canReserve = false, can
                 <td className={`${tdClass} ${Number(row.available_stock || 0) <= 0 ? 'text-red-700' : ''}`}>
                   {stockText(row.available_stock, unit)}
                 </td>
-                <td className={tdClass}>{formatAmount(reserved)} {unit}</td>
-                <td className={tdClass}><OrderStatusCell table="request_sheet_metal" status={row.order_status} needed={needed} reserved={reserved} covered={row.covered_quantity} /></td>
+                <td className={tdClass}>{formatAmount(reserved)} {unit}{businessScrapMode && <div className="text-xs text-slate-500">Покрытие листов: {formatAmount(row.covered_quantity)} шт</div>}</td>
+                <td className={tdClass}><OrderStatusCell table="request_sheet_metal" status={row.order_status} needed={needed} reserved={businessScrapMode ? 0 : reserved} covered={row.covered_quantity} /></td>
                 <td className={tdClass}>
                   {(canReserve || (canUnreserve && row.reservation_id)) ? <div className="flex items-center gap-2">
-                    {canReserve && <ReserveButton table="request_sheet_metal" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} covered={row.covered_quantity} available={row.available_stock} unit={unit} stockItems={row.stock_items} />}
+                    {canReserve && (businessScrapMode
+                      ? <SheetBusinessScrapMatches itemId={row.id} requestMaterialId={row.material_id} machineId={machineId}
+                          steelTypeName={row.steel_type_name || row.material_grade || 'Тип стали'} thicknessMm={row.thickness_mm}
+                          items={row.stock_items} />
+                      : <ReserveButton table="request_sheet_metal" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} covered={row.covered_quantity} available={row.available_stock} unit={unit} stockItems={row.stock_items} />)}
                     {canUnreserve && row.reservation_id && <UnreserveButton table="request_sheet_metal" itemId={row.id} />}
                   </div> : <span className="text-xs text-slate-400">Только просмотр</span>}
                 </td>

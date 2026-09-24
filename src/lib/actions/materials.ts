@@ -5,6 +5,8 @@ import { ACTIVE_MATERIAL_CATEGORIES, CHAIN_CORD_SUBTYPE_LABELS, MATERIAL_CATEGOR
 import { ROUTES } from '@/lib/constants/routes'
 import { requireKnifeBevelCount } from '@/lib/materials/knife-bevel'
 import { requireCanonicalPipeProfile, roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
+import { reversedRectangularDimensionSearch, sameRectangularDimensions } from '@/lib/materials/rotatable-dimensions'
+import { sameRotatedPipeVariant } from '@/lib/materials/pipe-variant-identity'
 import { requirePermission, requireReadPermissionDataClient } from '@/lib/permissions/server'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import type { Material, MaterialCategory, MaterialVariant, Supplier } from '@/lib/types'
@@ -83,10 +85,13 @@ function escapeIlike(value: string) {
 
 function searchTextVariants(value: string) {
   const variants = new Set([value])
-  if (value.includes('x')) {
-    variants.add(value.replace(/x/g, '\u0445'))
-    variants.add(value.replace(/x/g, '\u00d7'))
-    variants.add(value.replace(/x/g, '*'))
+  const reversed = reversedRectangularDimensionSearch(value)
+  if (reversed) variants.add(reversed)
+  for (const item of [...variants]) {
+    if (!item.includes('x')) continue
+    variants.add(item.replace(/x/g, '\u0445'))
+    variants.add(item.replace(/x/g, '\u00d7'))
+    variants.add(item.replace(/x/g, '*'))
   }
   return Array.from(variants)
 }
@@ -241,10 +246,13 @@ function isSameVariant(row: MaterialVariant, input: ReturnType<typeof usageToVar
     const inputSteel = input.material_grade || input.knife_material
     return sameText(rowSteel, inputSteel)
   }
-  if (input.category === 'sheet_metal') return same(row.steel_type_id, input.steel_type_id) && sameText(row.material_grade, input.material_grade) && same(row.thickness_mm, input.thickness_mm) && sameText(row.sheet_size, input.sheet_size)
+  if (input.category === 'sheet_metal') return same(row.steel_type_id, input.steel_type_id) && sameText(row.material_grade, input.material_grade) && same(row.thickness_mm, input.thickness_mm) && sameRectangularDimensions(row.sheet_size, input.sheet_size)
   if (input.category === 'round_tube') return same(row.length_m, input.length_m) && sameText(row.piece_description, input.piece_description)
   if (input.category === 'circle') return same(row.diameter_mm, input.diameter_mm) && same(row.steel_type_id, input.steel_type_id) && sameText(row.material_grade, input.material_grade) && same(row.is_calibrated, input.is_calibrated)
   if (input.category === 'pipe') {
+    if (input.pipe_type === 'square' || input.pipe_type === 'rectangular') {
+      return sameRotatedPipeVariant(row, input)
+    }
     const sameSubtype = sameText(row.pipe_type, input.pipe_type)
     const sameGeometry = input.pipe_type === 'round'
       ? sameSubtype

@@ -12,7 +12,8 @@ import { hasPermission, type PermissionMap, type PermissionOperation } from '@/l
 import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
-import { sheetMetalVariantMatchesRequest } from '@/lib/supply-request-sheet-metal'
+import { sameRectangularDimensions } from '@/lib/materials/rotatable-dimensions'
+import { sheetBusinessScrapMatchesRequest, sheetMetalVariantMatchesRequest } from '@/lib/supply-request-sheet-metal'
 import { summarizeDisplayedStockCoverage } from '@/lib/supply-request-stock-coverage'
 import { evaluateReservationCapability } from '@/lib/supply-request-access'
 import {
@@ -45,6 +46,8 @@ type LooseQuery = PromiseLike<DbResult> & {
   eq: (column: string, value: unknown) => LooseQuery
   is: (column: string, value: unknown) => LooseQuery
   in: (column: string, values: unknown[]) => LooseQuery
+  gt: (column: string, value: number) => LooseQuery
+  range: (from: number, to: number) => LooseQuery
   order: (column: string, options?: { ascending?: boolean }) => LooseQuery
   limit: (count: number) => LooseQuery
   maybeSingle: () => Promise<DbResult>
@@ -105,6 +108,7 @@ export type SupplyStockItem = {
   is_business_scrap: boolean
   is_legacy_bar_stock: boolean
   label: string | null
+  material_name: string | null
   total_quantity: number
   available_quantity: number
   unit: string
@@ -176,6 +180,7 @@ type InventoryRow = {
   business_scrap_state?: 'available' | 'future' | null
   deleted_at?: string | null
   variant?: MaterialVariant | null
+  material_name?: string | null
   factory_name?: string
   is_local_factory?: boolean
 }
@@ -284,6 +289,7 @@ function getNeededForRow(table: RequestItemTable, row: Record<string, unknown>) 
 }
 
 function getReservedForRow(table: RequestItemTable, row: Record<string, unknown>) {
+  if (table === 'request_sheet_metal') return asNumber(row.reserved_from_stock_kg)
   if (row.reserved_quantity !== undefined && row.reserved_quantity !== null) return asNumber(row.reserved_quantity)
   if (table === 'request_pipe' && row.pipe_type === 'wire') return asNumber(row.reserved_from_stock_kg)
   if (table === 'request_chain_cord') return asNumber(row[getTableRequestField(table)]) * 1000
@@ -384,7 +390,9 @@ function variantMatchesRequest(table: RequestItemTable, row: Record<string, unkn
       && exactTextMatches(row.steel_type_id, variant.steel_type_id)
     if (row.pipe_type === 'round') return sameBaseProfile && pipeDiameterMatches(row, variant)
     return sameBaseProfile
-      && exactTextMatches(row.size, variant.piece_description)
+      && (row.pipe_type === 'square' || row.pipe_type === 'rectangular'
+        ? sameRectangularDimensions(row.size, variant.piece_description)
+        : exactTextMatches(row.size, variant.piece_description))
       && pipeDiameterMatches(row, variant)
   }
   if (table === 'request_knives') {
@@ -469,7 +477,10 @@ function getReservationSourceError(source: ReservationStockSource) {
 function describeStockItem(table: RequestItemTable, variant?: MaterialVariant | null) {
   if (!variant) return null
   const parts: string[] = []
-  if (table === 'request_pipe') {
+  if (table === 'request_sheet_metal') {
+    if (variant.sheet_size) parts.push(String(variant.sheet_size))
+    if (variant.thickness_mm) parts.push(`${variant.thickness_mm} мм`)
+  } else if (table === 'request_pipe') {
     if (variant.pipe_type) parts.push(String(variant.pipe_type))
     if (variant.piece_description) parts.push(String(variant.piece_description))
     if (variant.wall_thickness_mm) parts.push(`стенка ${variant.wall_thickness_mm} мм`)
@@ -501,7 +512,12 @@ function findStockItems(
   rowRecord: Record<string, unknown>,
   inventoryGroupMap: Map<string, InventoryRow[]>,
   materialInventoryMap: Map<string, InventoryRow[]>,
+  sheetScrapRows: InventoryRow[],
+  reservationSource: ReservationStockSource,
 ) {
+  if (table === 'request_sheet_metal' && reservationSource === 'business_scrap') {
+    return sheetScrapRows.filter((item) => item.variant && sheetBusinessScrapMatchesRequest(rowRecord, item.variant))
+  }
   if (!row.material_id) return []
 
   const exactItems = row.material_variant_id
@@ -541,6 +557,56 @@ async function loadRows<T>(db: LooseDb, table: RequestItemTable, requestId: stri
   const { data, error } = await query.order('sort_order', { ascending: true })
   if (error) throw new Error(error.message || 'ÐÐµ ÑƒÐ´Ð°Ð»Ð¾ÑÑŒ Ð·Ð°Ð³Ñ€ÑƒÐ·Ð¸Ñ‚ÑŒ Ð¿Ð¾Ð·Ð¸Ñ†Ð¸Ð¸ Ð·Ð°ÑÐ²ÐºÐ¸')
   return (data || []) as T[]
+}
+
+async function loadSheetBusinessScrapRows(db: LooseDb, requests: RequestSheetMetal[]): Promise<InventoryRow[]> {
+  const steelTypeIds = [...new Set(requests.map((row) => row.steel_type_id).filter((id): id is string => Boolean(id)))]
+  const thicknesses = [...new Set(requests.map((row) => Number(row.thickness_mm)).filter((value) => Number.isFinite(value) && value > 0))]
+  if (!steelTypeIds.length || !thicknesses.length) return []
+
+  const variants: MaterialVariant[] = []
+  for (let offset = 0; ; offset += 500) {
+    const { data, error } = await db.from('material_variants').select('*')
+      .eq('category', 'sheet_metal').in('steel_type_id', steelTypeIds).in('thickness_mm', thicknesses)
+      .order('id').range(offset, offset + 499)
+    if (error) throw new Error(error.message || 'Не удалось загрузить характеристики листовых остатков')
+    const page = (data || []) as MaterialVariant[]
+    variants.push(...page)
+    if (page.length < 500) break
+  }
+  const matchingVariants = variants.filter((variant) => requests.some((row) => sheetBusinessScrapMatchesRequest(row, variant)))
+  if (!matchingVariants.length) return []
+  const variantsById = new Map(matchingVariants.map((variant) => [variant.id, variant]))
+
+  const rows: InventoryRow[] = []
+  const ids = [...variantsById.keys()]
+  for (let start = 0; start < ids.length; start += 100) {
+    for (let offset = 0; ; offset += 500) {
+      const { data, error } = await db.from('inventory')
+        .select('id, factory_id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at')
+        .in('material_variant_id', ids.slice(start, start + 100))
+        .eq('is_business_scrap', true).eq('unit', 'шт')
+        .is('deleted_at', null).gt('available_quantity', 0)
+        .order('id').range(offset, offset + 499)
+      if (error) throw new Error(error.message || 'Не удалось загрузить листовой деловой остаток')
+      const page = (data || []) as InventoryRow[]
+      rows.push(...page.filter((row) => (row.business_scrap_state || 'available') === 'available'
+        && Math.floor(Number(row.available_quantity || 0)) > 0))
+      if (page.length < 500) break
+    }
+  }
+  const materialIds = [...new Set(rows.map((row) => row.material_id))]
+  const materialNames = new Map<string, string>()
+  for (let start = 0; start < materialIds.length; start += 100) {
+    const { data, error } = await db.from('materials').select('id, name').in('id', materialIds.slice(start, start + 100))
+    if (error) throw new Error(error.message || 'Не удалось загрузить названия листовых материалов')
+    for (const item of (data || []) as Array<{ id: string; name: string }>) materialNames.set(item.id, item.name)
+  }
+  for (const row of rows) {
+    row.variant = row.material_variant_id ? variantsById.get(row.material_variant_id) || null : null
+    row.material_name = materialNames.get(row.material_id) || null
+  }
+  return rows
 }
 
 async function getRequestMeta(db: LooseDb, requestId: string) {
@@ -680,10 +746,11 @@ function withStock<T extends { id: string; material_id: string | null; material_
   steelTypeMap: Map<string, string>,
   reservationSource: ReservationStockSource,
   layoutCoverageMap: Map<string, LayoutCoverage>,
+  sheetScrapRows: InventoryRow[] = [],
 ) {
   return rows.map((row) => {
     const rowRecord = row as Record<string, unknown>
-    const stockItems = findStockItems(table, row, rowRecord, inventoryGroupMap, materialInventoryMap)
+    const stockItems = findStockItems(table, row, rowRecord, inventoryGroupMap, materialInventoryMap, sheetScrapRows, reservationSource)
       .filter((item) => inventoryMatchesReservationSource(item, reservationSource))
     const exactVariantRequired = requiresExactVariant(table)
     const inventory = row.material_id
@@ -719,6 +786,7 @@ function withStock<T extends { id: string; material_id: string | null; material_
         is_business_scrap: Boolean(item.is_business_scrap),
         is_legacy_bar_stock: isWholeBarRequest(table, rowRecord) && !Number(item.piece_length_mm || 0),
         label: describeStockItem(table, item.variant),
+        material_name: item.material_name || null,
         total_quantity: item.total_quantity,
         available_quantity: getReservableQuantity(table, rowRecord, item),
         unit: item.unit,
@@ -829,7 +897,10 @@ async function loadRequestForStockSource(
       ...knives.map((row) => row.steel_type_id).filter(Boolean),
     ])) as string[]
 
-    const [inventoryRes, reservationsRes, steelTypesRes, factoriesRes, layoutCoverageRes] = await Promise.all([
+    const reservationSource = stockSourceOverride || getReservationStockSource(request)
+    if (!reservationSource) throw new Error('Заявка не находится на складском этапе')
+
+    const [inventoryRes, reservationsRes, steelTypesRes, factoriesRes, layoutCoverageRes, sheetScrapRows] = await Promise.all([
       materialIds.length && request.machine.factory_id
         ? db.from('inventory').select('id, factory_id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at').in('material_id', materialIds)
         : Promise.resolve({ data: [], error: null } as DbResult),
@@ -841,6 +912,7 @@ async function loadRequestForStockSource(
         : Promise.resolve({ data: [], error: null } as DbResult),
       db.from('factories').select('id, name').order('name', { ascending: true }),
       db.rpc('crm_supply_request_layout_coverage', { p_request_id: requestId }),
+      reservationSource === 'business_scrap' ? loadSheetBusinessScrapRows(db, sheetMetal) : Promise.resolve([] as InventoryRow[]),
     ])
     if (inventoryRes.error) throw new Error(inventoryRes.error.message || 'ÐÐµ ÑƒÐ´Ð°Ð»Ð¾ÑÑŒ Ð·Ð°Ð³Ñ€ÑƒÐ·Ð¸Ñ‚ÑŒ Ð¾ÑÑ‚Ð°Ñ‚ÐºÐ¸')
     if (reservationsRes.error) throw new Error(reservationsRes.error.message || 'ÐÐµ ÑƒÐ´Ð°Ð»Ð¾ÑÑŒ Ð·Ð°Ð³Ñ€ÑƒÐ·Ð¸Ñ‚ÑŒ Ð±Ñ€Ð¾Ð½Ð¸Ñ€Ð¾Ð²Ð°Ð½Ð¸Ñ')
@@ -856,25 +928,26 @@ async function loadRequestForStockSource(
       ]),
     )
 
-    const allInventoryRows = (inventoryRes.data || []) as InventoryRow[]
+    const allInventoryRows = [...new Map([
+      ...((inventoryRes.data || []) as InventoryRow[]),
+      ...sheetScrapRows,
+    ].map((row) => [row.id, row])).values()]
     const inventoryRows = allInventoryRows.filter((row) => !row.deleted_at && (row.business_scrap_state || 'available') !== 'future')
     for (const row of inventoryRows) {
       row.factory_name = factoryMap.get(row.factory_id) || 'Неизвестный завод'
       row.is_local_factory = row.factory_id === request.machine.factory_id
     }
     const inventoryVariantIds = Array.from(new Set(inventoryRows.map((row) => row.material_variant_id).filter(Boolean))) as string[]
-    const variantMap = new Map<string, MaterialVariant>()
-    if (inventoryVariantIds.length) {
+    const variantMap = new Map<string, MaterialVariant>(sheetScrapRows.flatMap((row) =>
+      row.material_variant_id && row.variant ? [[row.material_variant_id, row.variant] as const] : []))
+    const missingVariantIds = inventoryVariantIds.filter((id) => !variantMap.has(id))
+    for (let start = 0; start < missingVariantIds.length; start += 100) {
       const { data: variantsData, error: variantsError } = await db
-        .from('material_variants')
-        .select('*')
-        .in('id', inventoryVariantIds)
+        .from('material_variants').select('*').in('id', missingVariantIds.slice(start, start + 100))
       if (variantsError) throw new Error(variantsError.message || 'Не удалось загрузить характеристики складских остатков')
       for (const variant of (variantsData || []) as MaterialVariant[]) variantMap.set(variant.id, variant)
-      for (const row of inventoryRows) row.variant = row.material_variant_id ? variantMap.get(row.material_variant_id) || null : null
     }
-    const reservationSource = stockSourceOverride || getReservationStockSource(request)
-    if (!reservationSource) throw new Error('Заявка не находится на складском этапе')
+    for (const row of inventoryRows) row.variant = row.material_variant_id ? variantMap.get(row.material_variant_id) || null : null
     const visibleInventoryRows = inventoryRows
       .filter((row) => inventoryMatchesReservationSource(row, reservationSource))
       .sort((a, b) => Number(Boolean(b.is_local_factory)) - Number(Boolean(a.is_local_factory)))
@@ -906,7 +979,7 @@ async function loadRequestForStockSource(
     )
     const reservationMap = buildReservationMap(scopedReservations)
     const sections = {
-      sheetMetal: withStock('request_sheet_metal', sheetMetal, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource, layoutCoverageMap),
+      sheetMetal: withStock('request_sheet_metal', sheetMetal, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource, layoutCoverageMap, sheetScrapRows),
       // @deprecated — round_tube excluded from new UI
       roundTube: withStock('request_round_tube', roundTube, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource, layoutCoverageMap),
       circles: withStock('request_circle', circles.filter((row) => row.order_status !== 'cancelled'), inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource, layoutCoverageMap),
@@ -1084,13 +1157,13 @@ export async function reserveItemFromStock(data: {
     if (selectedInventory.factory_id !== data.factory_id) throw new Error('Завод складского остатка не совпадает с выбранным заводом')
     if (!request.machine.factory_id) throw new Error('Для машины не определён завод назначения')
     const requiresInventoryTransfer = selectedInventory.factory_id !== request.machine.factory_id
-    if ((selectedInventory.business_scrap_state || 'available') === 'future') throw new Error('Будущий деловой отход нельзя бронировать в этой заявке')
+    if (selectedInventory.is_business_scrap && (selectedInventory.business_scrap_state || 'available') !== 'available') {
+      throw new Error('Этот деловой остаток недоступен для бронирования')
+    }
     if (!inventoryMatchesReservationSource(selectedInventory, reservationSource)) {
       throw new Error(getReservationSourceError(reservationSource))
     }
-    if (selectedInventory.material_id !== data.material_id || selectedInventory.material_id !== row.material_id) {
-      throw new Error('Выбранный складской остаток не относится к материалу позиции заявки')
-    }
+    if (data.material_id !== row.material_id) throw new Error('Материал позиции заявки изменился')
     if ((data.material_variant_id ?? null) !== (selectedInventory.material_variant_id ?? null)) {
       throw new Error('Выбранная характеристика не соответствует складской строке')
     }
@@ -1099,6 +1172,12 @@ export async function reserveItemFromStock(data: {
     }
 
     const selectedVariantId = selectedInventory.material_variant_id ?? null
+    const isSheetBusinessScrap = data.request_item_table === 'request_sheet_metal'
+      && reservationSource === 'business_scrap'
+      && Boolean(selectedInventory.is_business_scrap)
+    if (!isSheetBusinessScrap && selectedInventory.material_id !== row.material_id) {
+      throw new Error('Выбранный складской остаток не относится к материалу позиции заявки')
+    }
     if (selectedVariantId) {
       const { data: selectedVariantData, error: selectedVariantError } = await db
         .from('material_variants')
@@ -1107,7 +1186,15 @@ export async function reserveItemFromStock(data: {
         .maybeSingle()
       if (selectedVariantError) throw new Error(selectedVariantError.message || 'Не удалось проверить характеристику складского остатка')
       if (!selectedVariantData) throw new Error('Характеристика складского остатка не найдена.')
-      if (selectedVariantData && !variantMatchesRequest(data.request_item_table, row, selectedVariantData as MaterialVariant | null)) {
+      const selectedVariant = selectedVariantData as MaterialVariant
+      if (selectedVariant.material_id !== selectedInventory.material_id) {
+        throw new Error('Материал складского остатка не совпадает с его характеристикой')
+      }
+      const matches = isSheetBusinessScrap
+        ? sheetBusinessScrapMatchesRequest(row, selectedVariant)
+        : selectedInventory.material_id === row.material_id
+          && variantMatchesRequest(data.request_item_table, row, selectedVariant)
+      if (!matches) {
         throw new Error('Выбранный складской остаток не совпадает с характеристикой позиции заявки.')
       }
     } else if (
@@ -1118,9 +1205,13 @@ export async function reserveItemFromStock(data: {
     }
     const needed = getNeededForRow(data.request_item_table, row)
     const reserved = getReservedForRow(data.request_item_table, row)
-    const maxQuantity = Math.max(needed - reserved, 0)
-    const quantity = Math.min(Number(data.quantity || 0), maxQuantity)
+    const maxQuantity = isSheetBusinessScrap ? Number(selectedInventory.available_quantity || 0) : Math.max(needed - reserved, 0)
+    const quantity = isSheetBusinessScrap ? Number(data.quantity || 0) : Math.min(Number(data.quantity || 0), maxQuantity)
     if (quantity <= 0) throw new Error('ÐÐµÑ‡ÐµÐ³Ð¾ Ð±Ñ€Ð¾Ð½Ð¸Ñ€Ð¾Ð²Ð°Ñ‚ÑŒ')
+    if (isSheetBusinessScrap && (!Number.isSafeInteger(Number(data.quantity)) || needed <= 0 || selectedInventory.unit !== 'шт')) {
+      throw new Error('Для листового делового остатка укажите целое число штук')
+    }
+    if (quantity > maxQuantity) throw new Error(`Недостаточно на выбранной складской строке. Доступно: ${maxQuantity} шт`)
     const available = getReservableQuantity(data.request_item_table, row, selectedInventory)
     if (available <= 0) throw new Error('В выбранной складской строке нет доступного остатка')
     if (quantity > available) throw new Error(`Недостаточно на выбранной складской строке. Доступно: ${available} ${selectedInventory.unit}`)
@@ -1131,7 +1222,7 @@ export async function reserveItemFromStock(data: {
 
     const result = await reserveForMachine({
       inventory_id: selectedInventory.id,
-      material_id: data.material_id,
+      material_id: selectedInventory.material_id,
       material_variant_id: selectedVariantId,
       piece_length_mm: selectedInventory.piece_length_mm ?? null,
       machine_id: request.machine_id,
@@ -1198,6 +1289,10 @@ export async function reserveAllAvailable(requestId: string, factoryId: string) 
       table: RequestItemTable,
       row: SupplyRequestRow<Record<string, unknown> & { id: string; material_id: string | null }>,
     ) => {
+      if (table === 'request_sheet_metal' && getReservationStockSource(data.request) === 'business_scrap') {
+        skippedCount += 1
+        return
+      }
       if (isLayoutManagedSupplyRequestItem(table, row)) {
         skippedCount += 1
         return

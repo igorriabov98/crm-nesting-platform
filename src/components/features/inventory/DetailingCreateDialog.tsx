@@ -46,6 +46,9 @@ export function DetailingCreateDialog({ data, activeFactoryId, open, onOpenChang
   const [name, setName] = useState('')
   const [drawingNumber, setDrawingNumber] = useState('')
   const [unitWeightKg, setUnitWeightKg] = useState('')
+  const [widthMm, setWidthMm] = useState('')
+  const [heightMm, setHeightMm] = useState('')
+  const [thicknessMm, setThicknessMm] = useState('')
   const [initialQuantity, setInitialQuantity] = useState('')
   const [productSearch, setProductSearch] = useState('')
   const [compatibilities, setCompatibilities] = useState<CompatibilityDraft[]>([])
@@ -110,6 +113,7 @@ export function DetailingCreateDialog({ data, activeFactoryId, open, onOpenChang
     setName('')
     setDrawingNumber('')
     setUnitWeightKg('')
+    setWidthMm(''); setHeightMm(''); setThicknessMm('')
     setInitialQuantity('')
     setProductSearch('')
     setCompatibilities([])
@@ -128,6 +132,9 @@ export function DetailingCreateDialog({ data, activeFactoryId, open, onOpenChang
         name,
         drawingNumber,
         unitWeightKg: Number(unitWeightKg),
+        widthMm: widthMm ? Number(widthMm) : null,
+        heightMm: heightMm ? Number(heightMm) : null,
+        thicknessMm: thicknessMm ? Number(thicknessMm) : null,
         factoryId: activeFactory.id,
         initialQuantity: Number(initialQuantity),
         compatibilities,
@@ -232,6 +239,11 @@ export function DetailingCreateDialog({ data, activeFactoryId, open, onOpenChang
                       placeholder="0,000"
                     />
                   </div>
+                  {([
+                    ['Ширина, мм', widthMm, setWidthMm],
+                    ['Высота, мм', heightMm, setHeightMm],
+                    ['Толщина, мм', thicknessMm, setThicknessMm],
+                  ] as const).map(([label, value, setter]) => <label key={label} className="min-w-0 space-y-1.5 text-sm font-medium text-[#334155]">{label}<Input className="mt-1 h-11" type="number" min="0.1" step="0.1" value={value} onChange={(event) => setter(event.target.value)} /></label>)}
                 </div>
               </section>
 

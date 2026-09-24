@@ -14,6 +14,7 @@ import * as metalScrap from '../src/lib/metal-scrap'
 import * as materialScope from '../src/lib/request-completion-material-scope'
 import * as navigation from '../src/lib/request-completion-navigation'
 import * as errors from '../src/lib/utils/get-error-message'
+import * as sheetScrap from '../src/lib/request-completion-sheet-scrap'
 
 type Row = Record<string, unknown>
 type DbResult = { data: Row | Row[] | null; error: { message: string } | null }
@@ -120,6 +121,7 @@ function fixture(options: {
     '@/lib/request-completion-material-scope': materialScope,
     '@/lib/materials/pipe-profile': pipeProfile,
     '@/lib/metal-scrap': metalScrap,
+    '@/lib/request-completion-sheet-scrap': sheetScrap,
     '@/lib/server/detailing-request-check': { getDetailingCheckState: async () => ({ ready: options.detailingReady !== false }) },
     '@/lib/server/technologist-approval-snapshot': { buildTechnologistApprovalSnapshot: forbiddenMutation },
     '@/lib/technologist-request-access': { requireTechnologistRequestAccess: async (id: string, access: { workflowOperation: string; inventoryOperation: string }) => {

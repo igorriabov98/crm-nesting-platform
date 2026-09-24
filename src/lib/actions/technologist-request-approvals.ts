@@ -43,7 +43,7 @@ export async function getTechnologistApprovalList() {
     const visibleRequests = requestResult.data || []
     const requestIds = visibleRequests.map((row: any) => row.id)
     const versions = requestIds.length
-      ? await db().from('technologist_request_approval_versions').select('id,request_id,revision_number,state,material_type_snapshot:summary_snapshot->>materialType').in('request_id', requestIds).order('revision_number', { ascending: false })
+      ? await db().from('technologist_request_approval_versions').select('id,request_id,revision_number,state,material_type_snapshot:summary_snapshot->>materialType,sheet_scrap_items:summary_snapshot->items').in('request_id', requestIds).order('revision_number', { ascending: false })
       : { data: [], error: null }
     if (versions.error) throw versions.error
     const numbering = await getRequestNumbers(requestIds)
@@ -55,7 +55,16 @@ export async function getTechnologistApprovalList() {
           ...request,
           request_number: numbers.request_number,
           display_revision_number: Math.max(...Object.values(numbers.revision_numbers)),
-          currentVersion: current ? { ...current, display_revision_number: numbers.revision_numbers[current.revision_number] } : null,
+          currentVersion: current ? { ...current, display_revision_number: numbers.revision_numbers[current.revision_number],
+            sheetScrapSummary: (Array.isArray(current.sheet_scrap_items) ? current.sheet_scrap_items : []).reduce((sum: { quantity: number; weightKg: number }, item: any) => {
+              if (item.category !== 'request_sheet_metal') return sum
+              for (const scrap of item.futureSheetScraps || []) {
+                sum.quantity += Number(scrap.quantity || 0)
+                sum.weightKg += Number(scrap.weightKg || 0)
+              }
+              return sum
+            }, { quantity: 0, weightKg: 0 }),
+          } : null,
         }
       }),
       error: null,
@@ -109,6 +118,19 @@ export async function getTechnologistApprovalDetail(requestId: string) {
       currentSnapshot = snapshotFromSource(source.data, id, order, latest.completion_payload)
     }
     currentSnapshot = await withApprovalProcurement(db(), await withSheetSteelTypeNames(db(), currentSnapshot, currentDraft ? null : storedSummary), currentDraft ? null : storedSummary)
+    const sheetPlans = !currentDraft && latest?.state === 'approved'
+      ? await db().from('technologist_sheet_scrap_plans').select('source_item_id,line_number,inventory_id').eq('request_id', id)
+      : { data: [], error: null }
+    if (sheetPlans.error) throw sheetPlans.error
+    const inventoryIds = (sheetPlans.data || []).map((row: any) => row.inventory_id)
+    const sheetInventories = inventoryIds.length
+      ? await db().from('inventory').select('id,business_scrap_state').in('id', inventoryIds)
+      : { data: [], error: null }
+    if (sheetInventories.error) throw sheetInventories.error
+    const statesByInventory = new Map((sheetInventories.data || []).map((row: any) => [row.id, row.business_scrap_state]))
+    const sheetScrapStates = Object.fromEntries((sheetPlans.data || []).map((row: any) => [
+      `${row.source_item_id}:${row.line_number}`, statesByInventory.get(row.inventory_id),
+    ]))
     const versions = versionsResult.data || []
     const draft = await db().from('technologist_request_revision_drafts')
       .select('revision_number,editor_id').eq('request_id', id).maybeSingle()
@@ -120,6 +142,7 @@ export async function getTechnologistApprovalDetail(requestId: string) {
         request: { ...requestResult.data, request_number: numbering.request_number },
         versions: versions.map((version: any) => ({ id: version.id, revision_number: version.revision_number, display_revision_number: numbering.revision_numbers[version.revision_number], state: version.state, is_legacy: version.is_legacy })),
         currentSnapshot,
+        sheetScrapStates,
         currentDraft,
         canReview: reviewer || isAdmin,
         revisionDraft: draft.data

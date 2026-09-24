@@ -7,6 +7,8 @@ const fieldLabels: Record<string, string> = {
   name: 'наименование', quantity: 'количество', unit: 'единица', weightKg: 'вес',
   businessScrapReserved: 'бронь делового склада', regularStockReserved: 'бронь обычного склада', wastePercent: 'отходность',
   attributes: 'характеристики позиции', procurement: 'закупка по согласованию',
+  wasteBasisKg: 'база отходности', businessScrapWeightKg: 'вес будущего делового остатка',
+  metalScrapKg: 'металлолом', processedUsefulKg: 'полезный вес обработанного листа', futureSheetScraps: 'будущие листовые остатки',
 }
 
 function percent(value: number | null) { return value === null ? '—' : `${value.toFixed(1)}%` }
@@ -26,7 +28,29 @@ function Position({ item }: { item: ApprovalSummaryItem }) {
   </div>
 }
 
-export function ApprovalSummary({ snapshot }: { snapshot: ApprovalSummarySnapshot | null }) {
+function SheetWasteDetails({ item, states, approvalState }: {
+  item: ApprovalSummaryItem
+  states?: Record<string, 'future' | 'available'>
+  approvalState?: string
+}) {
+  if (item.category !== 'request_sheet_metal' || item.wastePercent === null || item.wasteBasisKg == null) return null
+  const rows = item.futureSheetScraps || []
+  const sourceId = item.key.split(':')[1]
+  const status = (index: number) => {
+    if (!states) return 'План сохранён в версии'
+    if (approvalState === 'pending') return 'На согласовании'
+    if (approvalState === 'returned' || approvalState === 'superseded') return 'План последней отправки'
+    const state = states[`${sourceId}:${index + 1}`]
+    return state === 'available' ? 'Доступен' : state === 'future' ? 'Будущий' : 'Нет данных склада'
+  }
+  const kg = (value: number | null | undefined) => value == null ? '—' : `${value.toFixed(3)} кг`
+  return <div className="space-y-2 rounded-lg bg-blue-50/60 p-3 text-xs text-slate-700">
+    <div className="flex flex-wrap gap-x-4 gap-y-1"><span>Полный вес: {kg(item.weightKg)}</span><span>Будущий деловой остаток: {kg(item.businessScrapWeightKg)}</span><span>База отходности: {kg(item.wasteBasisKg)}</span><span>Металлолом: {kg(item.metalScrapKg)}</span><span>Полезный вес обработанного листа: {kg(item.processedUsefulKg)}</span></div>
+    {rows.length > 0 && <ul className="space-y-1 border-t border-blue-100 pt-2">{rows.map((row, index) => <li key={index}>{row.lengthMm} × {row.widthMm} мм · {row.quantity} шт. · {kg(row.weightKg)} · {status(index)}</li>)}</ul>}
+  </div>
+}
+
+export function ApprovalSummary({ snapshot, sheetScrapStates, approvalState }: { snapshot: ApprovalSummarySnapshot | null; sheetScrapStates?: Record<string, 'future' | 'available'>; approvalState?: string }) {
   if (!snapshot?.items) return <p className="text-sm text-slate-500">Старая заявка была одобрена до внедрения версий. Производственные последствия повторно не создаются.</p>
   const categories = [...new Set(snapshot.items.map((item) => item.category))]
   const total = calculateWasteAggregate(snapshot.items)
@@ -45,7 +69,12 @@ export function ApprovalSummary({ snapshot }: { snapshot: ApprovalSummarySnapsho
             <tbody className="divide-y">{items.map((item) => <tr key={item.key}>
               <td className="px-3 py-3"><Position item={item} /></td><td className="px-3 py-3"><Procurement item={item} /></td>
               <td className="px-3 py-3">{quantity(item.businessScrapReserved, item.unit)}</td><td className="px-3 py-3">{quantity(item.regularStockReserved, item.unit)}</td><td className="px-3 py-3">{percent(item.wastePercent)}</td>
-            </tr>)}</tbody>
+            </tr>).flatMap((row, index) => {
+              const item = items[index]
+              return item.category === 'request_sheet_metal' && item.wastePercent !== null && item.wasteBasisKg != null
+                ? [row, <tr key={`${item.key}:sheet-waste`}><td colSpan={5} className="px-3 pb-3"><SheetWasteDetails item={item} states={sheetScrapStates} approvalState={approvalState} /></td></tr>]
+                : [row]
+            })}</tbody>
           </table>
         </div>
         <div className="grid gap-3 md:hidden">{items.map((item) => <article key={item.key} className="space-y-3 rounded-lg border p-4 text-sm">
@@ -56,6 +85,7 @@ export function ApprovalSummary({ snapshot }: { snapshot: ApprovalSummarySnapsho
             <div><dt className="text-slate-500">Деловой склад</dt><dd>{quantity(item.businessScrapReserved, item.unit)}</dd></div>
             <div><dt className="text-slate-500">Обычный склад</dt><dd>{quantity(item.regularStockReserved, item.unit)}</dd></div>
           </dl>
+          <SheetWasteDetails item={item} states={sheetScrapStates} approvalState={approvalState} />
         </article>)}</div>
       </section>
     })}
@@ -64,10 +94,17 @@ export function ApprovalSummary({ snapshot }: { snapshot: ApprovalSummarySnapsho
       <div><span className="text-slate-500">По всей заявке, средний</span><p className="mt-1 font-semibold">{percent(total.averagePercent)}</p></div>
       <div><span className="text-slate-500">Время плазмы</span><p className="mt-1 font-semibold">{snapshot.enteredPlasmaMinutes} мин. + 25% = {snapshot.enteredPlasmaMinutes + Math.ceil(snapshot.enteredPlasmaMinutes * 0.25)} мин.</p></div>
     </div>
+    {snapshot.items.some((item) => item.category === 'request_sheet_metal' && item.wastePercent !== null && item.wasteBasisKg != null) && <div className="grid gap-2 rounded-lg border border-blue-100 bg-blue-50/50 p-4 text-sm sm:grid-cols-4">
+      <div>Полный вес листов: <strong>{snapshot.items.filter((item) => item.category === 'request_sheet_metal' && item.wastePercent !== null).reduce((sum, item) => sum + Number(item.weightKg || 0), 0).toFixed(3)} кг</strong></div>
+      <div>Будущий деловой остаток: <strong>{snapshot.items.reduce((sum, item) => sum + Number(item.businessScrapWeightKg || 0), 0).toFixed(3)} кг</strong></div>
+      <div>Металлолом: <strong>{snapshot.items.filter((item) => item.category === 'request_sheet_metal').reduce((sum, item) => sum + Number(item.metalScrapKg || 0), 0).toFixed(3)} кг</strong></div>
+      <div>Полезный вес обработанных листов: <strong>{snapshot.items.filter((item) => item.category === 'request_sheet_metal').reduce((sum, item) => sum + Number(item.processedUsefulKg || 0), 0).toFixed(3)} кг</strong></div>
+    </div>}
     <div className="grid gap-3 sm:grid-cols-2">
       <Card><CardHeader className="pb-2"><CardTitle className="text-base">Будущая деталировка</CardTitle></CardHeader><CardContent className="text-sm text-slate-600">{snapshot.futureItems.length ? <ul className="space-y-2">{snapshot.futureItems.map((raw, index) => {
-        const item = raw as { name?: string; drawingNumber?: string; quantity?: number; unitWeightKg?: number }
-        return <li key={index}>{item.name || 'Деталь'}{item.drawingNumber ? ` · ${item.drawingNumber}` : ''} — {item.quantity} шт.{item.unitWeightKg ? ` · ${item.unitWeightKg} кг/шт.` : ''}</li>
+        const item = raw as { name?: string; drawingNumber?: string; quantity?: number; unitWeightKg?: number; widthMm?: number | null; heightMm?: number | null; thicknessMm?: number | null }
+        const hasDimensions = ['widthMm', 'heightMm', 'thicknessMm'].some((field) => Object.prototype.hasOwnProperty.call(item, field))
+        return <li key={index}>{item.name || 'Деталь'}{item.drawingNumber ? ` · ${item.drawingNumber}` : ''} — {item.quantity} шт.{item.unitWeightKg ? ` · ${item.unitWeightKg} кг/шт.` : ''}{hasDimensions ? ` · Габариты: ${[item.widthMm, item.heightMm, item.thicknessMm].every((value) => value != null) ? `${item.widthMm} × ${item.heightMm} × ${item.thicknessMm} мм` : 'Не указаны'}` : ''}</li>
       })}</ul> : 'Нет'}</CardContent></Card>
       <Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base"><FileArchive className="h-4 w-4" />Архивы</CardTitle></CardHeader><CardContent className="text-sm text-slate-600">{snapshot.archives.length ? snapshot.archives.map((archive) => archive.fileName).join(', ') : 'Нет'}</CardContent></Card>
     </div>

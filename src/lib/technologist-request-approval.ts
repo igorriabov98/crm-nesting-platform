@@ -12,6 +12,11 @@ export type ApprovalSummaryItem = {
   businessScrapReserved: number
   regularStockReserved: number
   wastePercent: number | null
+  wasteBasisKg?: number | null
+  businessScrapWeightKg?: number
+  metalScrapKg?: number | null
+  processedUsefulKg?: number | null
+  futureSheetScraps?: Array<{ lengthMm: number; widthMm: number; quantity: number; weightKg: number }>
   attributes?: Record<string, unknown>
 }
 
@@ -38,14 +43,14 @@ export function formatApprovalVersion(revisionNumber: number, requestNumber: num
   return revisionNumber === 0 ? String(requestNumber) : `${requestNumber}.${revisionNumber}`
 }
 
-export function calculateWasteAggregate(items: Pick<ApprovalSummaryItem, 'weightKg' | 'wastePercent'>[]): WasteAggregate {
+export function calculateWasteAggregate(items: Pick<ApprovalSummaryItem, 'weightKg' | 'wastePercent' | 'wasteBasisKg'>[]): WasteAggregate {
   const eligible = items.filter((item) => item.wastePercent !== null)
   if (eligible.length === 0) return { count: 0, weightedPercent: null, averagePercent: null }
   const averagePercent = eligible.reduce((sum, item) => sum + Number(item.wastePercent), 0) / eligible.length
-  const weighted = eligible.filter((item) => Number(item.weightKg) > 0)
-  const totalWeight = weighted.reduce((sum, item) => sum + Number(item.weightKg), 0)
+  const weighted = eligible.filter((item) => Number(item.wasteBasisKg ?? item.weightKg) > 0)
+  const totalWeight = weighted.reduce((sum, item) => sum + Number(item.wasteBasisKg ?? item.weightKg), 0)
   const weightedPercent = totalWeight > 0
-    ? weighted.reduce((sum, item) => sum + Number(item.weightKg) * Number(item.wastePercent), 0) / totalWeight
+    ? weighted.reduce((sum, item) => sum + Number(item.wasteBasisKg ?? item.weightKg) * Number(item.wastePercent), 0) / totalWeight
     : null
   return { count: eligible.length, weightedPercent, averagePercent }
 }
@@ -65,6 +70,7 @@ export function compareApprovalSnapshots(before: ApprovalSummarySnapshot, after:
   const removed = before.items.filter((item) => !afterByKey.has(item.key))
   const comparable: Array<keyof ApprovalSummaryItem> = [
     'name', 'quantity', 'unit', 'weightKg', 'businessScrapReserved', 'regularStockReserved', 'wastePercent',
+    'wasteBasisKg', 'businessScrapWeightKg', 'metalScrapKg', 'processedUsefulKg',
   ]
   const changed = after.items.flatMap((item) => {
     const previous = beforeByKey.get(item.key)
@@ -72,6 +78,7 @@ export function compareApprovalSnapshots(before: ApprovalSummarySnapshot, after:
     const fields = comparable.filter((field) => previous[field] !== item[field]).map(String)
     if (stableValue(previous.attributes) !== stableValue(item.attributes)) fields.push('attributes')
     if (stableValue(previous.procurement) !== stableValue(item.procurement)) fields.push('procurement')
+    if (stableValue(previous.futureSheetScraps) !== stableValue(item.futureSheetScraps)) fields.push('futureSheetScraps')
     return fields.length ? [{ before: previous, after: item, fields }] : []
   })
   const completionChanged: string[] = []
@@ -91,7 +98,10 @@ export function compareApprovalSnapshots(before: ApprovalSummarySnapshot, after:
   }
   detailDiff('Будущая деталировка', before.futureItems, after.futureItems,
     (row) => String(row.partId || row.drawingNumber || row.name),
-    (row) => `${row.name || 'Деталь'} · ${row.drawingNumber || '—'} · ${row.quantity} шт. · ${row.unitWeightKg || '—'} кг/шт.`)
+    (row) => `${row.name || 'Деталь'} · ${row.drawingNumber || '—'} · ${row.quantity} шт. · ${row.unitWeightKg || '—'} кг/шт. · ${row.widthMm ?? '—'} × ${row.heightMm ?? '—'} × ${row.thicknessMm ?? '—'} мм`)
+  detailDiff('Будущий листовой остаток', before.items.flatMap((item) => (item.futureSheetScraps || []).map((row, index) => ({ ...row, key: `${item.key}:${index}` }))), after.items.flatMap((item) => (item.futureSheetScraps || []).map((row, index) => ({ ...row, key: `${item.key}:${index}` }))),
+    (row) => String(row.key),
+    (row) => `${row.lengthMm} × ${row.widthMm} мм · ${row.quantity} шт. · ${row.weightKg} кг`)
   detailDiff('Архив', before.archives, after.archives, (row) => String(row.objectPath), (row) => `${row.fileName} (${row.fileSize} байт)`)
   return { added, removed, changed, completionChanged, completionDetails }
 }

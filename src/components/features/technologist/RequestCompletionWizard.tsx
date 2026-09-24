@@ -35,10 +35,12 @@ import { MachineCuttingUploadError, uploadMachineCuttingFileDirect } from '@/lib
 import { validateMachineCuttingUploadRequest, type DirectMachineCuttingUpload } from '@/lib/machine-cutting/files'
 import { hasSheetMetalForCompletion } from '@/lib/request-completion-material-scope'
 import { CompletionCuttingPlanCard } from './CompletionCuttingPlanCard'
+import { calculateSheetScrap } from '@/lib/request-completion-sheet-scrap'
 
-type PartSearch = { id: string; name: string; drawing_number: string; unit_weight_kg: number }
+type PartSearch = { id: string; name: string; drawing_number: string; unit_weight_kg: number; width_mm: number | null; height_mm: number | null; thickness_mm: number | null }
 type ProductOption = { id: string; name_uk: string; name_en: string; drawing_number: string; versions: Array<{ id: string; version_number: number; drawing_number: string }> }
-type FutureRow = { key: string; partId?: string; name: string; drawingNumber: string; unitWeightKg: number; quantity: number; productId?: string; versionId?: string }
+type FutureRow = { key: string; partId?: string; name: string; drawingNumber: string; unitWeightKg: number; quantity: number; widthMm?: number | null; heightMm?: number | null; thicknessMm?: number | null; productId?: string; versionId?: string }
+type ScrapDraft = { key: string; lengthMm: string; widthMm: string; quantity: string }
 type FailedUpload = { file: File; code: string; message: string; retryable: boolean }
 
 function productLabel(product: ProductOption) {
@@ -64,6 +66,7 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
   const [showNew, setShowNew] = useState(false)
   const [newRow, setNewRow] = useState<FutureRow>({ key: 'new', name: '', drawingNumber: '', unitWeightKg: 0, quantity: 1 })
   const [percentages, setPercentages] = useState<Record<string, string>>(() => Object.fromEntries(manualWasteItems.map((item) => [item.sourceId, '0'])))
+  const [sheetScraps, setSheetScraps] = useState<Record<string, ScrapDraft[]>>({})
   const [hours, setHours] = useState('0')
   const [minutes, setMinutes] = useState('0')
   const [archiveFiles, setArchiveFiles] = useState<File[]>([])
@@ -104,19 +107,31 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
   }, [productQuery, showNew])
 
   const selectedProduct = products.find((product) => product.id === newRow.productId)
-  const totals = useMemo(() => manualWasteItems.reduce((acc, item) => {
+  function sheetResult(item: CompletionWorkspace['wasteItems'][number], pct: number) {
+    if (item.sourceTable !== 'request_sheet_metal') return null
+    try {
+      return calculateSheetScrap(item.sheetSize || '', item.sheetQuantity || 0, item.weightKg || 0,
+        (sheetScraps[item.sourceId] || []).map((row) => ({ lengthMm: Number(row.lengthMm), widthMm: Number(row.widthMm), quantity: Number(row.quantity) })), pct)
+    } catch { return null }
+  }
+  const totals = manualWasteItems.reduce((acc, item) => {
     const weight = item.weightKg || 0
     const pct = Number(percentages[item.sourceId] || 0)
-    const scrap = calculateWaste(weight, pct).scrapKg
-    return { weight: acc.weight + weight, scrap: acc.scrap + scrap, useful: acc.useful + weight - scrap }
-  }, { weight: 0, scrap: 0, useful: 0 }), [manualWasteItems, percentages])
+    const sheet = item.sourceTable === 'request_sheet_metal' ? sheetResult(item, pct) : null
+    const scrap = sheet ? sheet.metalScrapKg : calculateWaste(weight, pct).scrapKg
+    const remainder = sheet?.scrapWeightKg || 0
+    return { weight: acc.weight + weight, remainder: acc.remainder + remainder, scrap: acc.scrap + scrap, useful: acc.useful + weight - remainder - scrap }
+  }, { weight: 0, remainder: 0, scrap: 0, useful: 0 })
+  const hasInvalidSheetScraps = manualWasteItems.some((item) => item.sourceTable === 'request_sheet_metal'
+    && (sheetScraps[item.sourceId] || []).length > 0
+    && !sheetResult(item, Number(percentages[item.sourceId] || 0)))
   const plasmaTime = calculatePlasmaTime(Number(hours) || 0, Number(minutes) || 0)
   const enteredMinutes = plasmaTime.enteredMinutes
   const finalMinutes = plasmaTime.actualMinutes
 
   function addExisting(part: PartSearch) {
     if (rows.some((row) => row.partId === part.id)) return
-    setRows((current) => [...current, { key: part.id, partId: part.id, name: part.name, drawingNumber: part.drawing_number, unitWeightKg: Number(part.unit_weight_kg), quantity: 1 }])
+    setRows((current) => [...current, { key: part.id, partId: part.id, name: part.name, drawingNumber: part.drawing_number, unitWeightKg: Number(part.unit_weight_kg), quantity: 1, widthMm: part.width_mm, heightMm: part.height_mm, thicknessMm: part.thickness_mm }])
   }
 
   function addNew() {
@@ -141,9 +156,10 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
       decision,
       hours: hasSheetMetal ? Number(hours) : 0,
       minutes: hasSheetMetal ? Number(minutes) : 0,
-      wasteItems: manualWasteItems.map((item) => ({ ...item, wastePercent: Number(percentages[item.sourceId]) })),
+      wasteItems: manualWasteItems.map((item) => ({ ...item, wastePercent: Number(percentages[item.sourceId]), futureScraps: item.sourceTable === 'request_sheet_metal' ? (sheetScraps[item.sourceId] || []).map((scrap) => ({ lengthMm: Number(scrap.lengthMm), widthMm: Number(scrap.widthMm), quantity: Number(scrap.quantity) })) : [] })),
       futureItems: decision === 'none' ? [] : rows.map((row) => ({
         partId: row.partId || null, quantity: row.quantity, name: row.name, drawingNumber: row.drawingNumber, unitWeightKg: row.unitWeightKg,
+        widthMm: row.widthMm ?? null, heightMm: row.heightMm ?? null, thicknessMm: row.thicknessMm ?? null,
         compatibilities: row.partId ? [] : [{ productId: row.productId!, allVersions: false, versionIds: [row.versionId!] }],
       })),
       archives,
@@ -182,6 +198,14 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
     if (incompletePlan) return toast.error(`Нет утверждённой карты раскроя: ${incompletePlan.itemName}`)
     const invalid = Object.values(percentages).some((value) => value === '' || Number(value) < 0 || Number(value) > 100 || Math.round(Number(value) * 10) !== Number(value) * 10)
     if (invalid || (hasSheetMetal && Number(minutes) > 59)) return toast.error('Проверьте проценты отходности и время')
+    try {
+      for (const item of manualWasteItems) {
+        if (item.sourceTable !== 'request_sheet_metal') continue
+        calculateSheetScrap(item.sheetSize || '', item.sheetQuantity || 0, item.weightKg || 0,
+          (sheetScraps[item.sourceId] || []).map((scrap) => ({ lengthMm: Number(scrap.lengthMm), widthMm: Number(scrap.widthMm), quantity: Number(scrap.quantity) })),
+          Number(percentages[item.sourceId]))
+      }
+    } catch (error) { return toast.error(error instanceof Error ? error.message : 'Проверьте размеры делового остатка') }
     if (hasSheetMetal && archiveFiles.length === 0) return toast.error('Для листового металла загрузите минимум одну программу порезки')
     startTransition(async () => {
       if (!hasSheetMetal) {
@@ -319,6 +343,7 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
               <div className="space-y-1.5"><Label htmlFor="new-name">Название <span className="text-red-600">*</span></Label><Input id="new-name" className="h-11 bg-white" placeholder="Название детали" value={newRow.name} onChange={(e) => setNewRow({ ...newRow, name: e.target.value })} /></div>
               <div className="space-y-1.5"><Label htmlFor="new-drawing">Номер чертежа <span className="text-red-600">*</span></Label><Input id="new-drawing" className="h-11 bg-white" placeholder="Номер или шифр" value={newRow.drawingNumber} onChange={(e) => setNewRow({ ...newRow, drawingNumber: e.target.value })} /></div>
               <div className="space-y-1.5"><Label htmlFor="new-weight">Вес одной детали, кг <span className="text-red-600">*</span></Label><Input id="new-weight" className="h-11 bg-white" type="number" min="0.001" step="0.001" inputMode="decimal" placeholder="0,000" value={newRow.unitWeightKg || ''} onChange={(e) => setNewRow({ ...newRow, unitWeightKg: Number(e.target.value) })} /></div>
+              {([['widthMm', 'Ширина, мм'], ['heightMm', 'Высота, мм'], ['thicknessMm', 'Толщина, мм']] as const).map(([field, label]) => <div key={field} className="space-y-1.5"><Label htmlFor={`new-${field}`}>{label}</Label><Input id={`new-${field}`} className="h-11 bg-white" type="number" min="0.1" step="0.1" inputMode="decimal" value={newRow[field] ?? ''} onChange={(e) => setNewRow({ ...newRow, [field]: e.target.value ? Number(e.target.value) : null })} /></div>)}
               <div className="space-y-1.5">
                 <Label>Совместимое изделие <span className="text-red-600">*</span></Label>
                 <Popover open={productPickerOpen} onOpenChange={(open) => { setProductPickerOpen(open); if (!open) setProductQuery('') }}>
@@ -363,7 +388,7 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
           {rows.length > 0 && <section aria-labelledby="selected-detailing-title" className="space-y-3">
             <h2 id="selected-detailing-title" className="font-semibold text-slate-950">Добавлено в план <span className="font-normal text-slate-500">· {rows.length}</span></h2>
             <div className="space-y-2">{rows.map((row) => <div key={row.key} className="flex flex-wrap items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3.5">
-              <div className="flex min-w-48 flex-1 items-start gap-3"><span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><Check className="h-4 w-4" /></span><div><p className="font-semibold text-slate-900">{row.name}</p><p className="text-sm text-slate-500">{row.drawingNumber} · {row.unitWeightKg.toFixed(3)} кг</p></div></div>
+              <div className="flex min-w-48 flex-1 items-start gap-3"><span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><Check className="h-4 w-4" /></span><div><p className="font-semibold text-slate-900">{row.name}</p><p className="text-sm text-slate-500">{row.drawingNumber} · {row.unitWeightKg.toFixed(3)} кг · Габариты: {[row.widthMm, row.heightMm, row.thicknessMm].every((value) => value != null) ? `${row.widthMm} × ${row.heightMm} × ${row.thicknessMm} мм` : 'Не указаны'}</p></div></div>
               <div className="flex items-center gap-2"><Label htmlFor={`qty-${row.key}`} className="text-sm text-slate-600">Количество</Label><Input id={`qty-${row.key}`} type="number" min="1" inputMode="numeric" className="h-10 w-20 bg-white text-center" value={row.quantity} onChange={(e) => setRows((current) => current.map((item) => item.key === row.key ? { ...item, quantity: Number(e.target.value) } : item))} /></div>
               <Button type="button" variant="ghost" size="icon" className="text-slate-500 hover:bg-red-50 hover:text-red-700" aria-label={`Удалить ${row.name}`} onClick={() => setRows((current) => current.filter((item) => item.key !== row.key))}><Trash2 className="h-4 w-4" /></Button>
             </div>)}</div>
@@ -388,18 +413,30 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
           <CardDescription className="leading-6">Укажите фактический процент металлолома. Полезный остаток и итоговый вес пересчитаются автоматически.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 p-5 sm:p-7">{manualWasteItems.map((item) => {
-        const pct = Number(percentages[item.sourceId] || 0); const weight = item.weightKg || 0; const scrap = calculateWaste(weight, pct).scrapKg
-        return <div key={item.sourceId} className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-xs md:grid-cols-[minmax(220px,1fr)_120px_140px_140px] md:items-center">
+        const pct = Number(percentages[item.sourceId] || 0); const weight = item.weightKg || 0; const sheet = sheetResult(item, pct); const scrap = sheet ? sheet.metalScrapKg : calculateWaste(weight, pct).scrapKg; const invalidSheet = item.sourceTable === 'request_sheet_metal' && (sheetScraps[item.sourceId] || []).length > 0 && !sheet
+        return <div key={item.sourceId} className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
+          <div className="grid gap-4 md:grid-cols-[minmax(220px,1fr)_120px_140px_140px] md:items-center">
           <div><p className="font-semibold text-slate-900">{item.itemName}</p><p className="mt-1 text-sm text-slate-500">{item.quantityLabel} · полный вес {item.weightKg == null ? 'не рассчитан' : `${weight.toFixed(3)} кг`}</p></div>
           <div className="space-y-1.5"><Label htmlFor={`pct-${item.sourceId}`}>Отход, %</Label><Input id={`pct-${item.sourceId}`} className="h-11 text-center" type="number" min="0" max="100" step="0.1" inputMode="decimal" value={percentages[item.sourceId]} onChange={(e) => setPercentages({ ...percentages, [item.sourceId]: e.target.value })} /></div>
-          <div className="rounded-lg bg-red-50 px-3 py-2"><p className="text-xs font-medium text-red-700">Металлолом</p><p className="mt-1 font-mono font-semibold text-red-950">{scrap.toFixed(3)} кг</p></div>
-          <div className="rounded-lg bg-emerald-50 px-3 py-2"><p className="text-xs font-medium text-emerald-700">Полезный вес</p><p className="mt-1 font-mono font-semibold text-emerald-950">{(weight - scrap).toFixed(3)} кг</p></div>
+          <div className="rounded-lg bg-red-50 px-3 py-2"><p className="text-xs font-medium text-red-700">Металлолом</p><p className="mt-1 font-mono font-semibold text-red-950">{invalidSheet ? '—' : `${scrap.toFixed(3)} кг`}</p></div>
+          <div className="rounded-lg bg-emerald-50 px-3 py-2"><p className="text-xs font-medium text-emerald-700">Полезный вес</p><p className="mt-1 font-mono font-semibold text-emerald-950">{invalidSheet ? '—' : `${(sheet ? sheet.usefulKg : weight - scrap).toFixed(3)} кг`}</p></div>
+          </div>
+          {item.sourceTable === 'request_sheet_metal' && <div className="space-y-3 border-t pt-3">
+            <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-medium">Будущий деловой остаток</p><p className="text-xs text-slate-500">Тип стали и толщина берутся из исходного листа. Проверка размеров выполняется по площади.</p></div><Button type="button" size="sm" variant="outline" onClick={() => setSheetScraps((current) => ({ ...current, [item.sourceId]: [...(current[item.sourceId] || []), { key: crypto.randomUUID(), lengthMm: '', widthMm: '', quantity: '1' }] }))}><Plus className="mr-1 h-4 w-4" />Добавить деловой остаток</Button></div>
+            {(sheetScraps[item.sourceId] || []).map((row) => <div key={row.key} className="grid gap-2 rounded-lg bg-slate-50 p-3 sm:grid-cols-[1fr_1fr_110px_auto] sm:items-end">
+              {([['lengthMm', 'Длина, мм'], ['widthMm', 'Ширина, мм'], ['quantity', 'Количество, шт.']] as const).map(([field, label]) => <div key={field} className="space-y-1"><Label htmlFor={`${row.key}-${field}`}>{label}</Label><Input id={`${row.key}-${field}`} type="number" min={field === 'quantity' ? '1' : '0.1'} step={field === 'quantity' ? '1' : '0.1'} value={row[field]} onChange={(event) => setSheetScraps((current) => ({ ...current, [item.sourceId]: current[item.sourceId].map((draft) => draft.key === row.key ? { ...draft, [field]: event.target.value } : draft) }))} /></div>)}
+              <Button type="button" size="icon" variant="ghost" aria-label="Удалить деловой остаток" onClick={() => setSheetScraps((current) => ({ ...current, [item.sourceId]: current[item.sourceId].filter((draft) => draft.key !== row.key) }))}><Trash2 className="h-4 w-4" /></Button>
+            </div>)}
+            <p className="text-sm text-slate-600">Вес делового остатка: {sheet?.scrapWeightKg.toFixed(3) ?? '—'} кг · База отходности: {sheet?.wasteBasisKg.toFixed(3) ?? '—'} кг</p>
+            {invalidSheet && <p className="text-sm text-amber-700">Проверьте размеры, количество и суммарную площадь остатков.</p>}
+          </div>}
         </div>
       })}
-          <div className="grid gap-3 rounded-xl bg-slate-900 p-4 text-white sm:grid-cols-3">
+          <div className="grid gap-3 rounded-xl bg-slate-900 p-4 text-white sm:grid-cols-4">
             <div className="rounded-lg bg-white/5 px-3 py-2 text-sm text-slate-300">Общий вес <strong className="mt-1 block font-mono text-lg text-white">{totals.weight.toFixed(3)} кг</strong></div>
-            <div className="rounded-lg bg-white/5 px-3 py-2 text-sm text-slate-300">Металлолом <strong className="mt-1 block font-mono text-lg text-white">{totals.scrap.toFixed(3)} кг</strong></div>
-            <div className="rounded-lg bg-emerald-400/10 px-3 py-2 text-sm text-emerald-200">Полезный вес <strong className="mt-1 block font-mono text-lg text-emerald-100">{totals.useful.toFixed(3)} кг</strong></div>
+            <div className="rounded-lg bg-white/5 px-3 py-2 text-sm text-slate-300">Будущий деловой остаток <strong className="mt-1 block font-mono text-lg text-white">{hasInvalidSheetScraps ? '—' : `${totals.remainder.toFixed(3)} кг`}</strong></div>
+            <div className="rounded-lg bg-white/5 px-3 py-2 text-sm text-slate-300">Металлолом <strong className="mt-1 block font-mono text-lg text-white">{hasInvalidSheetScraps ? '—' : `${totals.scrap.toFixed(3)} кг`}</strong></div>
+            <div className="rounded-lg bg-emerald-400/10 px-3 py-2 text-sm text-emerald-200">Полезный вес <strong className="mt-1 block font-mono text-lg text-emerald-100">{hasInvalidSheetScraps ? '—' : `${totals.useful.toFixed(3)} кг`}</strong></div>
           </div>
         </CardContent>
       </Card>}

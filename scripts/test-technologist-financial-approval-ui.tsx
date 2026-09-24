@@ -15,6 +15,7 @@ import * as approval from '../src/lib/technologist-request-approval'
 import * as approvalProcurement from '../src/lib/approval-procurement'
 import * as approvalBadge from '../src/lib/technologist-approval-badge'
 import { ApprovalSummary, ApprovalDiff } from '../src/components/features/technologist/ApprovalSummary'
+import * as sheetScrap from '../src/lib/request-completion-sheet-scrap'
 
 function load<T>(path: string, imports: Record<string, unknown>): T {
   const code = ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: {
@@ -79,6 +80,28 @@ test('summary renders desktop table, mobile cards, exact reservations, waste and
   assert.ok(!html.includes('id="category-'), 'History summaries must not duplicate document IDs')
 })
 
+test('sheet remnant and detailing dimensions appear in both summary layouts with live stock state', () => {
+  const sheetSnapshot: approval.ApprovalSummarySnapshot = {
+    ...snapshot,
+    items: [{ ...snapshot.items[0], weightKg: 168.48, wasteBasisKg: 98.28,
+      businessScrapWeightKg: 70.2, metalScrapKg: 9.828, processedUsefulKg: 88.452,
+      futureSheetScraps: [{ lengthMm: 500, widthMm: 300, quantity: 1, weightKg: 70.2 }] }],
+    futureItems: [{ name: 'Заготовка', drawingNumber: 'Ч-001', quantity: 4,
+      widthMm: 40, heightMm: 60, thicknessMm: 2 }],
+  }
+  const html = renderToStaticMarkup(<ApprovalSummary snapshot={sheetSnapshot}
+    sheetScrapStates={{ 'a:1': 'available' }} approvalState="approved" />)
+  for (const text of ['md:block', 'md:hidden', '500 × 300 мм', '70.200 кг', '98.280 кг',
+    '9.828 кг', '88.452 кг', 'Доступен', '40 × 60 × 2 мм']) assert.ok(html.includes(text), text)
+  assert.equal((html.match(/500 × 300 мм/g) || []).length, 2)
+  const pending = renderToStaticMarkup(<ApprovalSummary snapshot={sheetSnapshot}
+    sheetScrapStates={{}} approvalState="pending" />)
+  assert.ok(pending.includes('На согласовании'))
+  const legacy = renderToStaticMarkup(<ApprovalSummary snapshot={snapshot} />)
+  assert.ok(!legacy.includes('База отходности:'))
+  assert.ok(!legacy.includes('Габариты:'))
+})
+
 test('summary shows complete technical details that distinguish equal material names', () => {
   const html = renderToStaticMarkup(<ApprovalSummary snapshot={circleSnapshot} />)
   for (const text of ['Марка стали: Hardox', 'Диаметр: 30 мм', 'Диаметр: 20 мм', 'Калиброванный: нет', 'Калиброванный: да', 'Вес позиции: 33,08 кг', 'Вес позиции: 14,7 кг']) {
@@ -125,7 +148,7 @@ test('history does not fetch or render snapshots before opening', () => {
 
 test('snapshot uses authoritative source rows without changing their order and labels wire in kilograms', () => {
   const helper = load<{ snapshotFromSource: (source: Record<string, unknown[]>, id: string, machine: {id:string;name:string;material_type:string}, input: unknown) => approval.ApprovalSummarySnapshot }>('src/lib/server/technologist-approval-snapshot.ts', {
-    'server-only': {}, '@/lib/constants/procurement': procurement, '@/lib/approval-procurement': approvalProcurement,
+    'server-only': {}, '@/lib/constants/procurement': procurement, '@/lib/approval-procurement': approvalProcurement, '@/lib/request-completion-sheet-scrap': sheetScrap,
   })
   const source = { request_pipe: [
     { id:'b', pipe_type:'wire', sort_order:2, remainder_length_mm:0, remainder_kg:12, calculated_weight_kg:12 },
@@ -150,7 +173,7 @@ test('snapshot uses authoritative source rows without changing their order and l
 test('sheet steel names resolve from saved IDs in both layouts without rewriting approval sources', async () => {
   const helper = load<{
     withSheetSteelTypeNames: (client: unknown, value: approval.ApprovalSummarySnapshot, stored?: approval.ApprovalSummarySnapshot) => Promise<approval.ApprovalSummarySnapshot>
-  }>('src/lib/server/technologist-approval-snapshot.ts', { 'server-only': {}, '@/lib/constants/procurement': procurement, '@/lib/approval-procurement': approvalProcurement })
+  }>('src/lib/server/technologist-approval-snapshot.ts', { 'server-only': {}, '@/lib/constants/procurement': procurement, '@/lib/approval-procurement': approvalProcurement, '@/lib/request-completion-sheet-scrap': sheetScrap })
   const original = { ...snapshot, sourceData: { request_sheet_metal: [{ id: 'a', steel_type_id: 'steel-hardox', material_grade: null }] },
     items: [{ ...snapshot.items[0], name: 'Листовой металл', attributes: { steel_type_id: 'steel-hardox', material_grade: null, sheet_size: '1200x300' } }] }
   const before = JSON.stringify(original)
@@ -178,7 +201,7 @@ test('sheet steel names resolve from saved IDs in both layouts without rewriting
 
 test('agreed procurement uses exact saved candidate and remains stable for historical versions', async () => {
   const helper = load<{ withApprovalProcurement: (client: unknown, value: approval.ApprovalSummarySnapshot, stored?: approval.ApprovalSummarySnapshot) => Promise<approval.ApprovalSummarySnapshot> }>('src/lib/server/technologist-approval-snapshot.ts', {
-    'server-only': {}, '@/lib/constants/procurement': procurement, '@/lib/approval-procurement': approvalProcurement,
+    'server-only': {}, '@/lib/constants/procurement': procurement, '@/lib/approval-procurement': approvalProcurement, '@/lib/request-completion-sheet-scrap': sheetScrap,
   })
   const original = { ...circleSnapshot, items: [circleSnapshot.items[0]], sourceData: {
     cuttingItems: [{request_item_table:'request_circle', request_item_id:circleSnapshot.items[0].key.split(':')[1], plan_id:'plan', link_state:'active'}],

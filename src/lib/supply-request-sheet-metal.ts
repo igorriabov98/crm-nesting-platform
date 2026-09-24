@@ -1,17 +1,10 @@
 import type { MaterialVariant } from '@/lib/types'
+import { sameRectangularDimensions } from '@/lib/materials/rotatable-dimensions'
 
 type SheetMetalCharacteristics = {
   steel_type_id?: unknown
   sheet_size?: unknown
   thickness_mm?: unknown
-}
-
-function normalizeSheetSize(value: unknown) {
-  return String(value ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/[\u0445\u00d7*]/g, 'x')
-    .replace(/\s+/g, '')
 }
 
 function numbersMatch(left: unknown, right: unknown) {
@@ -29,6 +22,21 @@ export function sheetMetalVariantMatchesRequest(
   const variantSteelTypeId = String(variant.steel_type_id ?? '').trim()
   return Boolean(requestSteelTypeId)
     && requestSteelTypeId === variantSteelTypeId
-    && normalizeSheetSize(row.sheet_size) === normalizeSheetSize(variant.sheet_size)
+    && Number(row.thickness_mm) > 0
+    && Number(variant.thickness_mm) > 0
+    && sameRectangularDimensions(row.sheet_size, variant.sheet_size)
+    && numbersMatch(row.thickness_mm, variant.thickness_mm)
+}
+
+export function sheetBusinessScrapMatchesRequest(
+  row: SheetMetalCharacteristics,
+  variant: Pick<MaterialVariant, 'category' | 'steel_type_id' | 'thickness_mm'>,
+) {
+  const steelTypeId = String(row.steel_type_id ?? '').trim()
+  return variant.category === 'sheet_metal'
+    && Boolean(steelTypeId)
+    && steelTypeId === String(variant.steel_type_id ?? '').trim()
+    && Number(row.thickness_mm) > 0
+    && Number(variant.thickness_mm) > 0
     && numbersMatch(row.thickness_mm, variant.thickness_mm)
 }

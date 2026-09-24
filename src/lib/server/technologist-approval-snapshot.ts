@@ -3,6 +3,7 @@ import { approvedProcurement, isLayoutProcurement } from '@/lib/approval-procure
 /* eslint-disable @typescript-eslint/no-explicit-any -- migration-bound database adapter */
 import type { ApprovalSummaryItem, ApprovalSummarySnapshot } from '@/lib/technologist-request-approval'
 import { PIPE_SUBTYPE_LABELS, CHAIN_CORD_SUBTYPE_LABELS } from '@/lib/constants/procurement'
+import { calculateSheetScrap, type SheetScrapInput } from '@/lib/request-completion-sheet-scrap'
 
 const CATEGORY_TABLES = [
   ['request_sheet_metal', 'Листовой металл'],
@@ -19,7 +20,7 @@ const CATEGORY_TABLES = [
 type CompletionInput = {
   decision: 'has_items' | 'none'
   enteredPlasmaMinutes: number
-  wasteItems: Array<{ sourceTable: string; sourceId: string; wastePercent: number }>
+  wasteItems: Array<{ sourceTable: string; sourceId: string; wastePercent: number; futureScraps?: SheetScrapInput[] }>
   futureItems: unknown[]
   archives: Array<{ objectPath: string; fileName: string; mimeType: string | null; fileSize: number }>
 }
@@ -66,11 +67,11 @@ export async function buildTechnologistApprovalSnapshot(
   const sourceResult = await client.rpc('fn_technologist_approval_source', { p_request_id: requestId })
   if (sourceResult.error) throw sourceResult.error
   const partIds = completion.futureItems.flatMap((item: any) => item.partId ? [item.partId] : [])
-  const partsResult = partIds.length ? await client.from('detailing_parts').select('id,name,drawing_number,unit_weight_kg').in('id', partIds) : { data: [], error: null }
+  const partsResult = partIds.length ? await client.from('detailing_parts').select('id,name,drawing_number,unit_weight_kg,width_mm,height_mm,thickness_mm').in('id', partIds) : { data: [], error: null }
   if (partsResult.error) throw partsResult.error
   const enriched = { ...completion, futureItems: completion.futureItems.map((item: any) => {
     const part = (partsResult.data || []).find((row: any) => row.id === item.partId)
-    return part ? { ...item, name: part.name, drawingNumber: part.drawing_number, unitWeightKg: part.unit_weight_kg } : item
+    return part ? { ...item, name: part.name, drawingNumber: part.drawing_number, unitWeightKg: part.unit_weight_kg, widthMm: part.width_mm, heightMm: part.height_mm, thicknessMm: part.thickness_mm } : item
   }) }
   return (await withApprovalProcurement(client, await withSheetSteelTypeNames(client, snapshotFromSource(sourceResult.data, requestId, machine, enriched))))!
 }
@@ -81,7 +82,7 @@ export function snapshotFromSource(
 ): ApprovalSummarySnapshot {
   const source = sourceData
   const tableResults = CATEGORY_TABLES.map(([table]) => [...(source[table] || [])].sort((a, b) => Number(a.sort_order) - Number(b.sort_order)))
-  const wasteByKey = new Map(completion.wasteItems.map((item) => [`${item.sourceTable}:${item.sourceId}`, item.wastePercent]))
+  const wasteByKey = new Map(completion.wasteItems.map((item) => [`${item.sourceTable}:${item.sourceId}`, item]))
   const reservations = source.reservations || []
   const items: ApprovalSummaryItem[] = []
   CATEGORY_TABLES.forEach(([table, categoryLabel], index) => {
@@ -93,12 +94,24 @@ export function snapshotFromSource(
         .filter((reservation: any) => Boolean(reservation.is_business_scrap) === business)
         .reduce((sum: number, reservation: any) => sum + Number(reservation.logical_reserved_quantity ?? reservation.reserved_quantity ?? 0), 0)
       const described = describeRow(table, raw)
+      const waste = wasteByKey.get(key)
+      let sheetCalculation: ReturnType<typeof calculateSheetScrap> | null = null
+      if (table === 'request_sheet_metal' && waste && described.weightKg && raw.sheet_size && raw.quantity_sheets) {
+        try {
+          sheetCalculation = calculateSheetScrap(String(raw.sheet_size), Number(raw.quantity_sheets), described.weightKg, waste.futureScraps || [], waste.wastePercent)
+        } catch { /* A returned draft can contain an older completion payload. */ }
+      }
       items.push({
         key, category: table, categoryLabel, ...described,
         attributes: Object.fromEntries(Object.entries(raw).filter(([field]) => !['id','request_id','created_at','sort_order','order_status','ordered_at','delivered_at','supplier_id','custom_delivery_date'].includes(field))),
         businessScrapReserved: reservationTotal(true) / (table === 'request_chain_cord' ? 1000 : 1),
         regularStockReserved: reservationTotal(false) / (table === 'request_chain_cord' ? 1000 : 1),
-        wastePercent: wasteByKey.get(key) ?? null,
+        wastePercent: waste?.wastePercent ?? null,
+        wasteBasisKg: sheetCalculation?.wasteBasisKg ?? described.weightKg,
+        businessScrapWeightKg: sheetCalculation?.scrapWeightKg ?? 0,
+        metalScrapKg: sheetCalculation?.metalScrapKg ?? null,
+        processedUsefulKg: sheetCalculation?.usefulKg ?? null,
+        futureSheetScraps: sheetCalculation?.rows ?? [],
       })
     }
   })

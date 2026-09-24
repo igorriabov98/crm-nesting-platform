@@ -38,6 +38,7 @@ import { knifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { requireCanonicalPipeProfile, roundPipeOuterDiameterMm, validatePipeProfileGeometry } from '@/lib/materials/pipe-profile'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { candidateStockSelection, solveLongStockRecommendations } from '@/lib/long-stock-recommendations'
+import { sameRotatedPipeVariant } from '@/lib/materials/pipe-variant-identity'
 import { assertLongStockCalculationFingerprint, longStockCalculationFingerprint } from '@/lib/long-stock-calculation-fingerprint'
 import {
   prepareLongStockCuttingPlanPdf,
@@ -57,6 +58,7 @@ type DbQuery<T> = PromiseLike<DbResult<T[]>> & {
   is(column: string, value: null): DbQuery<T>
   gt(column: string, value: number): DbQuery<T>
   order(column: string, options?: { ascending?: boolean }): DbQuery<T>
+  range(from: number, to: number): DbQuery<T>
   maybeSingle(): Promise<DbResult<T>>
   single(): Promise<DbResult<T>>
 }
@@ -879,9 +881,9 @@ async function loadLongStockSourceOptionsInternal(input: {
         .maybeSingle(),
       'Заявка технолога не найдена',
     ),
-    one<{ id: string; material_id: string; category: string; pipe_type: string | null }>(
-      db.from<{ id: string; material_id: string; category: string; pipe_type: string | null }>('material_variants')
-        .select('id,material_id,category,pipe_type')
+    one<MaterialVariantRow>(
+      db.from<MaterialVariantRow>('material_variants')
+        .select('id,material_id,category,pipe_type,steel_type_id,material_grade,wall_thickness_mm,piece_description,diameter_mm')
         .eq('id', input.materialVariantId)
         .maybeSingle(),
       'Вариант материала не найден',
@@ -893,6 +895,7 @@ async function loadLongStockSourceOptionsInternal(input: {
   if (!supportsLongStockSourceSelection(variant.category, variant.pipe_type)) {
     throw new Error('Для этого материала раскладка складских хлыстов недоступна')
   }
+  const equivalentVariantIds = await loadEquivalentPipeVariantIds(db, variant)
 
   const machine = await one<{ id: string; factory_id: string | null }>(
     db.from<{ id: string; factory_id: string | null }>('machines')
@@ -907,7 +910,7 @@ async function loadLongStockSourceOptionsInternal(input: {
     db.from<InventorySourceRow>('inventory')
       .select('id,factory_id,piece_length_mm,available_quantity,available_secondary_quantity,is_business_scrap,business_scrap_state,available_from_date,available_from_stage_id,source_machine_id,created_at')
       .eq('material_id', input.materialId)
-      .eq('material_variant_id', input.materialVariantId)
+      .in('material_variant_id', equivalentVariantIds)
       .is('deleted_at', null)
       .gt('total_quantity', 0)
       .order('created_at', { ascending: true }),
@@ -1035,6 +1038,25 @@ async function loadLongStockSourceOptionsInternal(input: {
     consumerCuttingDate,
     sources,
   }
+}
+
+async function loadEquivalentPipeVariantIds(db: LongStockDb, variant: MaterialVariantRow) {
+  if (variant.category !== 'pipe' || (variant.pipe_type !== 'square' && variant.pipe_type !== 'rectangular')) {
+    return [variant.id]
+  }
+  const equivalentIds = new Set([variant.id])
+  for (let offset = 0; ; offset += 500) {
+    const { data, error } = await db.from<MaterialVariantRow>('material_variants')
+      .select('id,material_id,category,pipe_type,steel_type_id,material_grade,wall_thickness_mm,piece_description,diameter_mm')
+      .eq('material_id', variant.material_id).eq('category', 'pipe').eq('pipe_type', variant.pipe_type)
+      .order('id').range(offset, offset + 499)
+    if (error) throw new Error(error.message || 'Не удалось загрузить эквивалентные сечения трубы')
+    for (const item of data || []) {
+      if (sameRotatedPipeVariant(variant, item)) equivalentIds.add(item.id)
+    }
+    if ((data || []).length < 500) break
+  }
+  return [...equivalentIds]
 }
 
 function expandLongStockPhysicalSources(
@@ -1507,6 +1529,13 @@ async function loadLongStockPlanningRecoveryState(
   if (!requestRow.material_variant_id) {
     throw new Error('Для восстановления карты не найден точный вариант материала')
   }
+  const recoveryVariant = await one<MaterialVariantRow>(
+    db.from<MaterialVariantRow>('material_variants')
+      .select('id,material_id,category,pipe_type,steel_type_id,material_grade,wall_thickness_mm,piece_description,diameter_mm')
+      .eq('id', requestRow.material_variant_id).maybeSingle(),
+    'Вариант материала для восстановления карты не найден',
+  )
+  const equivalentVariantIds = new Set(await loadEquivalentPipeVariantIds(db, recoveryVariant))
 
   const totalLengthMm = await loadRequestItemDemandLength(db, requestItem)
   let draftVersionId: string | null = null
@@ -1560,7 +1589,7 @@ async function loadLongStockPlanningRecoveryState(
     const lengthMm = Number(reservation.original_piece_length_mm)
     const reservedQuantity = Number(reservation.reserved_quantity)
     const secondaryQuantity = Number(reservation.reserved_secondary_quantity)
-    if (reservation.material_variant_id !== requestRow.material_variant_id
+    if (!reservation.material_variant_id || !equivalentVariantIds.has(reservation.material_variant_id)
       || !Number.isSafeInteger(lengthMm) || lengthMm <= 0) {
       invalidReservationFound = true
       continue

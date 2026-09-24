@@ -3,6 +3,7 @@ import type { SupplyRequestPayload } from '@/lib/actions/supply-request'
 type Props = {
   summary: SupplyRequestPayload['summary']
   totalWeight: number
+  sheetBusinessScrapReserved?: number | null
 }
 
 const labels = {
@@ -16,7 +17,7 @@ const labels = {
   chainCords: 'Цепь/Шнур',
 } as const
 
-export function SupplyRequestSummary({ summary, totalWeight }: Props) {
+export function SupplyRequestSummary({ summary, totalWeight, sheetBusinessScrapReserved = null }: Props) {
   return (
     <section className="rounded-xl border border-[#E8ECF0] bg-white p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -33,6 +34,7 @@ export function SupplyRequestSummary({ summary, totalWeight }: Props) {
               <th className="py-2 pr-4">Позиций</th>
               <th className="py-2 pr-4">Нужно</th>
               <th className="py-2 pr-4">Со склада</th>
+              {sheetBusinessScrapReserved !== null && <th className="py-2 pr-4">Бронь делового остатка</th>}
               <th className="py-2 pr-4">К заказу</th>
             </tr>
           </thead>
@@ -45,6 +47,9 @@ export function SupplyRequestSummary({ summary, totalWeight }: Props) {
                   <td className="py-2 pr-4 text-[#374151]">{item.positions}</td>
                   <td className="py-2 pr-4 text-[#374151]">{formatValue(item.needed, item.unit)}</td>
                   <td className="py-2 pr-4 text-emerald-700">{formatValue(item.reserved, item.unit)}</td>
+                  {sheetBusinessScrapReserved !== null && <td className="py-2 pr-4 text-[#374151]">
+                    {key === 'sheetMetal' ? formatValue(sheetBusinessScrapReserved, 'шт') : '—'}
+                  </td>}
                   <td className="py-2 pr-4 font-medium text-[#111827]">{formatValue(item.toOrder, item.unit)}</td>
                 </tr>
               )
