@@ -114,6 +114,10 @@ const replayPreludes = new Map([
      ON CONFLICT (department_id, subject_scope, resource_key) DO NOTHING;
     `,
   ],
+  [
+    '20260923150000_sheet_scrap_orientation_reservation.sql',
+    readFileSync(path.join(root, 'supabase', 'tests', 'sheet_scrap_orientation_legacy_cancelled_setup.sql'), 'utf8'),
+  ],
 ])
 
 console.log(`[full-schema-test] rebuilding local database ${databaseName}`)
@@ -142,6 +146,16 @@ for (const migration of migrations) {
   const normalizedSource = normalizeForLocalPostgres(source)
   const hasExplicitTransaction = /^\s*(?:--[^\n]*\n\s*)*BEGIN;/imu.test(normalizedSource)
   runPsql(migration, normalizedSource, !hasExplicitTransaction)
+  if (migration === '20260923150000_sheet_scrap_orientation_reservation.sql') {
+    runPsql('sheet orientation immutable history assertion', `
+      do $$ begin
+        if (select reserved_from_stock_kg from public.request_sheet_metal
+            where id = '9f000000-0000-4000-8000-000000000008') is distinct from 0 then
+          raise exception 'Cancelled sheet history was changed by reservation backfill';
+        end if;
+      end $$;
+    `)
+  }
 }
 
 console.log(
