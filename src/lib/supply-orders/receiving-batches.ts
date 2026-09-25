@@ -159,6 +159,7 @@ function aggregateRows(batchKey: string, rows: MaterialReceivingProjectionRow[])
   }))
   const machines = new Map<string, MaterialReceivingMachine>()
   for (const source of sources) {
+    if (!source.machine_id) continue
     if (!machines.has(source.machine_id)) {
       machines.set(source.machine_id, {
         id: source.machine_id,

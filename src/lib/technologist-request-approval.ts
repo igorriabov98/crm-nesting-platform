@@ -22,6 +22,9 @@ export type ApprovalSummaryItem = {
 
 export type ApprovalSummarySnapshot = {
   schemaVersion: 1
+  requestKind?: 'stock' | 'machine'
+  factoryId?: string | null
+  neededBy?: string | null
   sourceData?: Record<string, unknown>
   requestId: string
   machineId: string

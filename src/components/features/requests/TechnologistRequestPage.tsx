@@ -16,6 +16,7 @@ import { calculatePipeWeight, PipeSection } from './PipeSection'
 import { RequestStatusBadge } from './RequestStatusBadge'
 import { SheetMetalSection } from './SheetMetalSection'
 import { submitRequest, type TechnologistRequestPayload } from '@/lib/actions/technologist-requests'
+import { submitStockMaterialRequest } from '@/lib/actions/stock-material-requests'
 import { ROUTES } from '@/lib/constants/routes'
 import { isTechnologistRequestEditable } from '@/lib/technologist-request-editability'
 import type { Machine, RequestStatus, Supplier } from '@/lib/types'
@@ -37,6 +38,8 @@ type Props = {
   revisionNumber?: number | null
   requestNumber?: number
   approvalState?: string | null
+  stockMode?: boolean
+  canSubmit?: boolean
 }
 
 type PaintRows = TechnologistRequestPayload['paint']
@@ -45,7 +48,7 @@ type MeshRows = TechnologistRequestPayload['meshItems']
 type ChainCordRows = TechnologistRequestPayload['chainCords']
 type PipeRows = TechnologistRequestPayload['pipes']
 
-export function TechnologistRequestPage({ machine, data, suppliers, canManage, steelTypes, backHref, backLabel, readOnlyMessage, revisionNumber, requestNumber, approvalState }: Props) {
+export function TechnologistRequestPage({ machine, data, suppliers, canManage, steelTypes, backHref, backLabel, readOnlyMessage, revisionNumber, requestNumber, approvalState, stockMode = false, canSubmit = true }: Props) {
   const router = useRouter()
   const [status, setStatus] = useState<RequestStatus>(data.request.status)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -93,6 +96,17 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
   }
 
   const handleSubmitRequest = async () => {
+    if (stockMode) {
+      setIsSubmitting(true)
+      try {
+        const result = await submitStockMaterialRequest(data.request.id)
+        if (!result.success) throw new Error(result.error || 'Не удалось отправить заявку')
+        toast.success('Заявка отправлена на финансовое согласование')
+        router.push(ROUTES.TECHNOLOGIST_REQUEST_RESULTS)
+      } catch (error) { toast.error(error instanceof Error ? error.message : 'Не удалось отправить заявку') }
+      finally { setIsSubmitting(false) }
+      return
+    }
     if (status === 'pending_stock_check' || status === 'stock_checked') {
       openStockCheck()
       return
@@ -125,11 +139,11 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
             <h1 className="text-2xl font-bold text-[#1B3A6B]">
-              {revision ? 'Исправленная позиция' : 'Заявка на материалы'}: {machine.name}
+              {stockMode ? 'Заявка на склад' : revision ? 'Исправленная позиция' : 'Заявка на материалы'}: {machine.name}
             </h1>
             {revisionNumber && <p className="mt-1 font-semibold text-amber-800">Черновик заявки №{requestNumber || '—'}.{revisionNumber}</p>}
             <p className="mt-1 text-sm text-slate-500">
-              {revision
+              {stockMode ? 'Позиции закупаются в полном объёме и поступают в свободный остаток завода.' : revision
                 ? 'Измените материал, характеристики или количество. Можно добавить позиции той же категории. Все позиции проходят согласование вместе.'
                 : 'Состав материалов, деловой отход и позиции к заказу.'}
             </p>
@@ -202,16 +216,17 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
           <Button type="button" variant="outline" onClick={() => router.refresh()}>
             Сохранить черновик
           </Button>
-          {(status === 'draft' || status === 'pending_stock_check' || status === 'stock_checked') && (
-            <Button type="button" onClick={handleSubmitRequest} disabled={isSubmitting}>
+          {(stockMode ? status === 'draft' : (status === 'draft' || status === 'pending_stock_check' || status === 'stock_checked')) && (
+            <Button type="button" onClick={handleSubmitRequest} disabled={isSubmitting || !canSubmit}>
               <Send className="mr-2 h-4 w-4" />
-              {status === 'draft'
+              {stockMode ? 'Отправить на согласование' : status === 'draft'
                 ? revision ? 'Проверить склад' : 'Заявка оформлена'
                 : status === 'stock_checked'
                   ? 'Перейти к брони основного склада'
                   : revision ? 'Вернуться к проверке склада' : 'Перейти к брони делового остатка'}
             </Button>
           )}
+          {stockMode && !canSubmit && <span className="self-center text-sm text-amber-700">Сохраните название и дату перед отправкой.</span>}
         </div>
       )}
     </div>

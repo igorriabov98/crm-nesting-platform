@@ -73,6 +73,12 @@ export function MaterialReceivingAllocationDialog({
     exceedsReceipt,
     canConfirm: allocationCanConfirm,
   } = calculation
+  const stockPhysical = selectedRows.filter((row) => !row.machine_id)
+    .reduce((sum, row) => sum + row.physical, 0)
+  const stockPieces = isBar ? selectedRows.filter((row) => !row.machine_id)
+    .reduce((sum, row) => sum + row.value, 0) : 0
+  const machinePhysical = allocatedPhysical - stockPhysical
+  const machinePieces = allocatedPieces - stockPieces
   const futureImpact = isBar ? { reduction: 0, protected: 0 } : rows.reduce((totals, row) => {
     if (!row.is_eligible || row.value <= 0) return totals
     const overlap = Math.min(row.logical, row.future_planned_quantity)
@@ -149,14 +155,14 @@ export function MaterialReceivingAllocationDialog({
           <Summary
             label="Будет забронировано под машины"
             value={isBar
-              ? `${formatAmount(allocatedPieces)} шт / ${formatAmount(allocatedPhysical)} ${preview.unit}`
-              : `${formatAmount(allocatedPhysical)} ${preview.unit}`}
+              ? `${formatAmount(machinePieces)} шт / ${formatAmount(machinePhysical)} ${preview.unit}`
+              : `${formatAmount(machinePhysical)} ${preview.unit}`}
           />
           <Summary
             label="Свободный склад"
             value={isBar
-              ? `${formatAmount(freePieces)} шт / ${formatAmount(freeQuantity)} ${preview.unit}`
-              : `${formatAmount(freeQuantity)} ${preview.unit}`}
+              ? `${formatAmount(freePieces + stockPieces)} шт / ${formatAmount(freeQuantity + stockPhysical)} ${preview.unit}`
+              : `${formatAmount(freeQuantity + stockPhysical)} ${preview.unit}`}
           />
           {!isBar && (
             <Summary
@@ -174,13 +180,13 @@ export function MaterialReceivingAllocationDialog({
 
         <div className="min-h-0 overflow-y-auto overscroll-contain px-3 py-3 sm:px-6">
           <div className="hidden grid-cols-[minmax(190px,1fr)_minmax(180px,1fr)_repeat(4,minmax(95px,.62fr))_minmax(145px,.8fr)] gap-3 border-b px-3 py-2 text-xs font-semibold uppercase text-muted-foreground lg:grid">
-            <div>Машина и дата Заготовки</div>
+            <div>Источник и дата потребности</div>
             <div>Характеристики материала</div>
             <div>Заявлено к поставке</div>
             <div>Принято ранее</div>
             <div>Осталось принять</div>
             <div>Будущий график</div>
-            <div>{isBar ? 'Хлыстов для машины' : 'Бронь из текущего прихода'}</div>
+            <div>{isBar ? 'Хлыстов по заявке' : 'Из текущего прихода'}</div>
           </div>
 
           <div className="divide-y rounded-xl border">
@@ -202,7 +208,7 @@ export function MaterialReceivingAllocationDialog({
                   <div className="mt-1 flex items-start gap-1.5 text-xs text-muted-foreground">
                     <CalendarClock className="mt-0.5 size-3.5 shrink-0" />
                     <span>
-                      Заготовка: {row.cutting_date ? formatDate(row.cutting_date) : 'дата не указана'}
+                      {row.machine_id ? 'Заготовка' : 'На склад'}: {row.cutting_date ? formatDate(row.cutting_date) : 'дата не указана'}
                       <span className="block sm:inline"> · Мат.план: {row.material_date ? formatDate(row.material_date) : 'не указан'}</span>
                     </span>
                   </div>
@@ -254,7 +260,7 @@ export function MaterialReceivingAllocationDialog({
 
                 <div>
                   <label className="text-xs font-medium text-muted-foreground" htmlFor={`receipt-allocation-${row.id}`}>
-                    {isBar ? 'Хлыстов для машины' : 'Бронь под машину'}
+                    {!row.machine_id ? 'В свободный остаток' : isBar ? 'Хлыстов для машины' : 'Бронь под машину'}
                   </label>
                   <input
                     id={`receipt-allocation-${row.id}`}
@@ -282,14 +288,14 @@ export function MaterialReceivingAllocationDialog({
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
               <PackageOpen className="mr-1.5 inline size-4" />
-              Нераспределённый приход останется свободным:{' '}
+              Свободный остаток после приёмки:{' '}
               <strong>
-                {isBar && `${formatAmount(freePieces)} шт / `}{formatAmount(freeQuantity)} {preview.unit}
+                {isBar && `${formatAmount(freePieces + stockPieces)} шт / `}{formatAmount(freeQuantity + stockPhysical)} {preview.unit}
               </strong>
             </div>
             <div className="rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-900">
               Будет забронировано под машины:{' '}
-              <strong>{formatSupplyProgress(allocatedPhysical, preview.unit, isBar ? allocatedPieces : null)}</strong>
+              <strong>{formatSupplyProgress(machinePhysical, preview.unit, isBar ? machinePieces : null)}</strong>
             </div>
           </div>
 

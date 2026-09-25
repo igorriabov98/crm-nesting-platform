@@ -1,13 +1,14 @@
 import { withPagePermission } from '@/lib/permissions/page-guard'
-import { MaterialRequestQueue } from '@/components/features/material-requests/MaterialRequestQueue'
+import { MaterialRequestsWorkspace } from '@/components/features/material-requests/MaterialRequestsWorkspace'
 import { getMaterialRequestQueue } from '@/lib/actions/material-request-queue'
+import { getStockMaterialRequests } from '@/lib/actions/stock-material-requests'
 
 export const metadata = {
   title: 'Заявки на материалы | CRM Завода',
 }
 
 async function MaterialRequestsPage() {
-  const result = await getMaterialRequestQueue()
+  const [result, stock] = await Promise.all([getMaterialRequestQueue(), getStockMaterialRequests()])
 
   if (result.error || !result.data) {
     return (
@@ -20,10 +21,19 @@ async function MaterialRequestsPage() {
     )
   }
 
+  if (stock.error || !stock.data) {
+    return <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+      Ошибка загрузки заявок на склад: {stock.error || 'Неизвестная ошибка'}
+    </div>
+  }
+
   return (
-    <MaterialRequestQueue
+    <MaterialRequestsWorkspace
       items={result.data.items}
       canViewAll={result.data.canViewAll}
+      stockItems={stock.data.items}
+      factories={stock.data.factories}
+      canCreateStock={stock.data.canCreate}
     />
   )
 }

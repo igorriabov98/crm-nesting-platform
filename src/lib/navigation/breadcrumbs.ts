@@ -61,6 +61,7 @@ export const BREADCRUMB_SEGMENT_LABELS: Record<string, string> = {
   login: 'Вход',
   'long-stock-layout': 'Раскладка хлыстов',
   'material-requests': 'Бронь склада',
+  stock: 'На склад',
   meetings: 'Совещания',
   nesting: 'Раскладка',
   orders: 'Заказы снабжения',

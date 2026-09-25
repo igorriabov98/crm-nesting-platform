@@ -614,6 +614,7 @@ async function getRequestMeta(db: LooseDb, requestId: string) {
   if (error) throw new Error(error.message || 'ÐÐµ ÑƒÐ´Ð°Ð»Ð¾ÑÑŒ Ð·Ð°Ð³Ñ€ÑƒÐ·Ð¸Ñ‚ÑŒ Ð·Ð°ÑÐ²ÐºÑƒ')
   if (!data) throw new Error('Ð—Ð°ÑÐ²ÐºÐ° Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½Ð°')
   const request = data as TechnologistRequest
+  if (request.request_kind === 'stock' || !request.machine_id) throw new Error('Заявка на склад не использует бронь машины')
 
   const [{ data: machineData, error: machineError }, { data: userData }] = await Promise.all([
     db.from('machines').select('id, name, factory_id, planned_material_date, created_at, is_archived').eq('id', request.machine_id).single(),
@@ -624,6 +625,7 @@ async function getRequestMeta(db: LooseDb, requestId: string) {
 
   return {
     ...request,
+    machine_id: request.machine_id,
     machine: machineData as Pick<Machine, 'id' | 'name' | 'factory_id' | 'planned_material_date' | 'created_at' | 'is_archived'>,
     technologist_name: (userData as { full_name?: string } | null)?.full_name || null,
   } satisfies RequestWithRelations
@@ -1285,6 +1287,7 @@ export async function reserveAllAvailable(requestId: string, factoryId: string) 
     let reservedCount = 0
     let skippedCount = 0
     const machineId = data.request.machine_id
+    if (!machineId) throw new Error('Заявка на склад не использует бронь машины')
     const reserveRow = async (
       table: RequestItemTable,
       row: SupplyRequestRow<Record<string, unknown> & { id: string; material_id: string | null }>,
@@ -1372,7 +1375,8 @@ export async function getSupplyRequestCards() {
       .order('created_at', { ascending: false })
     if (error) throw new Error(error.message || 'ÐÐµ ÑƒÐ´Ð°Ð»Ð¾ÑÑŒ Ð·Ð°Ð³Ñ€ÑƒÐ·Ð¸Ñ‚ÑŒ Ð·Ð°ÑÐ²ÐºÐ¸')
 
-    const requests = (requestsData || []) as TechnologistRequest[]
+    const requests = ((requestsData || []) as TechnologistRequest[])
+      .filter((request): request is TechnologistRequest & { machine_id: string } => Boolean(request.machine_id))
     if (!requests.length) return { data: [], error: null }
 
     const machineIds = Array.from(new Set(requests.map((request) => request.machine_id)))

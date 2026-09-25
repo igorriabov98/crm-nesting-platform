@@ -84,8 +84,8 @@ import {
 } from './supply-order-view'
 import {
   deliveredSupplyQuantity,
-  freeStockSupplyQuantity,
   reservedSupplyQuantity,
+  splitReceiptStock,
 } from '@/lib/supply-orders/receiving-supply-progress'
 
 type SupplyOrderSummaryPageProps = {
@@ -430,7 +430,7 @@ function MaterialOrderCard({
               {routes.map((route) => (
                 <li key={route.requestId}>
                   <Link
-                    href={`${ROUTES.SALES_PLAN}/${route.machineId}`}
+                    href={route.machineId ? `${ROUTES.SALES_PLAN}/${route.machineId}` : `${ROUTES.SUPPLY_ORDERS}/stock/${route.requestId}`}
                     className="flex min-h-12 items-center justify-between gap-3 px-3 py-2 text-sm transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none"
                   >
                     <span className="min-w-0">
@@ -959,7 +959,8 @@ function FactoryDeliveryEditorForm({
             <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Поставка на завод</div>
             <div className="truncate font-semibold text-foreground">{factory.factory_name}</div>
             <div className="mt-0.5 text-xs text-muted-foreground tabular-nums">
-              {formatAmount(factory.quantity)} {aggregate.unit} · {factory.machine_count} маш. · поставщики: {supplierSummary(factory)}
+              {formatAmount(factory.quantity)} {aggregate.unit} · {factory.machine_count} маш.
+              {factory.items.some((item) => !item.machine_id) && ' · На склад'} · поставщики: {supplierSummary(factory)}
             </div>
           </div>
         </div>
@@ -1344,7 +1345,7 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
   return (
     <div id={id} className="border-t border-border/60 bg-muted/25 p-4">
       <div className="hidden grid-cols-[minmax(150px,0.8fr)_110px_155px_minmax(230px,1.1fr)_minmax(190px,0.9fr)_230px] gap-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground xl:grid">
-        <span>Машина</span>
+        <span>Источник заявки</span>
         <span>Количество</span>
         <span>Статус</span>
         <span>К закупке</span>
@@ -1358,7 +1359,7 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
           const cancelledReturn = isCancelledReturnedSupplyOrderSource(item)
           return (
             <div key={`${item.table}:${item.id}`} className="grid grid-cols-[minmax(150px,0.8fr)_110px_155px_minmax(230px,1.1fr)_minmax(190px,0.9fr)_230px] items-center gap-3 rounded-xl border border-border/60 bg-background px-3 py-2.5 text-sm">
-              <Link href={`${ROUTES.SALES_PLAN}/${item.machine_id}`} className="font-medium text-primary hover:underline">
+              <Link href={item.machine_id ? `${ROUTES.SALES_PLAN}/${item.machine_id}` : `${ROUTES.SUPPLY_ORDERS}/stock/${item.request_id}`} className="font-medium text-primary hover:underline">
                 {item.machine_name}
               </Link>
               <span className="tabular-nums text-foreground">{formatAmount(item.quantity)} {item.unit}</span>
@@ -1410,7 +1411,7 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
           return (
             <article key={`${item.table}:${item.id}`} className="rounded-xl border border-border/70 bg-background p-3">
               <div className="flex items-start justify-between gap-3">
-                <Link href={`${ROUTES.SALES_PLAN}/${item.machine_id}`} className="font-semibold text-primary hover:underline">{item.machine_name}</Link>
+                <Link href={item.machine_id ? `${ROUTES.SALES_PLAN}/${item.machine_id}` : `${ROUTES.SUPPLY_ORDERS}/stock/${item.request_id}`} className="font-semibold text-primary hover:underline">{item.machine_name}</Link>
                 {cancelledReturn ? (
                   <Badge variant="outline" className="border-slate-300 bg-slate-100 text-slate-800">Отменено</Badge>
                 ) : returnedToTechnologist ? (
@@ -1568,6 +1569,16 @@ function dateCountLabel(count: number) {
 function makeDeliveredScheduleGroups(factory: SupplyOrderAggregateFactory, dateKey?: string) {
   const groups = new Map<string, ScheduleGroup>()
   const scheduleIds = new Set(factory.items.flatMap((item) => item.delivery_schedules.map((schedule) => schedule.id)))
+  const machineReservationsByReceipt = new Map<string, number>()
+  for (const item of factory.items) {
+    if (!item.machine_id) continue
+    for (const schedule of item.delivery_schedules) {
+      if (schedule.status !== 'delivered') continue
+      const receiptId = schedule.receipt_parent_schedule_id || schedule.id
+      machineReservationsByReceipt.set(receiptId,
+        (machineReservationsByReceipt.get(receiptId) || 0) + reservedSupplyQuantity(schedule))
+    }
+  }
   for (const item of factory.items) {
     for (const schedule of item.delivery_schedules) {
       if (schedule.status !== 'delivered') continue
@@ -1588,8 +1599,9 @@ function makeDeliveredScheduleGroups(factory: SupplyOrderAggregateFactory, dateK
       }
       current.quantity += Number(schedule.quantity || 0)
       current.received_quantity += deliveredSupplyQuantity(schedule)
-      current.reserved_quantity += reservedSupplyQuantity(schedule)
-      current.free_stock_quantity += freeStockSupplyQuantity(schedule)
+      const split = splitReceiptStock(deliveredSupplyQuantity(schedule), machineReservationsByReceipt.get(schedule.id) || 0)
+      current.reserved_quantity += split.machineReserved
+      current.free_stock_quantity += split.freeStock
       current.piece_count = Number(current.piece_count || 0) + Number(
         schedule.allocated_piece_count ?? schedule.received_piece_count ?? 0,
       )

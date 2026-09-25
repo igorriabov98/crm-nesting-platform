@@ -253,7 +253,7 @@ function MachineLink({ item }: { item: SupplyOrderHistoryItem }) {
   return (
     <div className="min-w-0">
       <Link
-        href={`${ROUTES.SALES_PLAN}/${item.machine_id}`}
+        href={item.machine_id ? `${ROUTES.SALES_PLAN}/${item.machine_id}` : `${ROUTES.SUPPLY_ORDERS}/stock/${item.request_id}`}
         className="inline-flex max-w-full items-center gap-2 font-semibold text-[#1B3A6B] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/30"
       >
         <Factory className="h-4 w-4 shrink-0" />
@@ -293,6 +293,10 @@ function MaterialSummary({ item }: { item: SupplyOrderHistoryItem }) {
 }
 
 function RequestLinks({ item }: { item: SupplyOrderHistoryItem }) {
+  if (!item.machine_id) return <Link href={`${ROUTES.SUPPLY_ORDERS}/stock/${item.request_id}`}
+    className="inline-flex min-h-9 items-center rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-[#1B3A6B] hover:bg-slate-50">
+    Заявка на склад
+  </Link>
   if (!item.revision) return <RequestLink requestId={item.request_id} />
   return (
     <div className="flex flex-col items-start gap-1">
