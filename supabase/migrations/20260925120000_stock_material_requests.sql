@@ -171,7 +171,9 @@ BEGIN
   IF auth.role() = 'service_role' THEN RETURN coalesce(NEW, OLD); END IF;
   v_request_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.request_id ELSE NEW.request_id END;
   SELECT * INTO v_request FROM public.technologist_requests WHERE id = v_request_id;
-  IF v_request.request_kind <> 'stock' THEN RETURN coalesce(NEW, OLD); END IF;
+  IF NOT FOUND OR v_request.request_kind IS DISTINCT FROM 'stock' THEN
+    RETURN coalesce(NEW, OLD);
+  END IF;
   IF TG_OP <> 'DELETE' THEN
     v_row := to_jsonb(NEW);
     FOR v_field IN SELECT field_name FROM jsonb_object_keys(v_row) AS names(field_name)
