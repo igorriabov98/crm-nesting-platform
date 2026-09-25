@@ -79,7 +79,9 @@ assert.match(sidebarQueues, /buildNonArchivedOrUnscopedMachineFilter/)
 assert.match(sidebarQueues, /\.eq\('machines\.is_archived', false\)/)
 
 // Existing production, supply and warehouse queues must keep their archive guards.
-assert.match(source('src/lib/actions/supply-orders.ts'), /machine\.is_archived/)
+const supplyOrders = source('src/lib/actions/supply-orders.ts')
+assert.match(supplyOrders, /function usableSupplyRequest\(request: RequestRow\)/)
+assert.match(supplyOrders, /request\.request_kind === 'stock' \|\| Boolean\(request\.machines && !request\.machines\.is_archived\)/)
 assert.match(source('src/lib/actions/material-request-queue.ts'), /\.eq\('is_archived', false\)/)
 assert.match(source('src/lib/actions/production-plan.ts'), /\.eq\('is_archived', false\)/)
 assert.match(source('src/lib/actions/nesting-batches.ts'), /\.eq\('is_archived', false\)/)
