@@ -52,9 +52,10 @@ export type InventoryTransferMeasuredQuantity = {
   unit: string
 }
 
-export function materialCategoryLabel(category: string | null) {
+export function materialCategoryLabel(category: string | null, unit?: string | null) {
   if (!category) return null
-  return (MATERIAL_CATEGORY_LABELS as Record<string, string>)[category] || category
+  const displayCategory = category === 'pipe' && unit === 'кг' ? 'circle' : category
+  return (MATERIAL_CATEGORY_LABELS as Record<string, string>)[displayCategory] || displayCategory
 }
 
 export function inventoryTransferMaterialCharacteristics(input: {

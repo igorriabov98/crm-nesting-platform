@@ -179,6 +179,8 @@ assert.equal(inventoryTransferReceiptPrimaryQuantity(measuredTransferItem, 1), 5
 assert.equal(materialCategoryLabel('knives'), 'Ножи')
 assert.equal(materialCategoryLabel('circle'), 'Круг')
 assert.equal(materialCategoryLabel('sheet_metal'), 'Листовой металл')
+assert.equal(materialCategoryLabel('pipe', 'кг'), 'Круг')
+assert.equal(materialCategoryLabel('pipe', 'мм'), 'Труба')
 assert.deepEqual(inventoryTransferMaterialCharacteristics({
   category: 'sheet_metal',
   steelTypeName: 'Hardox 450',
@@ -386,7 +388,7 @@ assert.match(transportActions, /'финиш'/)
 assert.match(transportActions, /formatTransportCarriedQuantity/)
 assert.match(transportActions, /pieceCount: item\.remainingSecondaryQuantity/)
 assert.match(transportActions, /Длина хлыста/)
-assert.match(transportActions, /materialCategoryLabel\(item\.materialCategory\)/)
+assert.match(transportActions, /materialCategoryLabel\(item\.materialCategory, item\.unit\)/)
 assert.match(transportActions, /weightKg: item\.weightKg/)
 assert.doesNotMatch(transportActions, /characteristics: need\.characteristics,/)
 

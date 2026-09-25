@@ -3,9 +3,8 @@
 import { useMemo, useState, useTransition } from 'react'
 import Link from 'next/link'
 import { toast } from 'sonner'
-import { AlertTriangle, Plus, Save } from 'lucide-react'
+import { Plus, Save } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -13,22 +12,19 @@ import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ACTIVE_MATERIAL_CATEGORIES, MATERIAL_CATEGORY_LABELS, defaultMaterialNameForCategory } from '@/lib/constants/procurement'
 import { createMaterial, updateMaterial, type MaterialWithSupplier } from '@/lib/actions/materials'
-import type { SupplierWithRelations } from '@/lib/actions/suppliers'
 import type { MaterialCategory } from '@/lib/types'
 
 type Props = {
   materials: MaterialWithSupplier[]
-  suppliers: SupplierWithRelations[]
   page: number
   pageSize: number
   total: number
 }
 
-export function MaterialsAdminPage({ materials, suppliers, page, pageSize, total }: Props) {
+export function MaterialsAdminPage({ materials, page, pageSize, total }: Props) {
   const [rows, setRows] = useState(materials)
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState<string>('all')
-  const [supplier, setSupplier] = useState<string>('all')
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const [newNameTouched, setNewNameTouched] = useState(false)
@@ -38,21 +34,15 @@ export function MaterialsAdminPage({ materials, suppliers, page, pageSize, total
 
   const filtered = useMemo(() => rows.filter((row) => {
     if (search && !row.name.toLowerCase().includes(search.toLowerCase())) return false
-    if (category !== 'all' && row.category !== category) return false
-    if (supplier === 'none' && row.default_supplier_id) return false
-    if (supplier !== 'all' && supplier !== 'none' && row.default_supplier_id !== supplier) return false
+    if (category !== 'all' && row.category !== category
+      && !(category === 'circle' && row.category === 'pipe' && row.has_wire_variant)) return false
+    if (category === 'pipe' && row.category === 'pipe' && row.has_wire_variant && !row.has_pipe_variant) return false
     return true
-  }), [category, rows, search, supplier])
+  }), [category, rows, search])
 
   const getCategoryLabel = (value: string) => {
     if (value === 'all') return 'Все категории'
     return MATERIAL_CATEGORY_LABELS[value as keyof typeof MATERIAL_CATEGORY_LABELS] || value || 'Категория'
-  }
-
-  const getSupplierLabel = (value: string | null | undefined, emptyLabel = 'Не назначен') => {
-    if (!value || value === 'none') return emptyLabel
-    if (value === 'all') return 'Все поставщики'
-    return suppliers.find((item) => item.id === value)?.name || 'Поставщик не найден'
   }
 
   const save = (id: string, values: Partial<MaterialWithSupplier>) => {
@@ -62,8 +52,7 @@ export function MaterialsAdminPage({ materials, suppliers, page, pageSize, total
         toast.error(result.error || 'Не удалось сохранить материал')
         return
       }
-      const supplierName = suppliers.find((item) => item.id === result.data?.default_supplier_id)?.name || null
-      setRows((current) => current.map((row) => row.id === id ? { ...row, ...result.data!, supplier_name: supplierName } : row))
+      setRows((current) => current.map((row) => row.id === id ? { ...row, ...result.data! } : row))
       toast.success('Материал сохранен')
     })
   }
@@ -157,18 +146,6 @@ export function MaterialsAdminPage({ materials, suppliers, page, pageSize, total
             {ACTIVE_MATERIAL_CATEGORIES.map((item) => <SelectItem key={item} value={item}>{MATERIAL_CATEGORY_LABELS[item]}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Select value={supplier} onValueChange={(value) => setSupplier(value || 'all')}>
-          <SelectTrigger className="w-full md:w-[240px]">
-            <SelectValue placeholder="Все поставщики">
-              <span className="block truncate">{getSupplierLabel(supplier, 'Без поставщика')}</span>
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Все поставщики</SelectItem>
-            <SelectItem value="none">Без поставщика</SelectItem>
-            {suppliers.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}
-          </SelectContent>
-        </Select>
       </div>
 
       <div className="flex flex-col gap-2 rounded-xl border border-[#E8ECF0] bg-white px-4 py-3 text-sm text-[#6B7280] sm:flex-row sm:items-center sm:justify-between">
@@ -198,7 +175,6 @@ export function MaterialsAdminPage({ materials, suppliers, page, pageSize, total
               <tr>
                 <th className="min-w-[240px] px-4 py-3">Название</th>
                 <th className="min-w-[150px] px-4 py-3">Категория</th>
-                <th className="min-w-[260px] px-4 py-3">Поставщик</th>
                 <th className="min-w-[150px] px-4 py-3">Марка</th>
                 <th className="min-w-[140px] px-4 py-3">Толщина, мм</th>
                 <th className="min-w-[170px] px-4 py-3">Размер листа</th>
@@ -209,30 +185,13 @@ export function MaterialsAdminPage({ materials, suppliers, page, pageSize, total
             </thead>
             <tbody className="divide-y divide-[#E8ECF0]">
               {filtered.map((row) => (
-                <tr key={row.id} className={!row.default_supplier_id ? 'bg-amber-50/70' : undefined}>
+                <tr key={row.id}>
                   <td className="px-4 py-3 font-medium text-[#1B3A6B]">
                     {row.name}
-                    {!row.default_supplier_id && (
-                      <Badge variant="outline" className="ml-2 border-amber-300 bg-amber-100 text-amber-800">
-                        <AlertTriangle className="mr-1 h-3 w-3" />
-                        Без поставщика
-                      </Badge>
-                    )}
                   </td>
-                  <td className="px-4 py-3">{MATERIAL_CATEGORY_LABELS[row.category] ?? row.category}</td>
-                  <td className="px-4 py-3">
-                    <Select value={row.default_supplier_id || 'none'} onValueChange={(value) => save(row.id, { default_supplier_id: value === 'none' ? null : value })}>
-                      <SelectTrigger className="w-full min-w-[240px]">
-                        <SelectValue placeholder="Не назначен">
-                          <span className="block truncate">{getSupplierLabel(row.default_supplier_id, 'Не назначен')}</span>
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">Не назначен</SelectItem>
-                        {suppliers.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </td>
+                  <td className="px-4 py-3">{row.category === 'pipe' && row.has_wire_variant
+                    ? row.has_pipe_variant ? 'Круг / Труба' : 'Круг'
+                    : MATERIAL_CATEGORY_LABELS[row.category] ?? row.category}</td>
                   <td className="px-4 py-3">{row.category === 'sheet_metal' ? list(row.sheet_grades) : <span className="text-slate-400">-</span>}</td>
                   <td className="px-4 py-3">{row.category === 'sheet_metal' ? list(row.sheet_thicknesses) : <span className="text-slate-400">-</span>}</td>
                   <td className="px-4 py-3">{row.category === 'sheet_metal' ? list(row.sheet_sizes) : <span className="text-slate-400">-</span>}</td>

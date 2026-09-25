@@ -1192,18 +1192,8 @@ async function loadSelectedOrderItems(
     return []
   })
 
-  const materialIds = Array.from(new Set(rawItems.map((item) => item.material_id).filter(Boolean))) as string[]
-  const materialsRes = materialIds.length
-    ? await db.from('materials').select('id, default_supplier_id').in('id', materialIds)
-    : { data: [], error: null }
-  if (materialsRes.error) throw new Error(materialsRes.error.message || 'Не удалось загрузить материалы')
-  const materialSupplierMap = new Map(((materialsRes.data || []) as { id: string; default_supplier_id: string | null }[]).map((item) => [item.id, item.default_supplier_id]))
-
   const longStockPlanMap = await loadLongStockPurchasePlanMap(createTrustedLongStockReadDb(), rawItems)
-  return rawItems.map((item) => applyLongStockPurchasePlan({
-    ...item,
-    supplier_id: item.supplier_id || (item.material_id ? materialSupplierMap.get(item.material_id) || null : null),
-  }, longStockPlanMap))
+  return rawItems.map((item) => applyLongStockPurchasePlan(item, longStockPlanMap))
 }
 
 export async function getSupplyTransportNeeds(): Promise<{
@@ -1479,16 +1469,7 @@ export async function getSupplyOrders(
       .filter((item) => item.order_status !== 'cancelled' && (item.to_order > 0 || isReturnedSupplyPosition(item)))
 
     const materialIds = Array.from(new Set(orderableRawItems.map((item) => item.material_id).filter(Boolean))) as string[]
-    const materialsRes = materialIds.length
-      ? await db.from('materials').select('id, default_supplier_id').in('id', materialIds)
-      : { data: [], error: null }
-    if (materialsRes.error) throw new Error(materialsRes.error.message || 'Не удалось загрузить материалы')
-    const materialSupplierMap = new Map(((materialsRes.data || []) as { id: string; default_supplier_id: string | null }[]).map((item) => [item.id, item.default_supplier_id]))
-
-    const rawItemsWithSuppliers = orderableRawItems.map((item) => ({
-      ...item,
-      supplier_id: item.supplier_id || (item.material_id ? materialSupplierMap.get(item.material_id) || null : null),
-    }))
+    const rawItemsWithSuppliers = orderableRawItems
     const stockFactoryIds = Array.from(new Set(orderableRawItems.map((item) => {
       const request = requestMap.get(item.request_id)
       return request ? requestFactoryId(request) : null
@@ -1779,14 +1760,10 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
       ...chainCords.map((row) => makeItem('request_chain_cord', 'chain_cord', row, row.parameters, supplierForRow(row))),
     ].filter((item): item is HistoryInputItem => Boolean(item))
 
-    const materialIds = Array.from(new Set(rawItems.map((item) => item.material_id).filter(Boolean))) as string[]
     const activeRevisionItemIds = rawItems
       .filter((item) => isSupplyPositionTable(item.table))
       .map((item) => item.id)
-    const [materialsRes, schedulesRes, revisionsRes] = await Promise.all([
-      materialIds.length
-        ? db.from('materials').select('id, default_supplier_id').in('id', materialIds)
-        : Promise.resolve({ data: [], error: null } as DbResult),
+    const [schedulesRes, revisionsRes] = await Promise.all([
       rawItems.length
         ? db.from('supply_order_delivery_schedules').select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at').in('request_item_id', rawItems.map((item) => item.id)).order('delivery_date', { ascending: false })
         : Promise.resolve({ data: [], error: null } as DbResult),
@@ -1797,15 +1774,10 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
           .in('source_request_item_id', activeRevisionItemIds)
         : Promise.resolve({ data: [], error: null } as DbResult),
     ])
-    if (materialsRes.error) throw new Error(materialsRes.error.message || 'Не удалось загрузить материалы')
     if (schedulesRes.error) throw new Error(schedulesRes.error.message || 'Не удалось загрузить график поставок')
     if (revisionsRes.error) throw new Error(revisionsRes.error.message || 'Не удалось загрузить историю исправлений')
 
-    const materialSupplierMap = new Map(((materialsRes.data || []) as { id: string; default_supplier_id: string | null }[]).map((item) => [item.id, item.default_supplier_id]))
-    const items = rawItems.map((item) => ({
-      ...item,
-      supplier_id: item.supplier_id || (item.material_id ? materialSupplierMap.get(item.material_id) || null : null),
-    }))
+    const items = rawItems
     const scheduleRows = ((schedulesRes.data || []) as Array<SupplyOrderDeliverySchedule & { request_item_table: string; request_item_id: string }>)
       .filter((row) => rawItems.some((item) => item.table === row.request_item_table && item.id === row.request_item_id))
     const schedulesByItem = new Map<string, typeof scheduleRows>()
@@ -2091,17 +2063,7 @@ async function loadAggregateInputItems(
     .filter((item) => item.order_status !== 'cancelled' || isCancelledReturnedSupplyPosition(item))
     .filter((item) => includeReturned || (!isReturnedSupplyPosition(item) && !isCancelledReturnedSupplyPosition(item)))
 
-  const materialIds = Array.from(new Set(orderableItems.map((item) => item.material_id).filter(Boolean))) as string[]
-  const materialsRes = materialIds.length
-    ? await db.from('materials').select('id, default_supplier_id').in('id', materialIds)
-    : { data: [], error: null }
-  if (materialsRes.error) throw new Error(materialsRes.error.message || 'Не удалось загрузить материалы')
-  const materialSupplierMap = new Map(((materialsRes.data || []) as { id: string; default_supplier_id: string | null }[]).map((item) => [item.id, item.default_supplier_id]))
-
-  return orderableItems.map((item) => ({
-    ...item,
-    supplier_id: item.supplier_id || (item.material_id ? materialSupplierMap.get(item.material_id) || null : null),
-  }))
+  return orderableItems
 }
 
 async function loadFactoryNameMap(db: LooseDb, factoryIds: string[]) {

@@ -58,7 +58,9 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
   const [chainCordRows, setChainCordRows] = useState(data.chainCords)
   const [pipeRows, setPipeRows] = useState(data.pipes)
   const revision = data.positionRevision || null
-  const revisionTab = revision?.category === 'sheet_metal' ? 'sheet' : revision?.category || 'sheet'
+  const isWireRevision = revision?.category === 'pipe' && data.pipes.some((item) =>
+    item.id === revision.replacement_request_item_id && item.pipe_type === 'wire')
+  const revisionTab = revision?.category === 'sheet_metal' ? 'sheet' : isWireRevision ? 'circle' : revision?.category || 'sheet'
   const canEdit = canManage && isTechnologistRequestEditable(status)
   const resolvedReadOnlyMessage = readOnlyMessage || (
     isTechnologistRequestEditable(status)
@@ -78,7 +80,10 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
     setChainCordRows(rows)
   }, [])
   const handlePipeRowsChange = useCallback((rows: PipeRows) => {
-    setPipeRows(rows)
+    setPipeRows((current) => [...current.filter((item) => item.pipe_type === 'wire'), ...rows])
+  }, [])
+  const handleWireRowsChange = useCallback((rows: PipeRows) => {
+    setPipeRows((current) => [...current.filter((item) => item.pipe_type !== 'wire'), ...rows])
   }, [])
   const totalWeight = [
     ...data.sheetMetal,
@@ -165,8 +170,8 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
       <Tabs defaultValue={revisionTab} className="w-full">
         <TabsList className="h-auto w-full justify-start overflow-x-auto rounded-lg border border-slate-200 bg-white p-1">
           {(!revision || revision.category === 'sheet_metal') && <TabsTrigger value="sheet">Листовой металл</TabsTrigger>}
-          {(!revision || revision.category === 'circle') && <TabsTrigger value="circle">Круг</TabsTrigger>}
-          {(!revision || revision.category === 'pipe') && <TabsTrigger value="pipe">Труба</TabsTrigger>}
+          {(!revision || revision.category === 'circle' || isWireRevision) && <TabsTrigger value="circle">Круг</TabsTrigger>}
+          {(!revision || (revision.category === 'pipe' && !isWireRevision)) && <TabsTrigger value="pipe">Труба</TabsTrigger>}
           {(!revision || revision.category === 'knives') && <TabsTrigger value="knives">Ножи</TabsTrigger>}
           {(!revision || revision.category === 'paint') && <TabsTrigger value="paint">Краска</TabsTrigger>}
           {(!revision || revision.category === 'components') && <TabsTrigger value="components">Комплектация</TabsTrigger>}
@@ -178,11 +183,15 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
           {(!revision || revision.category === 'sheet_metal') && <TabsContent value="sheet" keepMounted className="outline-none">
             <SheetMetalSection requestId={data.request.id} items={data.sheetMetal} suppliers={suppliers.sheetMetal} canEdit={canEdit} steelTypes={steelTypes} allowStructureChanges={canEdit} />
           </TabsContent>}
-          {(!revision || revision.category === 'circle') && <TabsContent value="circle" keepMounted className="outline-none">
+          {(!revision || revision.category === 'circle' || isWireRevision) && <TabsContent value="circle" keepMounted className="outline-none">
             <CircleSection requestId={data.request.id} items={data.circles} isEditable={canEdit} steelTypes={steelTypes} allowStructureChanges={canEdit} />
+            <div className="mt-6 border-t border-slate-200 pt-5">
+              <h3 className="mb-3 text-base font-semibold text-[#1B3A6B]">Проволока · учёт в кг</h3>
+              <PipeSection requestId={data.request.id} items={data.pipes.filter((item) => item.pipe_type === 'wire')} isEditable={canEdit} steelTypes={steelTypes} onRowsChange={handleWireRowsChange} allowStructureChanges={canEdit} wireOnly />
+            </div>
           </TabsContent>}
-          {(!revision || revision.category === 'pipe') && <TabsContent value="pipe" keepMounted className="outline-none">
-            <PipeSection requestId={data.request.id} items={data.pipes} isEditable={canEdit} steelTypes={steelTypes} onRowsChange={handlePipeRowsChange} allowStructureChanges={canEdit} />
+          {(!revision || (revision.category === 'pipe' && !isWireRevision)) && <TabsContent value="pipe" keepMounted className="outline-none">
+            <PipeSection requestId={data.request.id} items={data.pipes.filter((item) => item.pipe_type !== 'wire')} isEditable={canEdit} steelTypes={steelTypes} onRowsChange={handlePipeRowsChange} allowStructureChanges={canEdit} />
           </TabsContent>}
           {(!revision || revision.category === 'knives') && <TabsContent value="knives" keepMounted className="outline-none">
             <KnivesSection requestId={data.request.id} items={data.knives} canEdit={canEdit} canEditStock={false} steelTypes={steelTypes} allowStructureChanges={canEdit} />

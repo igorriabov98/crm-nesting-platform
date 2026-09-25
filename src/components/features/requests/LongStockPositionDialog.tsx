@@ -373,7 +373,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     if (category === 'pipe' && selectedVariant?.pipe_type === 'wire') {
       setVariant(null)
       invalidateCalculation()
-      toast.info('Проволока добавляется прежней кнопкой «Добавить проволоку»')
+      toast.info('Проволока добавляется в разделе «Круг»')
       return
     }
     setVariant(source === 'existing_variant' ? selectedVariant ?? null : null)
@@ -674,6 +674,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
               <Label id={`${category}-material-title`}>Материал и точный вариант</Label>
               <MaterialSearch
                 category={config.searchCategory}
+                pipeVariantFilter={category === 'pipe' ? 'non_wire' : undefined}
                 value={material?.name ?? ''}
                 selectedMaterialId={material?.id}
                 placeholder="Начните вводить материал..."
@@ -692,7 +693,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
                 <p className="flex items-start gap-2 text-xs leading-5 text-amber-700" role="status">
                   <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
                   {category === 'pipe' && variant?.pipe_type === 'wire'
-                    ? 'Проволока остаётся в прежнем интерфейсе.'
+                    ? 'Проволока добавляется в разделе «Круг».'
                     : 'Расчёт доступен только после выбора конкретного варианта материала.'}
                 </p>
               )}

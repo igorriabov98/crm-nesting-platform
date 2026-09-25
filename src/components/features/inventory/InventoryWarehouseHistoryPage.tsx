@@ -19,6 +19,7 @@ import {
   PIPE_SUBTYPE_LABELS,
 } from '@/lib/constants/procurement'
 import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
+import { displayMaterialCategory } from '@/lib/materials/display-category'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import { ROUTES } from '@/lib/constants/routes'
@@ -265,12 +266,12 @@ export function InventoryWarehouseHistoryPage({
                   <td className="px-4 py-3 text-[#64748B]">{formatDateTime(row.created_at)}</td>
                   <td className="px-4 py-3"><Badge variant="outline" className={TYPE_CLASSES[row.transaction_type]}>{INVENTORY_TRANSACTION_LABELS[row.transaction_type]}</Badge></td>
                   <td className="px-4 py-3 font-semibold text-[#111827]">{row.material_name || 'Материал'}</td>
-                  <td className="px-4 py-3 text-[#475569]">{categoryLabel(row.material_category)}</td>
+                  <td className="px-4 py-3 text-[#475569]">{categoryLabel(displayMaterialCategory(row.material_category, row.variant?.pipe_type, row.unit))}</td>
                   <td className="px-4 py-3 text-[#64748B]">{variantSummary(row)}</td>
                   <td className={row.quantity < 0 ? 'px-4 py-3 font-semibold text-red-700' : 'px-4 py-3 font-semibold text-emerald-700'}>{quantityText(row)}</td>
                   <td className="whitespace-nowrap px-4 py-3 font-semibold tabular-nums text-[#111827]">{weightText(row)}</td>
                   <td className="px-4 py-3">{machineCell(row)}</td>
-                  <td className="px-4 py-3 text-[#475569]">{row.supplier_name || '-'}</td>
+                  <td className="px-4 py-3 text-[#475569]">{row.supplier_name || '—'}</td>
                   <td className="px-4 py-3 text-[#475569]">{row.user_name || '-'}</td>
                   <td className="px-4 py-3 text-[#64748B]">
                     {row.comment || '-'}
@@ -294,7 +295,7 @@ export function InventoryWarehouseHistoryPage({
                 <div>
                   <div className="text-xs text-[#64748B]">{formatDateTime(row.created_at)}</div>
                   <h4 className="mt-1 font-semibold text-[#111827]">{row.material_name || 'Материал'}</h4>
-                  <div className="mt-1 text-sm text-[#64748B]">{categoryLabel(row.material_category)}</div>
+                  <div className="mt-1 text-sm text-[#64748B]">{categoryLabel(displayMaterialCategory(row.material_category, row.variant?.pipe_type, row.unit))}</div>
                 </div>
                 <Badge variant="outline" className={TYPE_CLASSES[row.transaction_type]}>{INVENTORY_TRANSACTION_LABELS[row.transaction_type]}</Badge>
               </div>
@@ -303,7 +304,7 @@ export function InventoryWarehouseHistoryPage({
                 <InfoLine label="Количество" value={quantityText(row)} strong={row.quantity < 0 ? 'down' : 'up'} />
                 <InfoLine label="Вес" value={weightText(row)} />
                 <InfoLine label="Машина" value={row.machine_name || '-'} />
-                <InfoLine label="Поставщик" value={row.supplier_name || '-'} />
+                <InfoLine label="Поставщик" value={row.supplier_name || '—'} />
                 <InfoLine label="Кто" value={row.user_name || '-'} />
                 <InfoLine label="Комментарий" value={row.comment || '-'} />
                 {row.transaction_type === 'write_off' && <WriteOffSource row={row} />}

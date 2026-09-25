@@ -1923,7 +1923,7 @@ function validateDraftVariant(
     throw new Error('Категория варианта не соответствует позиции заявки')
   }
   if (table === 'request_pipe' && variant.pipe_type === 'wire') {
-    throw new Error('Проволока остаётся в прежнем интерфейсе')
+    throw new Error('Проволока добавляется в разделе «Круг»')
   }
   if (table === 'request_pipe') {
     const validationError = validatePipeProfileGeometry(variant)

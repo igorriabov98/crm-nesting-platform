@@ -1303,4 +1303,40 @@ BEGIN
 END;
 $$;
 
+DO $$
+DECLARE
+  v_supplier uuid := '90000000-0000-0000-0000-000000000001';
+BEGIN
+  PERFORM public.fn_add_inventory_receipt(
+    p_material_id := '00000000-0000-0000-0000-000000000012',
+    p_quantity := 1,
+    p_unit := 'шт',
+    p_performed_by := '00000000-0000-0000-0000-000000000002',
+    p_comment := 'manual-no-supplier-regression',
+    p_supplier_id := NULL,
+    p_material_variant_id := '00000000-0000-0000-0000-000000000013',
+    p_factory_id := '00000000-0000-0000-0000-000000000001'
+  );
+  PERFORM public.fn_add_inventory_receipt(
+    p_material_id := '00000000-0000-0000-0000-000000000012',
+    p_quantity := 2,
+    p_unit := 'шт',
+    p_performed_by := '00000000-0000-0000-0000-000000000002',
+    p_comment := 'manual-explicit-supplier-regression',
+    p_supplier_id := v_supplier,
+    p_material_variant_id := '00000000-0000-0000-0000-000000000013',
+    p_factory_id := '00000000-0000-0000-0000-000000000001'
+  );
+  IF NOT EXISTS (
+    SELECT 1 FROM public.inventory_transactions
+    WHERE comment = 'manual-no-supplier-regression' AND supplier_id IS NULL
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.inventory_transactions
+    WHERE comment = 'manual-explicit-supplier-regression' AND supplier_id = v_supplier
+  ) THEN
+    RAISE EXCEPTION 'История прихода потеряла выбранного поставщика или подставила его без выбора';
+  END IF;
+END;
+$$;
+
 SELECT 'inventory_stock_lifecycle_ok' AS result;

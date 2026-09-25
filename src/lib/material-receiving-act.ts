@@ -1,4 +1,5 @@
 import { MATERIAL_CATEGORY_LABELS } from '@/lib/constants/procurement'
+import { displayMaterialCategory } from '@/lib/materials/display-category'
 import type { LongStockPurchaseComponent } from '@/lib/supply-orders/long-stock-purchase-plan'
 import type { MaterialCategory } from '@/lib/types'
 
@@ -123,7 +124,7 @@ export function buildMaterialReceivingActData(input: {
     return {
       key: item.key,
       materialName: item.item_name,
-      categoryLabel: MATERIAL_CATEGORY_LABELS[item.category],
+      categoryLabel: MATERIAL_CATEGORY_LABELS[displayMaterialCategory(item.category, null, item.unit)!],
       characteristics: item.characteristics,
       supplierName: itemSupplierNames.join(', ') || 'Не назначен',
       orderName: itemMachines.map((machine) => machine.name).join('; '),

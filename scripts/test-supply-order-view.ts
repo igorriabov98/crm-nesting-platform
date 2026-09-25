@@ -259,6 +259,12 @@ const baseFilters: OrderFiltersState = {
   attention: 'all',
   sort: 'delivery_asc',
 }
+const wireItem = makeItem({ id: 'wire', table: 'request_pipe', category: 'pipe', pipe_type: 'wire',
+  item_name: 'Проволока', unit: 'кг', to_order: 5 })
+const pipeItem = makeItem({ id: 'pipe', table: 'request_pipe', category: 'pipe', pipe_type: 'round',
+  item_name: 'Труба', unit: 'мм', to_order: 4000 })
+assert.deepEqual(filterSupplyOrderItems([wireItem, pipeItem], { ...baseFilters, category: 'circle' }).map((item) => item.id), ['wire'])
+assert.deepEqual(filterSupplyOrderItems([wireItem, pipeItem], { ...baseFilters, category: 'pipe' }).map((item) => item.id), ['pipe'])
 
 const items = [
   makeItem({ id: 'late', item_name: 'Лист 8 мм', machine_name: 'Машина Б', supplier_id: 'supplier-b', supplier_name: 'Металл Б', target_delivery_date: '2026-07-24', to_order: 8, delivery_schedules: [makeDeliverySchedule({ id: 'late-schedule', delivery_date: '2026-07-24', status: 'planned', received_quantity: null, allocated_quantity: null, allocated_physical_quantity: null })] }),
@@ -351,6 +357,13 @@ assert.deepEqual(
 )
 
 const aggregate = makeAggregate()
+const wireAggregate = { ...aggregate, id: 'wire-aggregate', category: 'pipe' as const, unit: 'кг' }
+assert.deepEqual(filterAndSortAggregates([wireAggregate], {
+  query: '', supplier: 'all', category: 'circle', status: 'all', sort: 'date_asc',
+}).map((row) => row.id), ['wire-aggregate'])
+assert.deepEqual(filterAndSortAggregates([wireAggregate], {
+  query: '', supplier: 'all', category: 'pipe', status: 'all', sort: 'date_asc',
+}).map((row) => row.id), [])
 assert.deepEqual(
   getSupplyOrderItemOrderProgress({
     order_status: 'ordered',
@@ -1510,6 +1523,10 @@ const history = [
   makeHistory({ id: 'old', accepted_at: '2026-07-12T10:00:00Z', supplier_name: 'Металл А', quantity: 2 }),
   makeHistory({ id: 'new', accepted_at: '2026-07-14T10:00:00Z', supplier_name: 'Металл Б', quantity: 4 }),
 ]
+const wireHistory = makeHistory({ id: 'wire-history', category: 'pipe', unit: 'кг' })
+assert.deepEqual(filterAndSortHistory([wireHistory], {
+  query: '', supplier: 'all', category: 'circle', sort: 'accepted_desc',
+}).map((item) => item.id), ['wire-history'])
 assert.deepEqual(filterAndSortHistory(history, {
   query: '', supplier: 'all', category: 'all', sort: 'accepted_desc',
 }).map((item) => item.id), ['new', 'old'], 'history must default to newest acceptance first')

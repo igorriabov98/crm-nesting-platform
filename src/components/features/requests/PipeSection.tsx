@@ -34,6 +34,7 @@ type Props = {
   steelTypes: SteelType[]
   onRowsChange?: (rows: PipeRow[]) => void
   allowStructureChanges?: boolean
+  wireOnly?: boolean
 }
 
 function toNumber(value: string | number | null) {
@@ -75,7 +76,7 @@ export function calculatePipeWeight(row: PipeRow, steelTypes: SteelType[]) {
   return Math.round(crossSection * lengthMm * Number(density) * 100) / 100
 }
 
-export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsChange, allowStructureChanges = true }: Props) {
+export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsChange, allowStructureChanges = true, wireOnly = false }: Props) {
   const router = useRouter()
   const [rows, setRows] = useState(items)
   const [materialNames, setMaterialNames] = useState<Record<string, string>>({})
@@ -148,6 +149,10 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
 
   const selectMaterial = (row: PipeRow, material: MaterialWithSupplier, variant: MaterialVariant | undefined, source: MaterialSelectionSource) => {
     const isCustomVariant = isCustomVariantSource(source)
+    if (variant && (variant.pipe_type === 'wire') !== wireOnly) {
+      toast.error(wireOnly ? 'Выберите проволоку' : 'Выберите трубу')
+      return
+    }
     if (!isCustomVariant && !variant?.pipe_type) {
       toast.error('Выберите конкретный вариант трубы с подтипом')
       return
@@ -217,6 +222,7 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
                   <td className="px-3 py-2">
                     <MaterialSearch
                       category="pipe"
+                      pipeVariantFilter={wireOnly ? 'wire' : 'non_wire'}
                       value={materialNames[row.id] ?? materialDisplayName(row)}
                       initialValue={materialDisplayName(row)}
                       selectedMaterialId={row.material_id}
@@ -233,7 +239,7 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
                           onChange={(event) => handlePipeTypeChange(row, event.target.value as PipeInput['pipe_type'])}
                           className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
                         >
-                          {Object.entries(PIPE_SUBTYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                          {Object.entries(PIPE_SUBTYPE_LABELS).filter(([value]) => wireOnly ? value === 'wire' : value !== 'wire').map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                         </select>
                       ) : PIPE_SUBTYPE_LABELS[row.pipe_type]
                     ) : <span className="text-gray-400">Выберите материал</span>}
@@ -283,7 +289,7 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
               <tr>
                 <td colSpan={11} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
-                  {isEditable && allowStructureChanges && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={() => setPositionDialogOpen(true)}>Добавить</Button>}
+                  {isEditable && allowStructureChanges && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={wireOnly ? handleAddWire : () => setPositionDialogOpen(true)}>{wireOnly ? 'Добавить проволоку' : 'Добавить'}</Button>}
                 </td>
               </tr>
             )}
@@ -292,17 +298,17 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
       </div>
       {isEditable && allowStructureChanges && (
         <div className="flex flex-wrap justify-end gap-2">
-          <Button type="button" variant="ghost" size="sm" onClick={handleAddWire}>
+          {wireOnly && <Button type="button" variant="ghost" size="sm" onClick={handleAddWire}>
             <Plus className="mr-2 h-4 w-4" />
             Добавить проволоку
-          </Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => setPositionDialogOpen(true)}>
+          </Button>}
+          {!wireOnly && <Button type="button" variant="outline" size="sm" onClick={() => setPositionDialogOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
             Добавить позицию
-          </Button>
+          </Button>}
         </div>
       )}
-      {allowStructureChanges && <LongStockPositionDialog
+      {allowStructureChanges && !wireOnly && <LongStockPositionDialog
         category="pipe"
         requestId={requestId}
         steelTypes={steelTypes}

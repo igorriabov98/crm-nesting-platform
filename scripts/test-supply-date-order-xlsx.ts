@@ -126,6 +126,18 @@ const pendingPipe = makeAggregate({
   orderStatus: 'pending',
   longStockPurchasePlan: pendingPipePlan,
 })
+const pendingWire = makeAggregate({
+  id: 'pending-wire',
+  table: 'request_pipe',
+  category: 'pipe',
+  itemName: 'Проволока',
+  characteristics: [{ label: 'Диаметр', value: '2 мм' }],
+  quantity: 5,
+  unit: 'кг',
+  weightKg: 5,
+  unscheduledQuantity: 5,
+  orderStatus: 'pending',
+})
 const partialCirclePlan = {
   plan_id: 'circle-plan',
   plan_number: 1,
@@ -195,11 +207,18 @@ const otherTypedSheet = {
   item_name: 'Лист Ст3',
   characteristics: [...pendingSheet.characteristics, { label: 'Тип стали', value: 'Ст3' }],
 }
-const selectable = [typedSheet, otherTypedSheet, pendingKnife, pendingPipe, redelivery]
+const selectable = [typedSheet, otherTypedSheet, pendingKnife, pendingPipe, pendingWire, redelivery]
 const optionList = getSupplyDateOrderOptions(selectable, reportDate)
 assert.deepEqual(optionList.find((option) => option.category === 'sheet_metal')?.steelTypes,
   ['Hardox', 'Ст3'].sort((left, right) => left.localeCompare(right, 'ru')))
 assert.deepEqual(optionList.find((option) => option.category === 'knives')?.steelTypes, [MISSING_STEEL_TYPE])
+assert.deepEqual(optionList.find((option) => option.category === 'circle')?.steelTypes, [MISSING_STEEL_TYPE])
+assert.equal(optionList.find((option) => option.category === 'pipe')?.count, 1, 'wire does not appear under pipes')
+const selectedWire = buildSupplyDateOrderReport(selectSupplyDateOrderAggregates(selectable, {
+  categories: ['circle'], steelTypes: { circle: [MISSING_STEEL_TYPE] },
+}), reportDate)
+assert.deepEqual(selectedWire.rows.map((row) => ({ category: row.category, material: row.material, unit: row.unit })),
+  [{ category: 'Проволока', material: 'Проволока', unit: 'кг' }])
 const sheetOnly = buildSupplyDateOrderReport(selectSupplyDateOrderAggregates(selectable, {
   categories: ['sheet_metal'], steelTypes: { sheet_metal: ['Hardox'] },
 }), reportDate)

@@ -14,11 +14,12 @@ type Props = {
   machineId: string
   canReserve?: boolean
   canUnreserve?: boolean
+  title?: string
 }
 
-export function SupplyPipeTable({ rows, requestId, machineId, canReserve = false, canUnreserve = false }: Props) {
+export function SupplyPipeTable({ rows, requestId, machineId, canReserve = false, canUnreserve = false, title = 'Труба' }: Props) {
   return (
-    <Section title="Труба">
+    <Section title={title}>
       <table className={tableClass}>
         <thead className="border-b border-[#E8ECF0] bg-[#F8F9FA]">
           <tr>

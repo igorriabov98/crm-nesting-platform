@@ -57,7 +57,9 @@ export function buildSupplyDateOrderReport(
         ? routeWeights.reduce((sum, weight) => sum + weight, 0)
         : null
       const baseRow = {
-        category: MATERIAL_CATEGORY_LABELS[slice.aggregate.category],
+        category: slice.aggregate.category === 'pipe' && slice.aggregate.unit === 'кг'
+          ? 'Проволока'
+          : MATERIAL_CATEGORY_LABELS[slice.aggregate.category],
         material: slice.aggregate.item_name,
         characteristics: slice.aggregate.characteristics
           .map((part) => `${part.label}: ${part.value}`)

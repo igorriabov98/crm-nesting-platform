@@ -35,8 +35,10 @@ import {
 import { ROUTES } from '@/lib/constants/routes'
 import { KNIFE_BEVEL_OPTIONS, knifeBevelCharacteristicLabel, knifeBevelLabel } from '@/lib/materials/knife-bevel'
 import { formatKnifeProfileDimensions, knifeProfileDimensions } from '@/lib/materials/knife-profile'
+import { displayMaterialCategory, isWireMaterial } from '@/lib/materials/display-category'
 import { requireCanonicalPipeProfile, roundPipeOuterDiameterMm, validatePipeProfileGeometry } from '@/lib/materials/pipe-profile'
 import { addReceipt, adjustInventory, convertBusinessScrapToMetal, deleteInventoryItem, type InventoryFactory, type InventoryWithMaterial } from '@/lib/actions/inventory'
+import { receiptLengthMm } from '@/lib/inventory/receipt-length'
 import { createMaterial, recordMaterialUsage, type MaterialWithSupplier } from '@/lib/actions/materials'
 import {
   appendLongStockPieceLengthToSummary,
@@ -108,9 +110,11 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
   const [selectedBusinessScrapIds, setSelectedBusinessScrapIds] = useState<string[]>([])
   const [conversionDialogOpen, setConversionDialogOpen] = useState(false)
   const [receiptCategory, setReceiptCategory] = useState<MaterialCategory>('sheet_metal')
+  const [receiptWireMode, setReceiptWireMode] = useState(false)
   const [receiptMaterial, setReceiptMaterial] = useState<{ id: string; name: string; category: MaterialCategory } | null>(null)
   const [receiptVariant, setReceiptVariant] = useState<MaterialVariant | null>(null)
   const [receiptQuantity, setReceiptQuantity] = useState('')
+  const [receiptBarCount, setReceiptBarCount] = useState('')
   const [receiptSecondaryQuantity, setReceiptSecondaryQuantity] = useState('')
   const [receiptPieceLength, setReceiptPieceLength] = useState('')
   const [receiptSteelTypeId, setReceiptSteelTypeId] = useState('')
@@ -126,12 +130,15 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
   const [reservationRow, setReservationRow] = useState<InventoryWithMaterial | null>(null)
   const [isPending, startTransition] = useTransition()
 
-  const receiptUnits = getUnitsForReceipt(receiptCategory, receiptVariant)
-  const calculatedPieceCount = receiptAutoCalculatesPieces(receiptCategory, receiptVariant)
+  const effectiveReceiptCategory = receiptWireMode ? 'pipe' : receiptCategory
+  const receiptUnits = getUnitsForReceipt(effectiveReceiptCategory, receiptVariant)
+  const countDrivenReceipt = receiptCountsPhysicalBars(effectiveReceiptCategory, receiptVariant)
+  const calculatedReceiptLength = countDrivenReceipt ? receiptLengthMm(receiptBarCount, receiptPieceLength) : null
+  const calculatedPieceCount = effectiveReceiptCategory === 'knives'
     ? calculatePieceCount(receiptQuantity, receiptPieceLength)
     : null
-  const receiptNeedsSteelType = needsReceiptSteelType(receiptCategory, receiptVariant)
-  const receiptNeedsUnitWeight = needsReceiptUnitWeight(receiptCategory)
+  const receiptNeedsSteelType = needsReceiptSteelType(effectiveReceiptCategory, receiptVariant)
+  const receiptNeedsUnitWeight = needsReceiptUnitWeight(effectiveReceiptCategory)
   const showSheetMetalColumns = category === 'sheet_metal'
   const showCircleColumns = category === 'circle'
   const showPipeColumns = category === 'pipe'
@@ -148,7 +155,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
     if (stockMode === 'future_business_scrap' && (!row.is_business_scrap || state !== 'future')) return false
     if (stockMode === 'business_scrap' && businessScrapSizeFilter !== 'all' && row.business_scrap_size_class !== businessScrapSizeFilter) return false
     if (search && !inventoryMatchesSearch(row, search)) return false
-    if (category !== 'all' && row.material?.category !== category) return false
+    if (category !== 'all' && displayMaterialCategory(row.material?.category, row.variant?.pipe_type, row.unit) !== category) return false
     if (onlyAvailable && row.available_quantity <= 0) return false
     return true
   }), [businessScrapSizeFilter, category, onlyAvailable, rows, search, stockMode])
@@ -165,6 +172,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
     setReceiptMaterial(null)
     setReceiptVariant(null)
     setReceiptQuantity('')
+    setReceiptBarCount('')
     setReceiptSecondaryQuantity('')
     setReceiptPieceLength('')
     setReceiptSteelTypeId('')
@@ -172,20 +180,27 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
     setReceiptComment('')
     setReceiptSupplierId('')
     setNewMaterialDraft(null)
-    if (!keepCategory) setReceiptCategory('sheet_metal')
+    if (!keepCategory) {
+      setReceiptCategory('sheet_metal')
+      setReceiptWireMode(false)
+    }
   }
 
   const startCreateMaterial = (name: string, draftCategory: MaterialCategory) => {
-    const draftName = defaultMaterialNameForCategory(draftCategory) ?? name
+    const creatingWire = receiptWireMode && draftCategory === 'pipe'
+    const draftName = creatingWire ? 'Проволока' : defaultMaterialNameForCategory(draftCategory) ?? name
     setReceiptMaterial(null)
     setReceiptVariant(null)
     setReceiptQuantity('')
+    setReceiptBarCount('')
     setReceiptSecondaryQuantity('')
     setReceiptPieceLength('')
     setReceiptSteelTypeId('')
     setReceiptUnitWeightKg('')
-    setReceiptCategory(draftCategory)
-    setNewMaterialDraft({ name: draftName, category: draftCategory, fields: defaultDraftFields(draftCategory) })
+    setReceiptCategory(creatingWire ? 'circle' : draftCategory)
+    setNewMaterialDraft({ name: draftName, category: draftCategory, fields: creatingWire
+      ? { ...defaultDraftFields('pipe'), pipe_type: 'wire' }
+      : defaultDraftFields(draftCategory) })
   }
 
   const updateDraftField = (field: string, value: string | boolean) => {
@@ -235,9 +250,12 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
 
       const selected = { ...(materialResult.data as MaterialWithSupplier), supplier_name: null }
       setReceiptMaterial({ id: selected.id, name: selected.name, category: selected.category })
-      setReceiptCategory(selected.category)
+      const createdWire = isWireMaterial(selected.category, variantResult.data.pipe_type)
+      setReceiptCategory(createdWire ? 'circle' : selected.category)
+      setReceiptWireMode(createdWire)
       setReceiptVariant(variantResult.data)
       setReceiptQuantity('')
+      setReceiptBarCount('')
       setReceiptSecondaryQuantity('')
       setReceiptPieceLength(pieceLength)
       setReceiptSteelTypeId('')
@@ -253,12 +271,11 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
     if (!canManageInventory) return
     if (!activeFactoryId) return toast.error('Выберите завод склада')
     if (!receiptMaterial) return toast.error('Выберите материал')
-    if (!receiptSupplierId) return toast.error('Выберите поставщика')
-    if (receiptCategory === 'pipe' && !receiptVariant?.pipe_type) {
+    if (effectiveReceiptCategory === 'pipe' && !receiptVariant?.pipe_type) {
       toast.error('Для трубы выберите вариант материала с подтипом')
       return
     }
-    if (receiptCategory === 'pipe' && receiptVariant) {
+    if (effectiveReceiptCategory === 'pipe' && receiptVariant) {
       const profileError = validatePipeProfileGeometry(receiptVariant)
       if (profileError) {
         toast.error(profileError)
@@ -275,21 +292,27 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
       return
     }
 
-    const quantity = Number(receiptQuantity || 0)
+    if (countDrivenReceipt && calculatedReceiptLength === null) {
+      toast.error('Укажите целое количество хлыстов и длину одного хлыста')
+      return
+    }
+    const quantity = countDrivenReceipt ? calculatedReceiptLength! : Number(receiptQuantity || 0)
     if (!Number.isFinite(quantity) || quantity <= 0) {
       toast.error('Введите количество прихода')
       return
     }
 
-    const secondaryQuantity = calculatedPieceCount !== null
-      ? calculatedPieceCount
-      : receiptUnits.secondary ? Number(receiptSecondaryQuantity || 0) : null
+    const secondaryQuantity = countDrivenReceipt
+      ? Number(receiptBarCount)
+      : calculatedPieceCount !== null
+        ? calculatedPieceCount
+        : receiptUnits.secondary ? Number(receiptSecondaryQuantity || 0) : null
     if (receiptUnits.secondary && (secondaryQuantity === null || !Number.isFinite(secondaryQuantity) || secondaryQuantity <= 0)) {
       toast.error(`Введите количество (${receiptUnits.secondary})`)
       return
     }
 
-    const needsPieceLength = receiptNeedsPieceLength(receiptCategory, receiptVariant)
+    const needsPieceLength = receiptNeedsPieceLength(effectiveReceiptCategory, receiptVariant)
     const pieceLength = needsPieceLength && receiptPieceLength
       ? Number(receiptPieceLength)
       : null
@@ -303,7 +326,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
     }
 
     const metadataComment = buildReceiptComment({
-      category: receiptCategory,
+      category: effectiveReceiptCategory,
       variant: receiptVariant,
       comment: receiptComment,
     })
@@ -361,7 +384,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
         unit: receiptUnits.primary,
         secondary_quantity: secondaryQuantity,
         secondary_unit: receiptUnits.secondary ?? null,
-        supplier_id: receiptSupplierId,
+        supplier_id: receiptSupplierId || null,
         piece_length_mm: pieceLength,
         comment: metadataComment,
       })
@@ -575,6 +598,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                 const nextCategory = event.target.value as MaterialCategory
                 resetReceiptForm(true)
                 setReceiptCategory(nextCategory)
+                setReceiptWireMode(false)
               }}
               className="h-10 w-full rounded-md border border-[#E8ECF0] bg-white px-3 text-sm"
             >
@@ -583,26 +607,44 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
               ))}
             </select>
           </div>
+          {receiptCategory === 'circle' && <div>
+            <label className="mb-1 block text-sm font-medium text-[#374151]">Подтип</label>
+            <select
+              value={receiptWireMode ? 'wire' : 'bar'}
+              onChange={(event) => {
+                resetReceiptForm(true)
+                setReceiptWireMode(event.target.value === 'wire')
+              }}
+              className="h-10 w-full rounded-md border border-[#E8ECF0] bg-white px-3 text-sm"
+            >
+              <option value="bar">Круглый прокат</option>
+              <option value="wire">Проволока</option>
+            </select>
+          </div>}
           <div>
             <label className="mb-1 block text-sm font-medium text-[#374151]">Материал</label>
             <MaterialSearch
-              key={`${receiptCategory}-${materialSearchVersion}`}
-              category={receiptCategory}
+              key={`${receiptCategory}-${receiptWireMode}-${materialSearchVersion}`}
+              category={effectiveReceiptCategory}
+              pipeVariantFilter={receiptWireMode ? 'wire' : receiptCategory === 'pipe' ? 'non_wire' : undefined}
               value={receiptMaterial?.name || ''}
               placeholder="Начните вводить название материала..."
               onSelect={(material, variant) => {
-                if (material.category !== receiptCategory) {
+                if (material.category !== effectiveReceiptCategory
+                  || (receiptWireMode && variant?.pipe_type !== 'wire')
+                  || (!receiptWireMode && receiptCategory === 'pipe' && variant?.pipe_type === 'wire')) {
                   toast.error('Выберите материал из выбранной категории')
                   return
                 }
                 setReceiptMaterial({ id: material.id, name: material.name, category: material.category })
                 setReceiptVariant(variant ?? null)
                 setReceiptQuantity('')
+                setReceiptBarCount('')
                 setReceiptSecondaryQuantity('')
                 setReceiptPieceLength('')
                 setReceiptSteelTypeId((variant as (MaterialVariant & { steel_type_id?: string | null }) | undefined)?.steel_type_id ?? '')
                 setReceiptUnitWeightKg(variant?.unit_weight_kg ? String(variant.unit_weight_kg) : '')
-                setReceiptSupplierId(material.default_supplier_id || '')
+                setReceiptSupplierId('')
                 setNewMaterialDraft(null)
               }}
               onCreateRequest={startCreateMaterial}
@@ -624,7 +666,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
           <div className="mt-4 space-y-4">
             <div className="rounded-lg bg-[#F8F9FA] p-3">
               <h3 className="text-sm font-semibold text-[#1B3A6B]">
-                {receiptMaterial.name} — {MATERIAL_CATEGORY_LABELS[receiptMaterial.category] ?? receiptMaterial.category}
+                {receiptMaterial.name} — {MATERIAL_CATEGORY_LABELS[displayMaterialCategory(receiptMaterial.category, receiptVariant?.pipe_type) || receiptMaterial.category]}
               </h3>
               <CharacteristicsBlock category={receiptMaterial.category} variant={receiptVariant} steelTypes={steelTypes} />
               {receiptNeedsSteelType && (
@@ -648,37 +690,43 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
 
             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-[minmax(180px,240px)_minmax(180px,240px)_minmax(260px,1fr)_160px]">
               <div>
-                <label className="mb-1 block text-sm font-medium text-[#374151]">Поставщик</label>
+                <label className="mb-1 block text-sm font-medium text-[#374151]">Поставщик (необязательно)</label>
                 <select
                   value={receiptSupplierId}
                   onChange={(event) => setReceiptSupplierId(event.target.value)}
                   className="h-10 w-full rounded-md border border-[#E8ECF0] bg-white px-3 text-sm"
                 >
-                  <option value="">Выберите поставщика</option>
+                  <option value="">Без поставщика</option>
                   {suppliers.map((supplier) => (
                     <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-[#374151]">{receiptQuantityLabel(receiptCategory, receiptVariant)}</label>
-                <Input type="number" min="0" step="0.01" value={receiptQuantity} onChange={(event) => setReceiptQuantity(event.target.value)} placeholder="0" />
+                <label className="mb-1 block text-sm font-medium text-[#374151]">{receiptQuantityLabel(effectiveReceiptCategory, receiptVariant)}</label>
+                {countDrivenReceipt ? (
+                  <Input type="number" value={calculatedReceiptLength ?? ''} readOnly placeholder="Считается автоматически" />
+                ) : (
+                  <Input type="number" min="0" step="0.01" value={receiptQuantity} onChange={(event) => setReceiptQuantity(event.target.value)} placeholder="0" />
+                )}
               </div>
               {receiptUnits.secondary && (
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-[#374151]">Приход, {receiptUnits.secondary}</label>
-                  {calculatedPieceCount !== null ? (
+                  <label className="mb-1 block text-sm font-medium text-[#374151]">{countDrivenReceipt ? 'Количество хлыстов' : `Приход, ${receiptUnits.secondary}`}</label>
+                  {countDrivenReceipt ? (
+                    <Input type="number" min="1" step="1" value={receiptBarCount} onChange={(event) => setReceiptBarCount(event.target.value)} placeholder="0" />
+                  ) : calculatedPieceCount !== null ? (
                     <Input type="number" value={Number.isFinite(calculatedPieceCount) && calculatedPieceCount > 0 ? formatAmount(calculatedPieceCount) : ''} readOnly placeholder="Считается автоматически" />
                   ) : (
                     <Input type="number" min="0" step="1" value={receiptSecondaryQuantity} onChange={(event) => setReceiptSecondaryQuantity(event.target.value)} placeholder="0" />
                   )}
                 </div>
               )}
-              {receiptNeedsPieceLength(receiptCategory, receiptVariant) && (
+              {receiptNeedsPieceLength(effectiveReceiptCategory, receiptVariant) && (
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-[#374151]">Длина хлыста, мм</label>
+                  <label className="mb-1 block text-sm font-medium text-[#374151]">{countDrivenReceipt ? 'Длина одного хлыста, мм' : 'Длина хлыста, мм'}</label>
                   <Input type="number" min="0" step="0.01" value={receiptPieceLength} onChange={(event) => setReceiptPieceLength(event.target.value)} placeholder="Например: 6000" />
-                  <span className="mt-1 block text-sm text-gray-500">Количество штук считается автоматически по приходу и длине хлыста.</span>
+                  <span className="mt-1 block text-sm text-gray-500">{countDrivenReceipt ? 'Общая длина считается по количеству хлыстов и длине одного хлыста.' : 'Количество штук считается автоматически по приходу и длине хлыста.'}</span>
                 </div>
               )}
               <div>
@@ -715,6 +763,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                   </>
                 ) : showCircleColumns ? (
                   <>
+                    <th className="min-w-[140px] px-4 py-3">Подтип</th>
                     <th className="min-w-[140px] px-4 py-3">Тип стали</th>
                     <th className="min-w-[120px] px-4 py-3">Диаметр</th>
                     <th className="min-w-[130px] px-4 py-3">Калибровка</th>
@@ -797,7 +846,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                         )} · потребность {formatAmount(reservation.logical_quantity)} {row.unit}
                       </div>
                     ))}
-                    {(row.material?.category === 'circle' || (row.material?.category === 'pipe' && row.variant?.pipe_type !== 'wire'))
+                    {(row.material?.category === 'circle' || (row.material?.category === 'pipe' && !isWireMaterial(row.material?.category, row.variant?.pipe_type, row.unit)))
                       && !row.piece_length_mm && (
                       <div className="mt-1 text-xs font-normal text-slate-600">
                         Старый количественный остаток
@@ -809,7 +858,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                       </div>
                     )}
                   </td>
-                  <td className="px-4 py-3">{categoryLabel(row.material?.category)}</td>
+                  <td className="px-4 py-3">{categoryLabel(displayMaterialCategory(row.material?.category, row.variant?.pipe_type, row.unit))}</td>
                   {showSheetMetalColumns ? (
                     <>
                       <td className="px-4 py-3 text-[#6B7280]">{characteristicCell(row, steelTypeName(row.variant, steelTypes) ?? row.variant?.material_grade)}</td>
@@ -818,9 +867,10 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                     </>
                   ) : showCircleColumns ? (
                     <>
-                      <td className="px-4 py-3 text-[#6B7280]">{characteristicCell(row, steelTypeName(row.variant, steelTypes) ?? circleSteelGrade(row.variant))}</td>
+                      <td className="px-4 py-3 text-[#6B7280]">{isWireMaterial(row.material?.category, row.variant?.pipe_type, row.unit) ? 'Проволока' : 'Круглый прокат'}</td>
+                      <td className="px-4 py-3 text-[#6B7280]">{isWireMaterial(row.material?.category, row.variant?.pipe_type, row.unit) ? '—' : characteristicCell(row, steelTypeName(row.variant, steelTypes) ?? circleSteelGrade(row.variant))}</td>
                       <td className="px-4 py-3 text-[#6B7280]">{characteristicCell(row, row.variant?.diameter_mm)}</td>
-                      <td className="px-4 py-3 text-[#6B7280]">{row.variant ? (row.variant.is_calibrated ? 'Да' : 'Нет') : legacyCharacteristicsText(row)}</td>
+                      <td className="px-4 py-3 text-[#6B7280]">{isWireMaterial(row.material?.category, row.variant?.pipe_type, row.unit) ? '—' : row.variant ? (row.variant.is_calibrated ? 'Да' : 'Нет') : legacyCharacteristicsText(row)}</td>
                     </>
                   ) : showPipeColumns ? (
                     <>
@@ -900,7 +950,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                   </td>
                 </tr>
               ))}
-              {filtered.length === 0 && <tr><td colSpan={(showPipeColumns ? 13 : showSheetMetalColumns || showCircleColumns ? 12 : 10) + (showPieceLengthColumn ? 1 : 0)} className="px-4 py-8 text-center text-[#9CA3AF]">Остатков не найдено</td></tr>}
+              {filtered.length === 0 && <tr><td colSpan={(showPipeColumns || showCircleColumns ? 13 : showSheetMetalColumns ? 12 : 10) + (showPieceLengthColumn ? 1 : 0)} className="px-4 py-8 text-center text-[#9CA3AF]">Остатков не найдено</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1082,7 +1132,7 @@ function NewMaterialForm({
     <div className="mt-4 rounded-lg border border-dashed border-[#BFD0E8] bg-[#F8FBFF] p-4">
       <div className="mb-3">
         <h3 className="text-sm font-semibold text-[#1B3A6B]">
-          Новый материал — {MATERIAL_CATEGORY_LABELS[draft.category] ?? draft.category}
+          Новый материал — {isPipeWire ? 'Проволока' : MATERIAL_CATEGORY_LABELS[draft.category] ?? draft.category}
         </h3>
         <p className="mt-1 text-sm text-[#6B7280]">Заполните характеристики, чтобы материал сразу появился с правильным вариантом.</p>
       </div>
@@ -1105,25 +1155,28 @@ function NewMaterialForm({
           <>
             <SteelTypeSelect value={draft.fields.steel_type_id} steelTypes={steelTypes} onChange={(value) => onFieldChange('steel_type_id', value)} />
             <DraftInput label="Диаметр, мм" type="number" value={draft.fields.diameter_mm} onChange={(value) => onFieldChange('diameter_mm', value)} />
-            <label className="flex items-center gap-2 pt-7 text-sm text-[#374151]">
-              <input type="checkbox" checked={Boolean(draft.fields.is_calibrated)} onChange={(event) => onFieldChange('is_calibrated', event.target.checked)} />
-              Калибровка
-            </label>
+            <div className="pt-7">
+              <label className="flex items-center gap-2 text-sm text-[#374151]">
+                <input type="checkbox" checked={Boolean(draft.fields.is_calibrated)} onChange={(event) => onFieldChange('is_calibrated', event.target.checked)} />
+                Калибровка
+              </label>
+              <p className="mt-1 text-xs text-[#6B7280]">Калиброванный круг — прокат с более точным диаметром и нормируемым качеством поверхности.</p>
+            </div>
           </>
         )}
 
         {draft.category === 'pipe' && (
           <>
-            <div>
+            {!isPipeWire && <div>
               <label className="mb-1 block text-sm font-medium text-[#374151]">Подтип</label>
               <select
                 value={String(draft.fields.pipe_type || '')}
                 onChange={(event) => onFieldChange('pipe_type', event.target.value)}
                 className="h-10 w-full rounded-md border border-[#E8ECF0] bg-white px-3 text-sm"
               >
-                {Object.entries(PIPE_SUBTYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                {Object.entries(PIPE_SUBTYPE_LABELS).filter(([value]) => value !== 'wire').map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
-            </div>
+            </div>}
             {!isPipeWire && <SteelTypeSelect value={draft.fields.steel_type_id} steelTypes={steelTypes} onChange={(value) => onFieldChange('steel_type_id', value)} />}
             {!isPipeWire && !isPipeRound && <DraftInput label="Сечение, мм" value={draft.fields.size} onChange={(value) => onFieldChange('size', value)} placeholder="40x40" />}
             {isPipeRound && <DraftInput label="Наружный диаметр, мм" type="number" value={draft.fields.diameter_mm} onChange={(value) => onFieldChange('diameter_mm', value)} />}
@@ -1375,8 +1428,8 @@ function needsReceiptUnitWeight(category: MaterialCategory) {
   return category === 'components'
 }
 
-function receiptAutoCalculatesPieces(category: MaterialCategory, variant: MaterialVariant | null) {
-  return (category === 'pipe' && variant?.pipe_type !== 'wire') || category === 'knives' || category === 'circle'
+function receiptCountsPhysicalBars(category: MaterialCategory, variant: MaterialVariant | null) {
+  return category === 'circle' || (category === 'pipe' && variant?.pipe_type !== 'wire')
 }
 
 function receiptQuantityLabel(category: MaterialCategory, variant: MaterialVariant | null) {
@@ -1431,7 +1484,7 @@ function inventoryMatchesSearch(row: InventoryWithMaterial, value: string) {
   if (!query) return true
 
   const exactCategory = ACTIVE_MATERIAL_CATEGORIES.find((item) => normalizeInventorySearch(categoryLabel(item)) === query)
-  if (exactCategory) return row.material?.category === exactCategory
+  if (exactCategory) return displayMaterialCategory(row.material?.category, row.variant?.pipe_type, row.unit) === exactCategory
 
   return inventorySearchText(row).includes(query)
 }
