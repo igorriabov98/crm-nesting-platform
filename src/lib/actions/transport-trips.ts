@@ -21,6 +21,7 @@ import {
 } from '@/lib/actions/supply-orders'
 import { ROUTES } from '@/lib/constants/routes'
 import { MATERIAL_CATEGORY_LABELS } from '@/lib/constants/procurement'
+import { displayMaterialCategory } from '@/lib/materials/display-category'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
@@ -568,7 +569,7 @@ function mapMaterialNeed(card: InventoryTransferCard): UnifiedTransportNeed {
     deadline: card.deadline,
     itemLabels: card.items.map((item) => item.materialName),
     itemDetails: card.items.map((item) => {
-      const categoryLabel = materialCategoryLabel(item.materialCategory)
+      const categoryLabel = materialCategoryLabel(item.materialCategory, item.unit)
       const carriedQuantity = formatTransportCarriedQuantity({
         quantity: item.remainingQuantity,
         unit: item.unit,
@@ -660,7 +661,7 @@ function mapSupplyNeed(need: SupplyTransportNeed): UnifiedTransportNeed {
       drawingHref: null,
       title: need.itemName,
       drawingLabel: null,
-      description: MATERIAL_CATEGORY_LABELS[need.category],
+      description: MATERIAL_CATEGORY_LABELS[displayMaterialCategory(need.category, null, need.unit)!],
       quantityLabel: formatTransportCarriedQuantity({
         quantity: need.quantity,
         unit: need.unit,

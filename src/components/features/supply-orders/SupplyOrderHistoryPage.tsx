@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { SupplyOrderHistoryItem } from '@/lib/actions/supply-orders'
 import { MATERIAL_CATEGORIES, MATERIAL_CATEGORY_LABELS } from '@/lib/constants/procurement'
+import { displayMaterialCategory } from '@/lib/materials/display-category'
 import { ROUTES } from '@/lib/constants/routes'
 import { filterAndSortHistory, type HistoryFiltersState, type SupplyOrderHistorySort } from './supply-order-view'
 
@@ -274,7 +275,7 @@ function MaterialSummary({ item }: { item: SupplyOrderHistoryItem }) {
       <div className="font-medium text-slate-950">{item.item_name}</div>
       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
         <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
-          {MATERIAL_CATEGORY_LABELS[item.category]}
+          {MATERIAL_CATEGORY_LABELS[displayMaterialCategory(item.category, null, item.unit)!]}
         </Badge>
         {item.weight_kg ? <span className="tabular-nums">{formatAmount(item.weight_kg)} кг</span> : null}
       </div>

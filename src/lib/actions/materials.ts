@@ -9,7 +9,7 @@ import { reversedRectangularDimensionSearch, sameRectangularDimensions } from '@
 import { sameRotatedPipeVariant } from '@/lib/materials/pipe-variant-identity'
 import { requirePermission, requireReadPermissionDataClient } from '@/lib/permissions/server'
 import type { PermissionOperation } from '@/lib/permissions/resources'
-import type { Material, MaterialCategory, MaterialVariant, Supplier } from '@/lib/types'
+import type { Material, MaterialCategory, MaterialVariant } from '@/lib/types'
 
 type DbResult = { data: unknown; error: { message?: string } | null; count?: number | null }
 type LooseQuery = PromiseLike<DbResult> & {
@@ -30,6 +30,8 @@ type LooseDb = { from: (table: string) => LooseQuery }
 
 export type MaterialWithSupplier = Material & {
   supplier_name: string | null
+  has_wire_variant?: boolean
+  has_pipe_variant?: boolean
   variants_count?: number
   last_used_at?: string | null
   sheet_grades?: string[]
@@ -286,18 +288,8 @@ function isSameVariant(row: MaterialVariant, input: ReturnType<typeof usageToVar
   return false
 }
 
-async function hydrateSuppliers(db: LooseDb, materials: Material[]): Promise<MaterialWithSupplier[]> {
-  const supplierIds = Array.from(new Set(materials.map((item) => item.default_supplier_id).filter(Boolean))) as string[]
-  const supplierMap = new Map<string, string>()
-  if (supplierIds.length) {
-    const { data, error } = await db.from('suppliers').select('id, name').in('id', supplierIds)
-    if (error) throw new Error(error.message || 'Не удалось загрузить поставщиков')
-    for (const supplier of (data || []) as Supplier[]) supplierMap.set(supplier.id, supplier.name)
-  }
-  return materials.map((item) => ({
-    ...item,
-    supplier_name: item.default_supplier_id ? supplierMap.get(item.default_supplier_id) || null : null,
-  }))
+function withoutSupplierDefaults(materials: Material[]): MaterialWithSupplier[] {
+  return materials.map((item) => ({ ...item, supplier_name: null }))
 }
 
 async function searchMaterialsWithDb(db: LooseDb, query: string, category?: MaterialCategory | null) {
@@ -436,7 +428,7 @@ async function searchMaterialsWithDb(db: LooseDb, query: string, category?: Mate
         return aExact - bExact || a.name.localeCompare(b.name)
       })
       .slice(0, 10)
-    return hydrateSuppliers(db, rows)
+    return withoutSupplierDefaults(rows)
 }
 
 export async function searchMaterials(query: string, category?: MaterialCategory | null) {
@@ -542,11 +534,13 @@ export async function createMaterial(data: { name: string; category: MaterialCat
   }
 }
 
-export async function updateMaterial(id: string, data: { name?: string; default_supplier_id?: string | null; comment?: string | null; is_active?: boolean }) {
+export async function updateMaterial(id: string, data: { name?: string; comment?: string | null; is_active?: boolean }) {
   try {
     const { db } = await requireMaterialPermission('manage')
-    const values: Record<string, unknown> = { ...data, updated_at: new Date().toISOString() }
-    if (values.default_supplier_id === '') values.default_supplier_id = null
+    const values: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    if (data.name !== undefined) values.name = data.name
+    if (data.comment !== undefined) values.comment = data.comment
+    if (data.is_active !== undefined) values.is_active = data.is_active
 
     const { data: row, error } = await db.from('materials').update(values).eq('id', id).select('*').single()
     if (error || !row) throw new Error(error?.message || 'Не удалось обновить материал')
@@ -596,7 +590,6 @@ export async function recordMaterialUsage(input: MaterialUsageInput) {
 
 export async function getMaterials(filters: {
   category?: MaterialCategory
-  supplier_id?: string
   active_only?: boolean
   search?: string
   page?: number
@@ -614,18 +607,16 @@ export async function getMaterials(filters: {
       .range(page * pageSize, page * pageSize + pageSize - 1)
     if (filters.category) query = query.eq('category', filters.category)
     if (filters.active_only) query = query.eq('is_active', true)
-    if (filters.supplier_id && filters.supplier_id !== 'none') query = query.eq('default_supplier_id', filters.supplier_id)
 
     const { data, error, count } = await query
     if (error) throw new Error(error.message || 'Не удалось загрузить материалы')
     let rows = (data || []) as Material[]
-    if (filters.supplier_id === 'none') rows = rows.filter((item) => !item.default_supplier_id)
     if (filters.search?.trim()) {
       const search = normalizeMaterialName(filters.search)
       rows = rows.filter((item) => normalizeMaterialName(item.name).includes(search))
     }
 
-    const hydrated = await hydrateSuppliers(db, rows)
+    const hydrated = withoutSupplierDefaults(rows)
     const ids = hydrated.map((item) => item.id)
     const variantMap = new Map<string, {
       count: number
@@ -633,19 +624,23 @@ export async function getMaterials(filters: {
       grades: Set<string>
       thicknesses: Set<number>
       sizes: Set<string>
+      hasWire: boolean
+      hasPipe: boolean
     }>()
     if (ids.length) {
       const { data: variants } = await db
         .from('material_variants')
-        .select('material_id, category, material_grade, thickness_mm, sheet_size, last_used_at')
+        .select('material_id, category, pipe_type, material_grade, thickness_mm, sheet_size, last_used_at')
         .in('material_id', ids)
-      for (const variant of (variants || []) as Pick<MaterialVariant, 'material_id' | 'category' | 'material_grade' | 'thickness_mm' | 'sheet_size' | 'last_used_at'>[]) {
+      for (const variant of (variants || []) as Pick<MaterialVariant, 'material_id' | 'category' | 'pipe_type' | 'material_grade' | 'thickness_mm' | 'sheet_size' | 'last_used_at'>[]) {
         const current = variantMap.get(variant.material_id) || {
           count: 0,
           last: null,
           grades: new Set<string>(),
           thicknesses: new Set<number>(),
           sizes: new Set<string>(),
+          hasWire: false,
+          hasPipe: false,
         }
         if (variant.category === 'sheet_metal') {
           if (variant.material_grade) current.grades.add(variant.material_grade)
@@ -656,6 +651,8 @@ export async function getMaterials(filters: {
           ...current,
           count: current.count + 1,
           last: !current.last || variant.last_used_at > current.last ? variant.last_used_at : current.last,
+          hasWire: current.hasWire || (variant.category === 'pipe' && variant.pipe_type === 'wire'),
+          hasPipe: current.hasPipe || (variant.category === 'pipe' && variant.pipe_type !== 'wire'),
         })
       }
     }
@@ -663,6 +660,8 @@ export async function getMaterials(filters: {
       data: hydrated.map((item) => ({
         ...item,
         variants_count: variantMap.get(item.id)?.count || 0,
+        has_wire_variant: variantMap.get(item.id)?.hasWire || false,
+        has_pipe_variant: variantMap.get(item.id)?.hasPipe || false,
         last_used_at: variantMap.get(item.id)?.last || null,
         sheet_grades: Array.from(variantMap.get(item.id)?.grades || []),
         sheet_thicknesses: Array.from(variantMap.get(item.id)?.thicknesses || []).sort((a, b) => a - b),
@@ -678,8 +677,4 @@ export async function getMaterials(filters: {
       pagination: null,
     }
   }
-}
-
-export async function assignSupplierToMaterial(materialId: string, supplierId: string | null) {
-  return updateMaterial(materialId, { default_supplier_id: supplierId || null })
 }

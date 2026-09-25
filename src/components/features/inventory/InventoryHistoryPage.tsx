@@ -7,6 +7,7 @@ import {
   PIPE_SUBTYPE_LABELS,
 } from '@/lib/constants/procurement'
 import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
+import { displayMaterialCategory } from '@/lib/materials/display-category'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import type { InventoryTransactionWithRelations } from '@/lib/actions/inventory'
@@ -83,7 +84,7 @@ export function InventoryHistoryPage({ rows, materialId, page, pageSize, total, 
                 <tr key={row.id}>
                   <td className="px-4 py-3 text-[#6B7280]">{new Date(row.created_at).toLocaleString('ru-RU')}</td>
                   <td className="px-4 py-3"><Badge variant="outline" className={TYPE_CLASSES[row.transaction_type]}>{INVENTORY_TRANSACTION_LABELS[row.transaction_type]}</Badge></td>
-                  <td className="px-4 py-3">{row.material_category ? MATERIAL_CATEGORY_LABELS[row.material_category] ?? row.material_category : '—'}</td>
+                  <td className="px-4 py-3">{row.material_category ? MATERIAL_CATEGORY_LABELS[displayMaterialCategory(row.material_category, row.variant?.pipe_type, row.unit)!] : '—'}</td>
                   <td className="px-4 py-3 text-[#6B7280]">{variantSummary(row)}</td>
                   <td className={row.quantity < 0 ? 'px-4 py-3 font-medium text-red-700' : 'px-4 py-3 font-medium text-emerald-700'}>
                     {signedAmount(row.quantity)} {row.unit || ''}

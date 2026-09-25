@@ -140,7 +140,7 @@ function buildRequestMaterialRows(requestData?: TechnologistRequestPayload | nul
       const displayDiameter = roundDiameter ?? (row.pipe_type === 'wire' ? row.diameter_mm : null)
       return {
         id: row.id,
-        section: 'Труба',
+        section: row.pipe_type === 'wire' ? 'Круг' : 'Труба',
         name: materialName(row, PIPE_SUBTYPE_LABELS[row.pipe_type] || row.pipe_type, 'Труба'),
         details: compactDetails([
           row.pipe_type === 'round' ? null : row.size,

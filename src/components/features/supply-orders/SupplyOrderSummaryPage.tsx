@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { MATERIAL_CATEGORIES, MATERIAL_CATEGORY_LABELS, ORDER_STATUS_LABELS } from '@/lib/constants/procurement'
+import { displayMaterialCategory } from '@/lib/materials/display-category'
 import { ROUTES } from '@/lib/constants/routes'
 import {
   clearAggregateDeliverySchedule,
@@ -337,7 +338,7 @@ function MaterialOrderCard({
       <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_220px]">
         <header className="p-4 sm:p-5">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs leading-5">
-            <div className="text-sm text-muted-foreground">{MATERIAL_CATEGORY_LABELS[aggregate.category]}</div>
+            <div className="text-sm text-muted-foreground">{MATERIAL_CATEGORY_LABELS[displayMaterialCategory(aggregate.category, null, aggregate.unit)!]}</div>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               {dateSlice ? (
                 <>
@@ -1387,7 +1388,7 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
                     requestItemTable={item.table}
                     requestItemId={item.id}
                     itemName={item.item_name}
-                    categoryLabel={MATERIAL_CATEGORY_LABELS[item.category]}
+                    categoryLabel={MATERIAL_CATEGORY_LABELS[displayMaterialCategory(item.category, null, item.unit)!]}
                     planNumber={plan?.plan_number}
                     versionNumber={plan?.version_number}
                   />
@@ -1445,7 +1446,7 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
                     requestItemTable={item.table}
                     requestItemId={item.id}
                     itemName={item.item_name}
-                    categoryLabel={MATERIAL_CATEGORY_LABELS[item.category]}
+                    categoryLabel={MATERIAL_CATEGORY_LABELS[displayMaterialCategory(item.category, null, item.unit)!]}
                     planNumber={plan?.plan_number}
                     versionNumber={plan?.version_number}
                   />

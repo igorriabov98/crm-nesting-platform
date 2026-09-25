@@ -28,6 +28,7 @@ type MaterialSearchProps = {
   compact?: boolean
   className?: string
   allowCrossCategoryFallback?: boolean
+  pipeVariantFilter?: 'wire' | 'non_wire'
 }
 
 const MATERIAL_SEARCH_OPEN_EVENT = 'crm:material-search-open'
@@ -110,6 +111,7 @@ export function MaterialSearch({
   compact = false,
   className,
   allowCrossCategoryFallback = false,
+  pipeVariantFilter,
 }: MaterialSearchProps) {
   const [query, setQuery] = useState(value || initialValue || '')
   const [materials, setMaterials] = useState<MaterialWithSupplier[]>([])
@@ -249,8 +251,14 @@ export function MaterialSearch({
   )
   const visibleMaterials = useMemo(
     () => materials
-      .filter((material) => !category || allowCrossCategoryFallback || material.category === category),
-    [allowCrossCategoryFallback, category, materials],
+      .filter((material) => !category || allowCrossCategoryFallback || material.category === category)
+      .filter((material) => {
+        if (!pipeVariantFilter || material.category !== 'pipe') return true
+        const materialVariants = variants[material.id]
+        return materialVariants === undefined || materialVariants.some((variant) =>
+          pipeVariantFilter === 'wire' ? variant.pipe_type === 'wire' : variant.pipe_type !== 'wire')
+      }),
+    [allowCrossCategoryFallback, category, materials, pipeVariantFilter, variants],
   )
   const createName = category ? defaultMaterialNameForCategory(category) ?? query.trim() : query.trim()
   const canCreate = useMemo(() => Boolean(category) && normalizedQuery.length >= 2 && !disabled, [category, disabled, normalizedQuery])
@@ -334,7 +342,8 @@ export function MaterialSearch({
           }}
         >
           {visibleMaterials.map((material) => {
-            const materialVariants = variants[material.id]
+            const materialVariants = variants[material.id]?.filter((variant) =>
+              !pipeVariantFilter || (pipeVariantFilter === 'wire' ? variant.pipe_type === 'wire' : variant.pipe_type !== 'wire'))
             const hasVariants = Boolean(materialVariants?.length)
             const header = (
               <>
@@ -351,7 +360,7 @@ export function MaterialSearch({
 
             return (
               <div key={material.id} className="rounded-md border border-slate-100 p-2">
-                {hasVariants ? (
+                {hasVariants || (pipeVariantFilter && materialVariants === undefined) ? (
                   <div className="px-1 py-1 text-left">{header}</div>
                 ) : (
                   <button type="button" className="block w-full rounded px-1 py-1 text-left hover:bg-slate-50" onClick={() => selectMaterial(material, undefined, 'existing_material')}>

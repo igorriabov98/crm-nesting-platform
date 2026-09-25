@@ -78,7 +78,7 @@ export function validateLongStockMaterialDraft(draft: LongStockNewMaterialDraft)
   if (draft.category === 'pipe') {
     const pipeType = stringValue(draft.fields.pipe_type)
     if (!pipeType) return 'Выберите подтип трубы'
-    if (pipeType === 'wire') return 'Проволока остаётся в прежнем интерфейсе'
+    if (pipeType === 'wire') return 'Проволока добавляется в разделе «Круг»'
     return validatePipeProfileGeometry(draft.fields)
   }
 

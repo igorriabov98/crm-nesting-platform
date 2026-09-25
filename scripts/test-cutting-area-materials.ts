@@ -56,6 +56,11 @@ const sheetWithSteelType = summarize([{
 }]).details.not_ordered[0]
 assert.match(sheetWithSteelType.description || '', /Тип стали: 09Г2С/,
   'Участок заготовки должен показывать тип стали листового металла')
+const wire = summarize([{ ...item, id: 'wire', table: 'request_pipe', pipe_type: 'wire',
+  remainder_kg: 5, reserved_from_stock_kg: 0 }]).details.not_ordered[0]
+assert.equal(wire.category, 'Круг')
+assert.equal(wire.label, 'Проволока')
+assert.equal(wire.quantity, '5 кг')
 assert.equal(summarize([{ ...item, order_status: 'ordered' }]).counts.not_ordered, 1)
 assert.equal(summarize([{ ...item, order_status: 'delivered' }]).counts.received, 0, 'Статус без фактического распределения не доказывает получение')
 assert.deepEqual(summarize([{ ...item, order_status: 'cancelled' }], [schedule]), emptyCuttingAreaMaterialSummary())

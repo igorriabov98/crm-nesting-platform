@@ -8,6 +8,7 @@ import { AlertTriangle, CheckCircle2, ChevronDown, Clock3, Factory, FileDown, Lo
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { MATERIAL_CATEGORY_LABELS } from '@/lib/constants/procurement'
+import { displayMaterialCategory } from '@/lib/materials/display-category'
 import { ROUTES } from '@/lib/constants/routes'
 import {
   previewMaterialDeliveryAllocation,
@@ -431,7 +432,7 @@ export function MaterialReceivingPage({ data }: Props) {
                               <div className="font-semibold text-[#111827]">{item.item_name}</div>
                               <div className="mt-1 flex flex-wrap gap-1.5">
                                 <Badge variant="outline" className="border-[#E8ECF0] bg-white text-[#475569]">
-                                  {MATERIAL_CATEGORY_LABELS[item.category]}
+                                  {MATERIAL_CATEGORY_LABELS[displayMaterialCategory(item.category, null, item.unit)!]}
                                 </Badge>
                                 {item.is_virtual_schedule && (
                                   <Badge variant="secondary" className="bg-[#EFF6FF] text-[#1E40AF]">

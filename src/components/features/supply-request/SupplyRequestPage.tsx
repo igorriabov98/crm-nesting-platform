@@ -73,8 +73,8 @@ export function SupplyRequestPage({ data, detailing }: Props) {
 
   const sections: Array<{ key: TabKey; label: string; count: number }> = [
     { key: 'sheet_metal', label: 'Листовой металл', count: data.sections.sheetMetal.length },
-    { key: 'circle', label: 'Круг', count: data.sections.circles.length },
-    { key: 'pipe', label: 'Труба', count: data.sections.pipes.length },
+    { key: 'circle', label: 'Круг', count: data.sections.circles.length + data.sections.pipes.filter((row) => row.pipe_type === 'wire').length },
+    { key: 'pipe', label: 'Труба', count: data.sections.pipes.filter((row) => row.pipe_type !== 'wire').length },
     { key: 'knives', label: 'Ножи', count: data.sections.knives.length },
     { key: 'paint', label: 'Краска', count: data.sections.paint.length },
     { key: 'components', label: 'Комплектация', count: data.sections.components.length },
@@ -250,8 +250,11 @@ export function SupplyRequestPage({ data, detailing }: Props) {
       </div>
 
       {activeTab === 'sheet_metal' && <SupplySheetMetalTable key={selectedFactoryId} rows={isStockCheckMode ? data.sections.sheetMetal : filteredSections.sheetMetal} machineId={request.machine_id!} canReserve={canReserve} canUnreserve={canUnreserve} businessScrapMode={isStockCheckMode} />}
-      {activeTab === 'circle' && <SupplyCircleTable key={selectedFactoryId} rows={filteredSections.circles} requestId={request.id} />}
-      {activeTab === 'pipe' && <SupplyPipeTable key={selectedFactoryId} rows={filteredSections.pipes} requestId={request.id} machineId={request.machine_id!} canReserve={canReserve} canUnreserve={canUnreserve} />}
+      {activeTab === 'circle' && <div className="space-y-4">
+        <SupplyCircleTable key={selectedFactoryId} rows={filteredSections.circles} requestId={request.id} />
+        <SupplyPipeTable key={`${selectedFactoryId}-wire`} rows={filteredSections.pipes.filter((row) => row.pipe_type === 'wire')} requestId={request.id} machineId={request.machine_id!} canReserve={canReserve} canUnreserve={canUnreserve} title="Проволока · учёт в кг" />
+      </div>}
+      {activeTab === 'pipe' && <SupplyPipeTable key={selectedFactoryId} rows={filteredSections.pipes.filter((row) => row.pipe_type !== 'wire')} requestId={request.id} machineId={request.machine_id!} canReserve={canReserve} canUnreserve={canUnreserve} />}
       {activeTab === 'knives' && <SupplyKnivesTable key={selectedFactoryId} rows={filteredSections.knives} requestId={request.id} />}
       {activeTab === 'paint' && <SupplyPaintTable key={selectedFactoryId} rows={filteredSections.paint} machineId={request.machine_id!} canReserve={canReserve} canUnreserve={canUnreserve} />}
       {activeTab === 'components' && <SupplyComponentsTable key={selectedFactoryId} rows={filteredSections.components} machineId={request.machine_id!} canReserve={canReserve} canUnreserve={canUnreserve} />}

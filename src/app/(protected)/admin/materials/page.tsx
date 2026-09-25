@@ -3,7 +3,6 @@ import { MaterialsAdminPage } from '@/components/features/materials/MaterialsAdm
 import { SteelTypesSection } from '@/components/features/materials/SteelTypesSection'
 import { getMaterials } from '@/lib/actions/materials'
 import { getSteelTypes } from '@/lib/actions/steel-types'
-import { getSuppliers } from '@/lib/actions/suppliers'
 import { requirePermission } from '@/lib/permissions/server'
 
 export const metadata = {
@@ -19,9 +18,8 @@ async function AdminMaterialsPage({
 
   const resolvedSearchParams = await searchParams
   const page = Math.max(0, Number(resolvedSearchParams?.page || 1) - 1)
-  const [materialsResult, suppliersResult, steelTypes] = await Promise.all([
+  const [materialsResult, steelTypes] = await Promise.all([
     getMaterials({ active_only: false, page, pageSize: 50 }),
-    getSuppliers({ active_only: true }),
     getSteelTypes(),
   ])
 
@@ -36,7 +34,6 @@ async function AdminMaterialsPage({
       ) : (
         <MaterialsAdminPage
           materials={materialsResult.data || []}
-          suppliers={suppliersResult.data || []}
           page={materialsResult.pagination?.page || page}
           pageSize={materialsResult.pagination?.pageSize || 50}
           total={materialsResult.pagination?.total || 0}

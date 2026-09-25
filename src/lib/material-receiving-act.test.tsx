@@ -102,6 +102,18 @@ test('receiving act preserves full material data and summarizes destination orde
   assert.equal(data.totalWeightKg, 1034.65)
 })
 
+test('receiving act shows wire with Circle and keeps kilograms', () => {
+  const wireAct = buildMaterialReceivingActData({
+    batchKey: 'wire', deliveryDate: '2026-08-29', generatedAt: '2026-08-27T09:30:00.000Z',
+    factoryName: 'Берегово', transportTripName: null, plannedArrivalAt: null, arrivedAt: null,
+    items: [{ ...baseItem, key: 'wire', category: 'pipe', item_name: 'Проволока',
+      unit: 'кг', planned_quantity: 5, is_whole_bar: false,
+      planned_piece_length_mm: null, planned_piece_count: null }],
+  })
+  assert.equal(wireAct.items[0].categoryLabel, 'Круг')
+  assert.equal(wireAct.items[0].unit, 'кг')
+})
+
 test('receiving act renders a Cyrillic multi-page PDF with the bundled design', async () => {
   const element = createElement(MaterialReceivingActDocument, { data }) as Parameters<typeof renderToBuffer>[0]
   const buffer = await renderToBuffer(element)

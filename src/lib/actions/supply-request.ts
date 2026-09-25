@@ -155,6 +155,7 @@ export type SupplyRequestPayload = {
     sheetMetal: SupplyRequestSectionSummary
     roundTube: SupplyRequestSectionSummary
     circles: SupplyRequestSectionSummary
+    wire: SupplyRequestSectionSummary
     pipes: SupplyRequestSectionSummary
     knives: SupplyRequestSectionSummary
     components: SupplyRequestSectionSummary
@@ -1019,7 +1020,8 @@ async function loadRequestForStockSource(
           // @deprecated — round_tube excluded from new UI
           roundTube: summarize(sections.roundTube, 'request_round_tube', 'кг'),
           circles: summarize(sections.circles, 'request_circle', 'мм'),
-          pipes: summarize(sections.pipes, 'request_pipe', 'мм'),
+          wire: summarize(sections.pipes.filter((row) => row.pipe_type === 'wire'), 'request_pipe', 'кг'),
+          pipes: summarize(sections.pipes.filter((row) => row.pipe_type !== 'wire'), 'request_pipe', 'мм'),
           knives: summarize(sections.knives, 'request_knives', 'мм'),
           components: summarizeComponents(sections.components),
           paint: summarize(sections.paint, 'request_paint', 'кг'),

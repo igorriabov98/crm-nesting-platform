@@ -312,7 +312,8 @@ export function buildCuttingAreaMaterialSummaries(
       if (quantity <= EPSILON) return
       summary.counts[state] += 1
       summary.details[state].push({ id: item.id, requestId: item.request_id,
-        category: categoryLabels[item.table], label: identity.label, description: identity.description || null,
+        category: item.table === 'request_pipe' && item.pipe_type === 'wire' ? 'Круг' : categoryLabels[item.table],
+        label: identity.label, description: identity.description || null,
         quantity: sharedQuantity ? 'Распределение при приёмке' : format(quantity),
         demandQuantity: format(needed), stockQuantity: format(progress.stock), notes: stateNotes })
     }

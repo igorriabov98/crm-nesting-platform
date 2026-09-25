@@ -1,6 +1,7 @@
 import type { SupplyOrderAggregate } from '@/lib/actions/supply-orders'
 import type { MaterialCategory } from '@/lib/types'
 import { MATERIAL_CATEGORIES } from '@/lib/constants/procurement'
+import { displayMaterialCategory } from '@/lib/materials/display-category'
 import { groupSupplyOrderAggregatesBySupplyDate } from '@/components/features/supply-orders/supply-order-view'
 
 export const STEEL_TYPE_CATEGORIES: MaterialCategory[] = ['sheet_metal', 'pipe', 'circle', 'knives']
@@ -26,7 +27,8 @@ export function getSupplyDateOrderOptions(aggregates: readonly SupplyOrderAggreg
     .find((entry) => entry.dateKey === dateKey)
   return MATERIAL_CATEGORIES.flatMap((category) => {
     const rows = (group?.rows || []).filter((slice) => (
-      slice.unscheduledQuantity > 0.000001 && slice.aggregate.category === category
+      slice.unscheduledQuantity > 0.000001
+      && displayMaterialCategory(slice.aggregate.category, null, slice.aggregate.unit) === category
     ))
     if (rows.length === 0) return []
     return [{
@@ -46,8 +48,9 @@ export function selectSupplyDateOrderAggregates(
 ) {
   const selectedCategories = new Set(selection.categories)
   return aggregates.filter((aggregate) => {
-    if (!selectedCategories.has(aggregate.category)) return false
-    if (!STEEL_TYPE_CATEGORIES.includes(aggregate.category)) return true
-    return (selection.steelTypes[aggregate.category] || []).includes(supplyOrderSteelType(aggregate))
+    const displayCategory = displayMaterialCategory(aggregate.category, null, aggregate.unit)
+    if (!displayCategory || !selectedCategories.has(displayCategory)) return false
+    if (!STEEL_TYPE_CATEGORIES.includes(displayCategory)) return true
+    return (selection.steelTypes[displayCategory] || []).includes(supplyOrderSteelType(aggregate))
   })
 }

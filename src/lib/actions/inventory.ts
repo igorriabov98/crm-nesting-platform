@@ -4,7 +4,9 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { INVENTORY_LIST_LIMIT } from '@/lib/constants/performance-limits'
 import { ROUTES } from '@/lib/constants/routes'
+import { displayMaterialCategory } from '@/lib/materials/display-category'
 import { classifyBusinessScrapLength, getLongStockLayoutCategoryKey, type BusinessScrapSizeClass } from '@/lib/inventory/business-scrap-size'
+import { receiptLengthMm } from '@/lib/inventory/receipt-length'
 import { groupInventoryReservationOrders, type InventoryReservationLink, type ReservationOrderDetails } from '@/lib/inventory/reservation-order-details'
 import { matchCuttingWriteOffSources } from '@/lib/inventory/cutting-writeoff-source'
 import {
@@ -158,7 +160,7 @@ export type InventoryWithMaterial = Inventory & {
   source_nesting_project_id?: string | null
   source_nesting_sheet_id?: string | null
   source_remnant_geom?: unknown
-  material: Pick<Material, 'id' | 'name' | 'category' | 'default_supplier_id'> | null
+  material: Pick<Material, 'id' | 'name' | 'category'> | null
   variant: MaterialVariant | null
   variant_options: MaterialVariant[]
   is_legacy_variant: boolean
@@ -459,11 +461,11 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
 
   const { data: materialsData, error } = await db
     .from('materials')
-    .select('id, name, category, default_supplier_id')
+    .select('id, name, category')
     .in('id', materialIds)
   if (error) throw new Error(error.message || 'Не удалось загрузить материалы')
 
-  const materials = (materialsData || []) as Pick<Material, 'id' | 'name' | 'category' | 'default_supplier_id'>[]
+  const materials = (materialsData || []) as Pick<Material, 'id' | 'name' | 'category'>[]
   const materialMap = new Map(materials.map((material) => [material.id, material]))
   const variantMap = new Map<string, MaterialVariant>()
   const variantsByMaterial = new Map<string, MaterialVariant[]>()
@@ -506,13 +508,6 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
         variantsByMaterial.set(variant.material_id, current)
       }
     }
-  }
-  const supplierIds = Array.from(new Set(materials.map((material) => material.default_supplier_id).filter(Boolean))) as string[]
-  const supplierMap = new Map<string, string>()
-  if (supplierIds.length) {
-    const { data: suppliersData, error: suppliersError } = await db.from('suppliers').select('id, name').in('id', supplierIds)
-    if (suppliersError) throw new Error(suppliersError.message || 'Не удалось загрузить поставщиков')
-    for (const supplier of (suppliersData || []) as { id: string; name: string }[]) supplierMap.set(supplier.id, supplier.name)
   }
   const inventoryIds = rows.map((row) => row.id)
   type ActiveReservation = Pick<
@@ -637,7 +632,7 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
       variant: exactVariant || fallbackVariant,
       variant_options: variantOptions,
       is_legacy_variant: !row.material_variant_id,
-      supplier_name: material?.default_supplier_id ? supplierMap.get(material.default_supplier_id) || null : null,
+      supplier_name: null,
       source_machine_name: row.source_machine_id
         ? sourceMachineMap.get(row.source_machine_id) || null
         : sourceMachineMap.get(transactionMachineByInventory.get(row.id) || '') || null,
@@ -903,12 +898,11 @@ export async function addReceipt(data: {
       || (materialData.category === 'pipe' && pipeType !== 'wire')
     let receiptQuantity = Number(data.quantity)
     if (isWholeBarReceipt) {
-      const pieceLength = Number(data.piece_length_mm || 0)
-      const pieceCount = Number(data.secondary_quantity || 0)
-      if (pieceLength <= 0 || pieceCount <= 0 || !Number.isInteger(pieceCount)) {
+      const totalLength = receiptLengthMm(data.secondary_quantity, data.piece_length_mm)
+      if (totalLength === null) {
         throw new Error('Для круга и непроволочной трубы укажите длину хлыста и целое количество штук')
       }
-      receiptQuantity = pieceLength * pieceCount
+      receiptQuantity = totalLength
     }
     const { error } = await db.rpc('fn_add_inventory_receipt', {
       p_factory_id: data.factory_id,
@@ -1186,7 +1180,7 @@ export async function deleteInventoryItem(inventoryId: string): Promise<ActionRe
   }
 }
 
-type InventoryHistoryStockRow = Pick<Inventory, 'id' | 'material_id' | 'total_quantity' | 'unit' | 'total_secondary_quantity' | 'secondary_unit' | 'calculated_weight_kg' | 'business_scrap_state'>
+type InventoryHistoryStockRow = Pick<Inventory, 'id' | 'material_id' | 'material_variant_id' | 'total_quantity' | 'unit' | 'total_secondary_quantity' | 'secondary_unit' | 'calculated_weight_kg' | 'business_scrap_state'>
 type InventoryHistoryTransactionRow = Pick<InventoryTransaction, 'id' | 'inventory_id' | 'material_id' | 'material_variant_id' | 'transaction_type' | 'quantity' | 'secondary_quantity' | 'request_item_table' | 'request_item_id' | 'created_at'>
 
 export async function getWarehouseHistoryOverview(filters: {
@@ -1200,7 +1194,7 @@ export async function getWarehouseHistoryOverview(filters: {
 
     let currentQuery = db
       .from('inventory')
-      .select('id, material_id, total_quantity, unit, total_secondary_quantity, secondary_unit, calculated_weight_kg, business_scrap_state')
+      .select('id, material_id, material_variant_id, total_quantity, unit, total_secondary_quantity, secondary_unit, calculated_weight_kg, business_scrap_state')
       .is('deleted_at', null)
     if (filters.factory_id) currentQuery = currentQuery.eq('factory_id', filters.factory_id)
 
@@ -1220,17 +1214,23 @@ export async function getWarehouseHistoryOverview(filters: {
       .filter((row) => (row.business_scrap_state || 'available') !== 'future')
     const transactionRows = (transactionResult.data || []) as InventoryHistoryTransactionRow[]
     const transactionInventoryIds = Array.from(new Set(transactionRows.map((row) => row.inventory_id).filter(Boolean)))
-    const transactionVariantIds = Array.from(new Set(transactionRows.map((row) => row.material_variant_id).filter(Boolean))) as string[]
+    const transactionVariantIds = Array.from(new Set([
+      ...currentRows.map((row) => row.material_variant_id),
+      ...transactionRows.map((row) => row.material_variant_id),
+    ].filter(Boolean))) as string[]
     const transactionStockMap = new Map<string, InventoryHistoryStockRow>()
     const transactionVariantMap = new Map<string, MaterialVariant>()
 
     if (transactionInventoryIds.length) {
       const { data, error } = await db
         .from('inventory')
-        .select('id, material_id, total_quantity, unit, total_secondary_quantity, secondary_unit, calculated_weight_kg, business_scrap_state')
+        .select('id, material_id, material_variant_id, total_quantity, unit, total_secondary_quantity, secondary_unit, calculated_weight_kg, business_scrap_state')
         .in('id', transactionInventoryIds)
       if (error) throw new Error(error.message || 'Не удалось загрузить веса движений склада')
       for (const row of (data || []) as InventoryHistoryStockRow[]) transactionStockMap.set(row.id, row)
+    }
+    for (const row of transactionStockMap.values()) {
+      if (row.material_variant_id && !transactionVariantIds.includes(row.material_variant_id)) transactionVariantIds.push(row.material_variant_id)
     }
     if (transactionVariantIds.length) {
       const { data, error } = await db
@@ -1285,7 +1285,9 @@ export async function getWarehouseHistoryOverview(filters: {
 
     let currentWeightKg = 0
     for (const row of currentRows) {
-      const category = materialCategoryMap.get(row.material_id) || 'other'
+      const baseCategory = materialCategoryMap.get(row.material_id) || 'other'
+      const category = displayMaterialCategory(baseCategory, row.material_variant_id
+        ? transactionVariantMap.get(row.material_variant_id)?.pipe_type : null, row.unit) || baseCategory
       const weight = normalizeWeight(row.calculated_weight_kg)
       currentWeightKg += weight
       ensureCategory(category).currentWeightKg += weight
@@ -1302,7 +1304,10 @@ export async function getWarehouseHistoryOverview(filters: {
     for (const row of transactionRows) {
       const stock = transactionStockMap.get(row.inventory_id)
       const variant = row.material_variant_id ? transactionVariantMap.get(row.material_variant_id) : null
-      const category = materialCategoryMap.get(row.material_id) || materialCategoryMap.get(stock?.material_id || '') || 'other'
+      const baseCategory = materialCategoryMap.get(row.material_id) || materialCategoryMap.get(stock?.material_id || '') || 'other'
+      const category = displayMaterialCategory(baseCategory,
+        variant?.pipe_type ?? (stock?.material_variant_id ? transactionVariantMap.get(stock.material_variant_id)?.pipe_type : null),
+        stock?.unit) || baseCategory
       const summary = ensureCategory(category)
       const movementWeight = requestItemTransactionWeight(row, requestItemWeightMap) ?? estimateTransactionWeight(row, stock, variant)
       const totalDelta = totalStockDeltaWeight(row, movementWeight)
@@ -1648,6 +1653,7 @@ async function hydrateTransactions(db: LooseDb, rows: InventoryTransaction[]): P
       ? {
           id: row.inventory_id,
           material_id: row.material_id,
+          material_variant_id: row.material_variant_id,
           total_quantity: inventory.total_quantity,
           unit: inventory.unit,
           total_secondary_quantity: null,

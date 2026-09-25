@@ -9,6 +9,7 @@ type Props = {
 const labels = {
   sheetMetal: 'Листовой',
   circles: 'Круг',
+  wire: 'Проволока',
   pipes: 'Труба',
   knives: 'Ножи',
   components: 'Комплект.',

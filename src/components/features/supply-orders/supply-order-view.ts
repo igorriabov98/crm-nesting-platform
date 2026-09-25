@@ -1,4 +1,5 @@
 import { materialFulfillment } from '@/lib/supply-orders/material-fulfillment'
+import { displayMaterialCategory } from '@/lib/materials/display-category'
 import { addDays, endOfWeek, isWithinInterval, startOfWeek } from 'date-fns'
 import type {
   SupplyOrderAggregate,
@@ -632,7 +633,7 @@ export function filterSupplyOrderItems(
         ? !activeSupplierIds.includes(filters.supplier)
         : item.supplier_id !== filters.supplier) return false
     }
-    if (filters.category !== 'all' && item.category !== filters.category) return false
+    if (filters.category !== 'all' && displayMaterialCategory(item.category, item.pipe_type, item.unit) !== filters.category) return false
 
     if (normalizedQuery) {
       const haystack = normalize([
@@ -768,7 +769,7 @@ export function filterAndSortAggregates(aggregates: SupplyOrderAggregate[], filt
     return [regular]
   })
   const filtered = projected.filter((aggregate) => {
-    if (filters.category !== 'all' && aggregate.category !== filters.category) return false
+    if (filters.category !== 'all' && displayMaterialCategory(aggregate.category, null, aggregate.unit) !== filters.category) return false
     if (filters.status === 'open' && isSupplyOrderAggregateClosed(aggregate)) return false
     if (filters.status === 'scheduled' && aggregate.planned_schedule_quantity <= 0) return false
     if (filters.status === 'unscheduled' && !hasSupplyOrderRedelivery(aggregate)) return false
@@ -1237,7 +1238,7 @@ function sumNullableWeights(weights: Array<number | null>) {
 export function filterAndSortHistory(items: SupplyOrderHistoryItem[], filters: HistoryFiltersState) {
   const normalizedQuery = normalize(filters.query)
   const filtered = items.filter((item) => {
-    if (filters.category !== 'all' && item.category !== filters.category) return false
+    if (filters.category !== 'all' && displayMaterialCategory(item.category, null, item.unit) !== filters.category) return false
     if (filters.supplier !== 'all' && (item.supplier_name || 'none') !== filters.supplier) return false
     if (normalizedQuery) {
       const haystack = normalize([

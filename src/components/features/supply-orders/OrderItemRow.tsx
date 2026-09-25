@@ -6,6 +6,7 @@ import { CalendarClock, ChevronDown, FileText, TriangleAlert } from 'lucide-reac
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { MATERIAL_CATEGORY_LABELS, ORDER_STATUS_LABELS } from '@/lib/constants/procurement'
+import { displayMaterialCategory } from '@/lib/materials/display-category'
 import { ROUTES } from '@/lib/constants/routes'
 import type {
   SupplyOrderAggregateCharacteristic,
@@ -107,7 +108,7 @@ export function OrderItemRow({ item, suppliers, detailContext }: OrderItemRowPro
           <div className="flex flex-wrap items-center gap-2">
             <div className="break-words font-semibold leading-5 text-foreground">{item.item_name}</div>
             <Badge variant="outline" className="border-border bg-background text-[11px] text-muted-foreground">
-              {MATERIAL_CATEGORY_LABELS[item.category]}
+              {MATERIAL_CATEGORY_LABELS[displayMaterialCategory(item.category, item.pipe_type, item.unit)!]}
             </Badge>
           </div>
           <CharacteristicList characteristics={characteristics} />
@@ -212,7 +213,7 @@ export function OrderItemRow({ item, suppliers, detailContext }: OrderItemRowPro
                 requestItemTable={item.table}
                 requestItemId={item.id}
                 itemName={item.item_name}
-                categoryLabel={MATERIAL_CATEGORY_LABELS[item.category]}
+                categoryLabel={MATERIAL_CATEGORY_LABELS[displayMaterialCategory(item.category, item.pipe_type, item.unit)!]}
                 planNumber={plan?.plan_number}
                 versionNumber={plan?.version_number}
               />
