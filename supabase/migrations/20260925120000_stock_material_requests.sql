@@ -75,6 +75,50 @@ $$;
 CREATE TRIGGER stock_request_write_guard BEFORE INSERT OR UPDATE
 ON public.technologist_requests FOR EACH ROW EXECUTE FUNCTION private.stock_request_write_guard();
 
+-- The regular stock-check stage is mandatory only for machine demand.
+CREATE OR REPLACE FUNCTION public.fn_guard_regular_stock_stage_submission_v1()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+BEGIN
+  IF NEW.request_kind = 'machine'
+     AND NEW.status = 'submitted_to_supply'
+     AND OLD.status IS DISTINCT FROM 'submitted_to_supply'
+     AND OLD.status IS DISTINCT FROM 'stock_checked' THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '55000',
+      MESSAGE = '[REGULAR_STOCK_CHECK_REQUIRED] Перед передачей в снабжение завершите бронь основного склада';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.fn_complete_technologist_request_task_on_request_sent()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF NEW.request_kind = 'stock' THEN RETURN NEW; END IF;
+  IF NEW.status IN ('submitted_to_supply', 'completed') THEN
+    PERFORM public.complete_sent_technologist_request_tasks(NEW.machine_id);
+  END IF;
+  IF NEW.status = 'submitted_to_supply'
+     AND (TG_OP = 'INSERT' OR OLD.status IS DISTINCT FROM NEW.status) THEN
+    PERFORM public.activate_supply_start_task(NEW.machine_id);
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.fn_update_machine_status_on_request()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  IF NEW.request_kind = 'machine'
+     AND NEW.status = 'submitted_to_supply'
+     AND OLD.status IS DISTINCT FROM NEW.status THEN
+    UPDATE public.machines SET status = 'request_ready', updated_at = now()
+    WHERE id = NEW.machine_id AND status = 'planned';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
 -- The legacy read policies cover both technologists and supply staff.  Narrow
 -- stock demand at the database boundary before financial approval.
 CREATE FUNCTION private.stock_request_visible(p_request_id uuid)

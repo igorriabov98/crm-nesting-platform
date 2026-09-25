@@ -7,9 +7,10 @@ DECLARE
   v_factory uuid;
   v_author uuid := gen_random_uuid();
   v_supply uuid := gen_random_uuid();
-  v_reviewer uuid;
+  v_reviewer uuid := gen_random_uuid();
   v_tech_department uuid := gen_random_uuid();
   v_supply_department uuid := gen_random_uuid();
+  v_finance_department uuid := gen_random_uuid();
   v_request uuid := gen_random_uuid();
   v_machine uuid := gen_random_uuid();
   v_machine_request uuid := gen_random_uuid();
@@ -27,20 +28,24 @@ BEGIN
 
   INSERT INTO public.users(id,email,full_name,role,factory_id,is_active) VALUES
     (v_author, v_author || '@stock-request.test', 'Технолог склада', 'technologist', v_factory, true),
-    (v_supply, v_supply || '@stock-request.test', 'Снабженец склада', 'supply_manager', v_factory, true);
+    (v_supply, v_supply || '@stock-request.test', 'Снабженец склада', 'supply_manager', v_factory, true),
+    (v_reviewer, v_reviewer || '@stock-request.test', 'Финансовый согласующий склада', 'engineer', v_factory, true);
   INSERT INTO public.departments(id,name,factory_id,is_active,created_by) VALUES
     (v_tech_department, 'Stock request tech ' || v_author, v_factory, true, v_author),
-    (v_supply_department, 'Stock request supply ' || v_supply, v_factory, true, v_supply);
+    (v_supply_department, 'Stock request supply ' || v_supply, v_factory, true, v_supply),
+    (v_finance_department, 'Финансовый отдел', v_factory, true, v_reviewer);
   INSERT INTO public.department_members(user_id,department_id,is_department_head,created_by) VALUES
     (v_author,v_tech_department,false,v_author),
-    (v_supply,v_supply_department,false,v_supply);
+    (v_supply,v_supply_department,false,v_supply),
+    (v_reviewer,v_finance_department,true,v_reviewer);
   INSERT INTO public.department_access_permissions(
     department_id,subject_scope,resource_key,can_view,can_manage,updated_by
   ) VALUES
     (v_tech_department,'member','technologist_requests',true,true,v_author),
     (v_supply_department,'member','supply_orders',true,true,v_supply),
     (v_supply_department,'member','supply_material_requests',true,true,v_supply),
-    (v_supply_department,'member','inventory_receiving',true,true,v_supply);
+    (v_supply_department,'member','inventory_receiving',true,true,v_supply),
+    (v_finance_department,'head','technologist_request_results',true,true,v_reviewer);
   SELECT public.fn_technologist_approval_department_head('Финансовый отдел') INTO v_reviewer;
   IF v_reviewer IS NULL THEN RAISE EXCEPTION 'Нет финансового согласующего в тестовой схеме'; END IF;
 
