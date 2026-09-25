@@ -87,13 +87,13 @@ export function OrderItemRow({ item, suppliers, detailContext }: OrderItemRowPro
         <div role="cell" className="min-w-0">
           <ColumnLabel>Машина / заявка</ColumnLabel>
           <Link
-            href={`${ROUTES.SALES_PLAN}/${item.machine_id}`}
+            href={item.machine_id ? `${ROUTES.SALES_PLAN}/${item.machine_id}` : `${ROUTES.SUPPLY_ORDERS}/stock/${item.request_id}`}
             className="block break-words font-semibold leading-5 text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {item.machine_name}
           </Link>
           <Link
-            href={`${ROUTES.SUPPLY_REQUEST}/${item.request_id}`}
+            href={item.machine_id ? `${ROUTES.SUPPLY_REQUEST}/${item.request_id}` : `${ROUTES.SUPPLY_ORDERS}/stock/${item.request_id}`}
             className="mt-1 inline-flex min-h-8 items-center gap-1.5 rounded-md text-xs font-medium text-muted-foreground hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             title="Открыть заявку для снабжения"
           >

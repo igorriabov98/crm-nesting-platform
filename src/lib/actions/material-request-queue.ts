@@ -108,6 +108,7 @@ export async function getMaterialRequestQueue(): Promise<QueueResult> {
 
     const requestsByMachine = new Map<string, QueueRequest[]>()
     for (const request of (requestsResult.data || []) as QueueRequest[]) {
+      if (!request.machine_id) continue
       const current = requestsByMachine.get(request.machine_id) || []
       current.push(request)
       requestsByMachine.set(request.machine_id, current)

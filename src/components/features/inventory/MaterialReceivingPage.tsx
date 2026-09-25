@@ -461,6 +461,12 @@ export function MaterialReceivingPage({ data }: Props) {
                                     {machine.specification_number ? ` · ${machine.specification_number}` : ''}
                                   </Link>
                                 ))}
+                                {item.sources.filter((source) => !source.machine_id).map((source) => (
+                                  <Link key={source.key} href={`${ROUTES.SUPPLY_ORDERS}/stock/${source.request_id}`}
+                                    className="block font-medium text-[#1B3A6B] hover:underline">
+                                    {source.machine_name}
+                                  </Link>
+                                ))}
                               </div>
                               <div className="mt-1 text-xs text-[#64748B]">{item.factory_name}</div>
                             </td>

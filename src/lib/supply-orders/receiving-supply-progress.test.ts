@@ -6,7 +6,19 @@ import {
   deliveredSupplyQuantity,
   freeStockSupplyQuantity,
   reservedSupplyQuantity,
+  splitReceiptStock,
 } from './receiving-supply-progress'
+
+test('mixed partial receipt keeps stock demand and supplier excess available', () => {
+  const physicalReceipt = 15
+  const machineAllocation = 6
+  const stockAllocation = 5
+  const supplierExcess = physicalReceipt - machineAllocation - stockAllocation
+  const split = splitReceiptStock(physicalReceipt, machineAllocation)
+  assert.equal(split.machineReserved, 6)
+  assert.equal(split.freeStock, stockAllocation + supplierExcess)
+  assert.equal(split.machineReserved + split.freeStock, physicalReceipt)
+})
 
 test('whole-bar progress uses the physical purchase plan instead of the cutting need', () => {
   assert.deepEqual(calculateSupplyReceiptProgress({

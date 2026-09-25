@@ -13,7 +13,7 @@ type Version = { id: string; revision_number: number; display_revision_number: n
 type LoadedVersion = { summary: ApprovalSummarySnapshot | null; diff: ApprovalVersionDiff | null; reason: string | null }
 const labels: Record<string, string> = { pending: 'На согласовании', returned: 'Возвращена', superseded: 'Заменена', approved: 'Одобрена' }
 
-function HistoryEntry({ requestId, requestNumber, version }: { requestId: string; requestNumber: number; version: Version }) {
+function HistoryEntry({ requestId, requestNumber, stock, version }: { requestId: string; requestNumber: number; stock: boolean; version: Version }) {
   const [data, setData] = useState<LoadedVersion | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -36,7 +36,7 @@ function HistoryEntry({ requestId, requestNumber, version }: { requestId: string
     if (event.currentTarget.open && !error) void load()
   }}>
     <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
-      <span className="font-medium">Версия {formatApprovalVersion(version.display_revision_number, requestNumber)}</span>
+      <span className="font-medium">Версия {stock ? `СЗ-${String(requestNumber).padStart(6, '0')}.${version.display_revision_number}` : formatApprovalVersion(version.display_revision_number, requestNumber)}</span>
       <span className="flex flex-wrap items-center justify-end gap-2"><Badge variant="outline" className={approvalBadgeClass(version.state)}>{version.is_legacy ? 'Одобрена до согласования' : labels[version.state]}</Badge><span className="text-sm text-blue-700">Подробнее</span></span>
     </summary>
     <div className="space-y-4 border-t p-4" aria-busy={loading}>
@@ -51,6 +51,6 @@ function HistoryEntry({ requestId, requestNumber, version }: { requestId: string
   </details>
 }
 
-export function ApprovalVersionHistory({ requestId, requestNumber, versions }: { requestId: string; requestNumber: number; versions: Version[] }) {
-  return versions.length ? <>{versions.map((version) => <HistoryEntry key={version.id} requestId={requestId} requestNumber={requestNumber} version={version} />)}</> : <p className="text-sm text-slate-500">Версий пока нет.</p>
+export function ApprovalVersionHistory({ requestId, requestNumber, versions, stock = false }: { requestId: string; requestNumber: number; versions: Version[]; stock?: boolean }) {
+  return versions.length ? <>{versions.map((version) => <HistoryEntry key={version.id} requestId={requestId} requestNumber={requestNumber} stock={stock} version={version} />)}</> : <p className="text-sm text-slate-500">Версий пока нет.</p>
 }

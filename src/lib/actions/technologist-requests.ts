@@ -179,10 +179,16 @@ function requestDetailPath(machineId: string, requestId: string) {
   return `${requestPath(machineId)}/${requestId}`
 }
 
-function revalidateRequest(machineId: string, requestId?: string) {
-  revalidatePath(requestPath(machineId))
-  if (requestId) revalidatePath(requestDetailPath(machineId, requestId))
-  revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
+function revalidateRequest(machineId: string | null, requestId?: string) {
+  if (machineId) {
+    revalidatePath(requestPath(machineId))
+    if (requestId) revalidatePath(requestDetailPath(machineId, requestId))
+    revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
+  } else if (requestId) {
+    revalidatePath(`${ROUTES.MATERIAL_REQUESTS}/stock/${requestId}`)
+    revalidatePath(ROUTES.MATERIAL_REQUESTS)
+    revalidatePath(ROUTES.TECHNOLOGIST_REQUEST_RESULTS)
+  }
 }
 
 async function getRequestMachine(db: LooseDb, requestId: string) {
@@ -190,10 +196,46 @@ async function getRequestMachine(db: LooseDb, requestId: string) {
     .from('technologist_requests')
     .select('id, machine_id, status')
     .eq('id', requestId)
+    .eq('request_kind', 'machine')
     .single()
 
   if (error || !data) throw new Error('Заявка не найдена')
   return data as { id: string; machine_id: string; status: RequestStatus }
+}
+
+type EditorRequest = {
+  id: string
+  machine_id: string | null
+  factory_id: string | null
+  request_kind: 'machine' | 'stock'
+  created_by: string
+  status: RequestStatus
+}
+
+async function getEditableRequest(access: Awaited<ReturnType<typeof requireRequestPermission>>, requestId: string): Promise<EditorRequest> {
+  const admin = createAdminClient() as unknown as LooseDb
+  const { data, error } = await admin.from('technologist_requests')
+    .select('id,machine_id,factory_id,request_kind,created_by,status').eq('id', requestId).single()
+  if (error || !data) throw new Error('Заявка не найдена')
+  const request = data as EditorRequest
+  if (request.request_kind === 'machine') {
+    if (!request.machine_id) throw new Error('Машина заявки не найдена')
+    await assertMachineNotArchived(access.db, request.machine_id)
+  } else {
+    assertFactoryAccess(access, 'technologist_requests', 'manage', request.factory_id)
+    if (request.created_by !== access.userId && !access.permissionDetails.isAdminPosition) {
+      const tasks = await admin.from('tasks').select('technologist_request_approval_id')
+        .eq('assigned_to', access.userId).eq('task_type', 'technologist_request_revision')
+        .in('status', ['pending', 'in_progress'])
+      if (tasks.error) throw new Error('Не удалось проверить исполнителя заявки')
+      const ids = ((tasks.data || []) as Array<{ technologist_request_approval_id: string | null }>)
+        .map((row) => row.technologist_request_approval_id).filter(Boolean) as string[]
+      const assigned = ids.length ? await admin.from('technologist_request_approval_versions')
+        .select('id').eq('request_id', requestId).in('id', ids) : { data: [], error: null }
+      if (assigned.error || !(assigned.data as unknown[])?.length) throw new Error('Редактирование доступно автору или назначенному технологу')
+    }
+  }
+  return request
 }
 
 function timeRank(value?: string | null) {
@@ -408,22 +450,12 @@ async function validateRequestReadyForSupply(db: LooseDb, requestId: string, use
 async function getRequestIdAndMachineByItem(db: LooseDb, table: RequestSectionTable, id: string) {
   const { data, error } = await db
     .from(table)
-    .select('id, request_id, technologist_requests(machine_id, status)')
+    .select('id, request_id')
     .eq('id', id)
     .single()
 
   if (error || !data) throw new Error('Позиция не найдена')
-  const row = data as {
-    request_id: string
-    technologist_requests: { machine_id: string; status: RequestStatus } | null
-  }
-
-  if (!row.technologist_requests) throw new Error('Заявка не найдена')
-  return {
-    requestId: row.request_id,
-    machineId: row.technologist_requests.machine_id,
-    status: row.technologist_requests.status,
-  }
+  return { requestId: (data as { request_id: string }).request_id }
 }
 
 async function notifyRole(
@@ -781,9 +813,9 @@ export async function getSuppliers(category?: MaterialCategory) {
 
 async function addSectionRow<T>(requestId: string, table: RequestSectionTable, schema: { parse: (value: unknown) => T }, data: unknown): Promise<ActionResult> {
   try {
-    const { db } = await requireRequestPermission('manage')
-    const request = await getRequestMachine(db, requestId)
-    await assertMachineNotArchived(db, request.machine_id)
+    const access = await requireRequestPermission('manage')
+    const request = await getEditableRequest(access, requestId)
+    const db = request.request_kind === 'stock' ? createAdminClient() as unknown as LooseDb : access.db
     assertTechnologistRequestEditable(request.status)
     const parsed = schema.parse(data) as Record<string, unknown>
     const insertResult = await db.from(table).insert({ request_id: requestId, ...parsed }).select('*').single()
@@ -811,10 +843,11 @@ async function addSectionRow<T>(requestId: string, table: RequestSectionTable, s
 
 async function updateSectionRow<T>(id: string, table: RequestSectionTable, schema: { parse: (value: unknown) => T }, data: unknown): Promise<ActionResult> {
   try {
-    const { db } = await requireRequestPermission('manage')
-    const meta = await getRequestIdAndMachineByItem(db, table, id)
-    await assertMachineNotArchived(db, meta.machineId)
-    assertTechnologistRequestEditable(meta.status)
+    const access = await requireRequestPermission('manage')
+    const meta = await getRequestIdAndMachineByItem(createAdminClient() as unknown as LooseDb, table, id)
+    const request = await getEditableRequest(access, meta.requestId)
+    const db = request.request_kind === 'stock' ? createAdminClient() as unknown as LooseDb : access.db
+    assertTechnologistRequestEditable(request.status)
     const parsed = schema.parse(data) as Record<string, unknown>
     const explicitKeys = objectKeys(data)
     const patchKeys = explicitKeys.length > 0 ? explicitKeys : Object.keys(parsed)
@@ -884,7 +917,7 @@ async function updateSectionRow<T>(id: string, table: RequestSectionTable, schem
         row = variantUpdate.data
       }
     }
-    revalidateRequest(meta.machineId, meta.requestId)
+    revalidateRequest(request.machine_id, meta.requestId)
     return { success: true, data: row }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось обновить позицию' }
@@ -986,25 +1019,29 @@ function isRequestMaterialVariantComplete(table: RequestSectionTable, row: Recor
 async function deleteSectionRow(id: string, table: RequestSectionTable): Promise<ActionResult> {
   try {
     const access = await requireRequestPermission('manage')
-    const { db } = access
+    const { db: userDb } = access
     let meta: Awaited<ReturnType<typeof getRequestIdAndMachineByItem>>
     try {
-      meta = await getRequestIdAndMachineByItem(db, table, id)
+      meta = await getRequestIdAndMachineByItem(createAdminClient() as unknown as LooseDb, table, id)
     } catch (error) {
       if (error instanceof Error && error.message === 'Позиция не найдена') {
         return { success: true }
       }
       throw error
     }
-    const machine = await assertMachineNotArchived(db, meta.machineId)
-    assertFactoryAccess(access, 'technologist_requests', 'manage', machine.factory_id)
-    assertTechnologistRequestEditable(meta.status)
+    const request = await getEditableRequest(access, meta.requestId)
+    const db = request.request_kind === 'stock' ? createAdminClient() as unknown as LooseDb : userDb
+    if (request.machine_id) {
+      const machine = await assertMachineNotArchived(db, request.machine_id)
+      assertFactoryAccess(access, 'technologist_requests', 'manage', machine.factory_id)
+    }
+    assertTechnologistRequestEditable(request.status)
     const revision = await db.from('supply_position_revisions').select('id').eq('replacement_request_id', meta.requestId).maybeSingle()
     if (revision.error) throw new Error(revision.error.message || 'Не удалось проверить корректировку')
     if (revision.data) {
       const result = await db.rpc('fn_delete_supply_revision_item', { p_table: table, p_item: id })
       if (result.error) throw new Error(result.error.message || 'Не удалось удалить позицию корректировки')
-      revalidateRequest(meta.machineId, meta.requestId)
+      revalidateRequest(request.machine_id, meta.requestId)
       return { success: true }
     }
     const { data: reservationsData, error: reservationsError } = await db
@@ -1023,7 +1060,7 @@ async function deleteSectionRow(id: string, table: RequestSectionTable): Promise
     const { data: deletedRow, error } = await adminDb.from(table).delete().eq('id', id).select('id').maybeSingle()
     if (error) throw new Error(error.message || 'Не удалось удалить позицию')
     if (!deletedRow) throw new Error('Не удалось удалить позицию: база не подтвердила удаление')
-    revalidateRequest(meta.machineId, meta.requestId)
+    revalidateRequest(request.machine_id, meta.requestId)
     return { success: true }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось удалить позицию' }
@@ -1234,10 +1271,11 @@ export async function updateKnifeStock(id: string, stock_remainder_mm: number): 
     ])
     const db = permission.supabase as unknown as LooseDb
     const meta = await getRequestIdAndMachineByItem(db, 'request_knives', id)
-    assertTechnologistRequestEditable(meta.status)
+    const machineRequest = await getRequestMachine(db, meta.requestId)
+    assertTechnologistRequestEditable(machineRequest.status)
     const { error } = await db.from('request_knives').update({ stock_remainder_mm }).eq('id', id)
     if (error) throw new Error(error.message || 'Не удалось обновить остаток')
-    revalidateRequest(meta.machineId, meta.requestId)
+    revalidateRequest(machineRequest.machine_id, meta.requestId)
     return { success: true }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось обновить остаток' }
@@ -1256,10 +1294,11 @@ export async function updateComponentStock(id: string, data: { stock_remainder: 
       availability: availabilitySchema.parse(data.availability),
     }
     const meta = await getRequestIdAndMachineByItem(db, 'request_components', id)
-    assertTechnologistRequestEditable(meta.status)
+    const machineRequest = await getRequestMachine(db, meta.requestId)
+    assertTechnologistRequestEditable(machineRequest.status)
     const { error } = await db.from('request_components').update(parsed).eq('id', id)
     if (error) throw new Error(error.message || 'Не удалось обновить остаток')
-    revalidateRequest(meta.machineId, meta.requestId)
+    revalidateRequest(machineRequest.machine_id, meta.requestId)
     return { success: true }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось обновить остаток' }
@@ -1274,10 +1313,11 @@ export async function updatePaintStock(id: string, stock_remainder_kg: number): 
     ])
     const db = permission.supabase as unknown as LooseDb
     const meta = await getRequestIdAndMachineByItem(db, 'request_paint', id)
-    assertTechnologistRequestEditable(meta.status)
+    const machineRequest = await getRequestMachine(db, meta.requestId)
+    assertTechnologistRequestEditable(machineRequest.status)
     const { error } = await db.from('request_paint').update({ stock_remainder_kg }).eq('id', id)
     if (error) throw new Error(error.message || 'Не удалось обновить остаток')
-    revalidateRequest(meta.machineId, meta.requestId)
+    revalidateRequest(machineRequest.machine_id, meta.requestId)
     return { success: true }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось обновить остаток' }

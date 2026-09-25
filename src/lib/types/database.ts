@@ -4860,7 +4860,11 @@ export type Database = {
       technologist_requests: {
         Row: {
           id: string
-          machine_id: string
+          machine_id: string | null
+          request_kind: 'machine' | 'stock'
+          factory_id: string | null
+          title: string | null
+          needed_by: string | null
           created_by: string
           status: Database['public']['Enums']['request_status']
           notes: string | null
@@ -4871,7 +4875,11 @@ export type Database = {
         }
         Insert: {
           id?: string
-          machine_id: string
+          machine_id?: string | null
+          request_kind?: 'machine' | 'stock'
+          factory_id?: string | null
+          title?: string | null
+          needed_by?: string | null
           created_by: string
           status?: Database['public']['Enums']['request_status']
           notes?: string | null
@@ -4882,7 +4890,11 @@ export type Database = {
         }
         Update: {
           id?: string
-          machine_id?: string
+          machine_id?: string | null
+          request_kind?: 'machine' | 'stock'
+          factory_id?: string | null
+          title?: string | null
+          needed_by?: string | null
           created_by?: string
           status?: Database['public']['Enums']['request_status']
           notes?: string | null

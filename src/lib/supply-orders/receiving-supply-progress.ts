@@ -70,6 +70,12 @@ export function freeStockSupplyQuantity(schedule: SupplyProgressSchedule) {
   return Math.max(explicitExcess, physical - reservedSupplyQuantity(schedule), 0)
 }
 
+export function splitReceiptStock(physicalReceived: number, machineReserved: number) {
+  const received = nonNegativeNumber(physicalReceived)
+  const reserved = Math.min(nonNegativeNumber(machineReserved), received)
+  return { machineReserved: reserved, freeStock: received - reserved }
+}
+
 /**
  * Returns the number of whole bars attributed to one request item. Allocation
  * fields take precedence because a parent receipt may have distributed bars to

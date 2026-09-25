@@ -92,7 +92,11 @@ export type SupplyOrderPlacementInput = {
 
 type RequestRow = {
   id: string
-  machine_id: string
+  machine_id: string | null
+  request_kind: 'machine' | 'stock'
+  factory_id: string | null
+  title: string | null
+  needed_by: string | null
   machines: {
     id: string
     name: string
@@ -101,6 +105,28 @@ type RequestRow = {
     planned_material_date: string | null
     is_archived: boolean | null
   } | null
+}
+
+function requestFactoryId(request: RequestRow): string | null {
+  return request.request_kind === 'stock' ? request.factory_id : request.machines?.factory_id || null
+}
+
+function requestSourceName(request: RequestRow): string {
+  return request.request_kind === 'stock'
+    ? `На склад · ${request.title || 'Заявка'}`
+    : request.machines?.name || 'Машина'
+}
+
+function requestMachineId(request: RequestRow): string {
+  return request.request_kind === 'stock' ? '' : request.machines?.id || request.machine_id || ''
+}
+
+function requestNeedDate(request: RequestRow): string | null {
+  return request.request_kind === 'stock' ? request.needed_by : request.machines?.planned_material_date || null
+}
+
+function usableSupplyRequest(request: RequestRow): boolean {
+  return request.request_kind === 'stock' || Boolean(request.machines && !request.machines.is_archived)
 }
 
 type RequestItemRow = Record<string, unknown> & {
@@ -121,6 +147,7 @@ type RawOrderItem = {
   table: string
   id: string
   request_id: string
+  request_kind?: 'machine' | 'stock'
   category: MaterialCategory
   item_name: string
   to_order: number
@@ -1038,7 +1065,7 @@ function normalizeOrderPlacement(input?: SupplyOrderPlacementInput) {
 }
 
 function assertApprovedLongStockPurchasePlan(item: RawOrderItem) {
-  if (!isWholeBarItem(item)) return
+  if (!isWholeBarItem(item) || item.request_kind === 'stock') return
   if (item.long_stock_purchase_plan?.version_status !== 'approved'
     || item.long_stock_purchase_plan.cutting_status === 'requires_recalculation') {
     throw new Error(`Для длинномера «${item.item_name}» сначала утвердите актуальную карту раскроя`)
@@ -1102,7 +1129,7 @@ async function loadSelectedOrderItems(
 
   const { data: requestsData, error } = await db
     .from('technologist_requests')
-    .select('id, machine_id, status, submitted_at, machines!inner(id, name, factory_id, planned_material_date, is_archived)')
+    .select('id, machine_id, request_kind, factory_id, title, needed_by, status, submitted_at, machines(id, name, factory_id, planned_material_date, is_archived)')
     .in('id', requestIds)
   if (error) throw new Error(error.message || 'Не удалось загрузить заявки')
   const requests = (requestsData || []) as RequestRow[]
@@ -1116,9 +1143,7 @@ async function loadSelectedOrderItems(
     supplierId: string | null = null,
   ): SupplyOrderAggregateInputItem => {
     const request = requestMap.get(row.request_id)
-    if (!request || request.machines?.is_archived) throw new Error('Позиция относится к архивной или недоступной машине')
-    const machine = request.machines
-    if (!machine) throw new Error('Для позиции не найдена машина')
+    if (!request || !usableSupplyRequest(request)) throw new Error('Позиция относится к архивной или недоступной заявке')
     const requested = requestedQuantity(table, row)
     const reserved = reservedQuantity(table, row)
     return {
@@ -1126,6 +1151,7 @@ async function loadSelectedOrderItems(
       category,
       id: row.id,
       request_id: row.request_id,
+      request_kind: request.request_kind,
       item_name: itemName(row, name),
       requested_quantity: requested,
       reserved_quantity: reserved,
@@ -1145,11 +1171,11 @@ async function loadSelectedOrderItems(
       long_stock_purchase_plan: null,
       position_revision: null,
       raw: row,
-      machine_id: machine.id || request.machine_id,
-      machine_name: machine.name || 'Машина',
-      machine_specification_number: machine.specification_number || null,
-      factory_id: machine.factory_id || null,
-      planned_material_date: machine.planned_material_date || null,
+      machine_id: requestMachineId(request),
+      machine_name: requestSourceName(request),
+      machine_specification_number: request.machines?.specification_number || null,
+      factory_id: requestFactoryId(request),
+      planned_material_date: requestNeedDate(request),
     }
   }
 
@@ -1251,7 +1277,7 @@ export async function getSupplyTransportNeeds(): Promise<{
     const [requestsResult, suppliersResult] = await Promise.all([
       db
         .from('technologist_requests')
-        .select('id, machine_id, machines!inner(id, name, factory_id, is_archived)')
+        .select('id, machine_id, request_kind, factory_id, title, needed_by, machines(id, name, factory_id, is_archived)')
         .in('id', requestIds),
       db
         .from('suppliers')
@@ -1263,12 +1289,15 @@ export async function getSupplyTransportNeeds(): Promise<{
 
     const requests = (requestsResult.data || []) as Array<{
       id: string
-      machine_id: string
+      machine_id: string | null
+      request_kind: 'machine' | 'stock'
+      factory_id: string | null
+      title: string | null
       machines: { id: string; name: string; factory_id: string | null; is_archived: boolean | null } | null
     }>
     const requestById = new Map(requests.map((request) => [request.id, request]))
     const factoryIds = Array.from(new Set(
-      requests.map((request) => request.machines?.factory_id).filter((id): id is string => Boolean(id)),
+      requests.map((request) => request.request_kind === 'stock' ? request.factory_id : request.machines?.factory_id).filter((id): id is string => Boolean(id)),
     ))
     const factoriesResult = factoryIds.length > 0
       ? await db.from('factories').select('id, name, city, address').in('id', factoryIds)
@@ -1320,10 +1349,9 @@ export async function getSupplyTransportNeeds(): Promise<{
       data: annotatedSchedules.flatMap((schedule): SupplyTransportNeed[] => {
         const item = itemByKey.get(`${schedule.request_item_table}:${schedule.request_item_id}`)
         const request = item ? requestById.get(item.request_id) : null
-        const machine = request?.machines
         const supplier = schedule.supplier_id ? suppliers.get(schedule.supplier_id) : null
-        const factoryId = machine?.factory_id || null
-        if (!item || !request || !machine || machine.is_archived || !supplier || !factoryId) return []
+        const factoryId = request ? request.request_kind === 'stock' ? request.factory_id : request.machines?.factory_id : null
+        if (!item || !request || (request.request_kind !== 'stock' && (!request.machines || request.machines.is_archived)) || !supplier || !factoryId) return []
         const normalizedUnit = schedule.unit.trim().toLocaleLowerCase('ru').replace(/\./g, '')
         const weightKg = ['кг', 'kg'].includes(normalizedUnit)
           ? Number(schedule.quantity)
@@ -1335,8 +1363,8 @@ export async function getSupplyTransportNeeds(): Promise<{
           requestItemTable: schedule.request_item_table,
           requestItemId: schedule.request_item_id,
           category: item.category,
-          machineId: request.machine_id,
-          machineName: machine.name,
+          machineId: request.machine_id || '',
+          machineName: request.request_kind === 'stock' ? `На склад · ${request.title || 'Заявка'}` : request.machines?.name || 'Машина',
           supplierId: supplier.id,
           supplierName: supplier.name,
           supplierLocation: formatCompanyLocation(supplier),
@@ -1385,20 +1413,24 @@ export async function getSupplyOrders(
     const from = safePage * safePageSize
     const to = from + safePageSize - 1
 
-    let requestsQuery = db
-      .from('technologist_requests')
-      .select('id, machine_id, status, submitted_at, machines!inner(id, name, factory_id, planned_material_date, is_archived)', { count: 'exact' })
-      .in('status', ['submitted_to_supply', 'completed'])
-      .eq('machines.is_archived', false)
-    if (requestId) requestsQuery = requestsQuery.eq('id', requestId)
-    if (factoryId) requestsQuery = requestsQuery.eq('machines.factory_id', factoryId)
-
-    const { data: requestsData, error, count } = await requestsQuery
-      .order('submitted_at', { ascending: false })
-      .range(from, to)
-    if (error) throw new Error(error.message || 'Не удалось загрузить заявки')
-
-    const requests = (requestsData || []) as RequestRow[]
+    const allRequests: RequestRow[] = []
+    const batchSize = 1000
+    for (let offset = 0; ; offset += batchSize) {
+      let requestsQuery = db.from('technologist_requests')
+        .select('id, machine_id, request_kind, factory_id, title, needed_by, status, submitted_at, machines(id, name, factory_id, planned_material_date, is_archived)')
+        .in('status', ['submitted_to_supply', 'completed'])
+      if (requestId) requestsQuery = requestsQuery.eq('id', requestId)
+      const { data, error } = await requestsQuery.order('submitted_at', { ascending: false })
+        .range(offset, offset + batchSize - 1)
+      if (error) throw new Error(error.message || 'Не удалось загрузить заявки')
+      const batch = (data || []) as RequestRow[]
+      allRequests.push(...batch)
+      if (batch.length < batchSize) break
+    }
+    const eligibleRequests = allRequests
+      .filter((request) => usableSupplyRequest(request) && (!factoryId || requestFactoryId(request) === factoryId))
+    const count = eligibleRequests.length
+    const requests = eligibleRequests.slice(from, to + 1)
     const requestIds = requests.map((request) => request.id)
     const requestMap = new Map(requests.map((request) => [request.id, request]))
     const [sheet, round, circles, pipes, knives, components, paint, meshItems, chainCords] = await Promise.all([
@@ -1416,7 +1448,7 @@ export async function getSupplyOrders(
     const makeItem = (table: string, category: MaterialCategory, row: RequestItemRow, name: unknown, supplierId: string | null = null): RawOrderItem => {
       const requested = requestedQuantity(table, row)
       const reserved = reservedQuantity(table, row)
-      const item: RawOrderItem = { table, category, id: row.id, request_id: row.request_id, item_name: itemName(row, name), requested_quantity: requested, reserved_quantity: reserved, secondary_requested_quantity: secondaryRequestedQuantity(table, row), secondary_reserved_quantity: secondaryReservedQuantity(table, row), to_order: Math.max(requested - reserved, 0), unit: primaryUnit(table, row), supplier_id: supplierId, material_id: row.material_id || null, material_variant_id: row.material_variant_id || null, custom_delivery_date: row.custom_delivery_date || null, order_status: (row.order_status || 'pending') as OrderItemStatus, delivered_at: row.delivered_at || null, calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null, selected_piece_length_mm: selectedPieceLength(table, row), pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null, long_stock_purchase_plan: null, position_revision: null }
+      const item: RawOrderItem = { table, category, id: row.id, request_id: row.request_id, request_kind: requestMap.get(row.request_id)?.request_kind, item_name: itemName(row, name), requested_quantity: requested, reserved_quantity: reserved, secondary_requested_quantity: secondaryRequestedQuantity(table, row), secondary_reserved_quantity: secondaryReservedQuantity(table, row), to_order: Math.max(requested - reserved, 0), unit: primaryUnit(table, row), supplier_id: supplierId, material_id: row.material_id || null, material_variant_id: row.material_variant_id || null, custom_delivery_date: row.custom_delivery_date || null, order_status: (row.order_status || 'pending') as OrderItemStatus, delivered_at: row.delivered_at || null, calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null, selected_piece_length_mm: selectedPieceLength(table, row), pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null, long_stock_purchase_plan: null, position_revision: null }
       return { ...item, characteristics: getAggregateCharacteristics(table, row, item) }
     }
     const rawItems: RawOrderItem[] = [
@@ -1457,7 +1489,10 @@ export async function getSupplyOrders(
       ...item,
       supplier_id: item.supplier_id || (item.material_id ? materialSupplierMap.get(item.material_id) || null : null),
     }))
-    const stockFactoryIds = Array.from(new Set(orderableRawItems.map((item) => requestMap.get(item.request_id)?.machines?.factory_id).filter(Boolean))) as string[]
+    const stockFactoryIds = Array.from(new Set(orderableRawItems.map((item) => {
+      const request = requestMap.get(item.request_id)
+      return request ? requestFactoryId(request) : null
+    }).filter(Boolean))) as string[]
     const [inventoryRes, reservationsRes, schedulesRes] = await Promise.all([
       materialIds.length && stockFactoryIds.length
         ? db.from('inventory')
@@ -1531,10 +1566,9 @@ export async function getSupplyOrders(
 
     const items: SupplyOrderItem[] = rawItemsWithSuppliers.map((item) => {
       const request = requestMap.get(item.request_id)
-      const machine = request?.machines
-      const planned = machine?.planned_material_date || null
+      const planned = request ? requestNeedDate(request) : null
       const needsExactVariant = item.category === 'pipe' || item.category === 'knives'
-      const itemFactoryKey = factoryKey(machine?.factory_id || null)
+      const itemFactoryKey = factoryKey(request ? requestFactoryId(request) : null)
       const stockItems = item.material_id
         ? needsExactVariant
           ? item.material_variant_id
@@ -1566,9 +1600,9 @@ export async function getSupplyOrders(
       return {
         table: item.table,
         id: item.id,
-        machine_name: machine?.name || 'Машина',
-        machine_id: machine?.id || request?.machine_id || '',
-        factory_id: machine?.factory_id || null,
+        machine_name: request ? requestSourceName(request) : 'Машина',
+        machine_id: request ? requestMachineId(request) : '',
+        factory_id: request ? requestFactoryId(request) : null,
         category: item.category,
         item_name: item.item_name,
         characteristics: item.characteristics || [{ label: 'Позиция', value: item.item_name }],
@@ -1669,14 +1703,13 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
 
     const { data: requestsData, error } = await db
       .from('technologist_requests')
-      .select('id, machine_id, status, submitted_at, machines!inner(id, name, specification_number, factory_id, planned_material_date, is_archived)')
+      .select('id, machine_id, request_kind, factory_id, title, needed_by, status, submitted_at, machines(id, name, specification_number, factory_id, planned_material_date, is_archived)')
       .in('status', ['submitted_to_supply', 'completed'])
-      .eq('machines.is_archived', false)
       .order('submitted_at', { ascending: false })
 
     if (error) throw new Error(error.message || 'Не удалось загрузить заявки')
 
-    const requests = (requestsData || []) as RequestRow[]
+    const requests = ((requestsData || []) as RequestRow[]).filter(usableSupplyRequest)
     const requestIds = requests.map((request) => request.id)
     const requestMap = new Map(requests.map((request) => [request.id, request]))
     if (requestIds.length === 0) {
@@ -1698,8 +1731,7 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
 
     const makeItem = (table: string, category: MaterialCategory, row: RequestItemRow, name: unknown, supplierId: string | null = null): HistoryInputItem | null => {
       const request = requestMap.get(row.request_id)
-      const machine = request?.machines
-      if (!request || !machine || machine.is_archived) return null
+      if (!request || !usableSupplyRequest(request)) return null
       const requested = requestedQuantity(table, row)
       const reserved = reservedQuantity(table, row)
 
@@ -1708,6 +1740,7 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
         category,
         id: row.id,
         request_id: row.request_id,
+        request_kind: request.request_kind,
         item_name: itemName(row, name),
         requested_quantity: requested,
         reserved_quantity: reserved,
@@ -1727,9 +1760,9 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
         long_stock_purchase_plan: null,
         position_revision: null,
         raw: row,
-        machine_id: machine.id || request.machine_id,
-        machine_name: machine.name || 'Машина',
-        planned_material_date: machine.planned_material_date || null,
+        machine_id: requestMachineId(request),
+        machine_name: requestSourceName(request),
+        planned_material_date: requestNeedDate(request),
       }
     }
 
@@ -1938,22 +1971,21 @@ async function loadAggregateRequests(db: LooseDb, factoryId?: string | null) {
   const requests: RequestRow[] = []
 
   for (let from = 0; ; from += batchSize) {
-    let query = db
+    const query = db
       .from('technologist_requests')
-      .select('id, machine_id, status, submitted_at, machines!inner(id, name, specification_number, factory_id, planned_material_date, is_archived)')
+      .select('id, machine_id, request_kind, factory_id, title, needed_by, status, submitted_at, machines(id, name, specification_number, factory_id, planned_material_date, is_archived)')
       .in('status', ['submitted_to_supply', 'completed'])
-      .eq('machines.is_archived', false)
       .order('submitted_at', { ascending: false })
       .range(from, from + batchSize - 1)
-    if (factoryId) query = query.eq('machines.factory_id', factoryId)
 
     const { data, error } = await query
 
     if (error) throw new Error(error.message || 'Не удалось загрузить заявки')
 
-    const rows = (data || []) as RequestRow[]
+    const rows = ((data || []) as RequestRow[])
+      .filter((request) => usableSupplyRequest(request) && (!factoryId || requestFactoryId(request) === factoryId))
     requests.push(...rows)
-    if (rows.length < batchSize) break
+    if (((data || []) as RequestRow[]).length < batchSize) break
   }
 
   return requests
@@ -1991,8 +2023,7 @@ async function loadAggregateInputItems(
     supplierId: string | null = null
   ): SupplyOrderAggregateInputItem | null => {
     const request = requestMap.get(row.request_id)
-    const machine = request?.machines
-    if (!request || !machine || machine.is_archived) return null
+    if (!request || !usableSupplyRequest(request)) return null
 
     const orderStatus = (row.order_status || 'pending') as OrderItemStatus
     if (!AGGREGATE_ORDER_STATUSES.has(orderStatus)) return null
@@ -2006,6 +2037,7 @@ async function loadAggregateInputItems(
       category,
       id: row.id,
       request_id: row.request_id,
+      request_kind: request.request_kind,
       item_name: itemName(row, name),
       requested_quantity: requested,
       reserved_quantity: reserved,
@@ -2025,11 +2057,11 @@ async function loadAggregateInputItems(
       long_stock_purchase_plan: null,
       position_revision: null,
       raw: row,
-      machine_id: machine.id || request.machine_id,
-      machine_name: machine.name || 'Машина',
-      machine_specification_number: machine.specification_number || null,
-      factory_id: machine.factory_id || null,
-      planned_material_date: machine.planned_material_date || null,
+      machine_id: requestMachineId(request),
+      machine_name: requestSourceName(request),
+      machine_specification_number: request.machines?.specification_number || null,
+      factory_id: requestFactoryId(request),
+      planned_material_date: requestNeedDate(request),
     }
   }
 
@@ -2118,14 +2150,14 @@ export async function getSupplyOrderRequestFactoryId(requestId: string): Promise
 
     const { data, error } = await db
       .from('technologist_requests')
-      .select('machines!inner(factory_id)')
+      .select('request_kind, factory_id, machines(factory_id)')
       .eq('id', normalizedRequestId)
       .in('status', ['submitted_to_supply', 'completed'])
       .maybeSingle()
     if (error) throw new Error(error.message || 'Не удалось определить завод заявки')
 
-    const row = data as { machines?: { factory_id?: string | null } | null } | null
-    return { data: row?.machines?.factory_id || null, error: null }
+    const row = data as { request_kind: 'machine' | 'stock'; factory_id: string | null; machines?: { factory_id?: string | null } | null } | null
+    return { data: row?.request_kind === 'stock' ? row.factory_id : row?.machines?.factory_id || null, error: null }
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Не удалось определить завод заявки' }
   }
@@ -2256,6 +2288,14 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
 
     const aggregates = new Map<string, MutableAggregate>()
     const canManageReturnedPositions = Boolean(permissions.supply_orders?.canManage)
+    const machineDatesByMaterial = new Map<string, string[]>()
+    for (const item of items) {
+      if (!item.machine_id) continue
+      const key = `${factoryKey(item.factory_id)}|${getAggregateIdentityKey(item.table, item.raw, item)}`
+      const dates = machineDatesByMaterial.get(key) || []
+      dates.push(plannedDateKey(item.planned_material_date))
+      machineDatesByMaterial.set(key, dates)
+    }
 
     for (const item of items) {
       const positionReturned = isReturnedSupplyPosition(item)
@@ -2268,7 +2308,12 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
       const activeRequestedQuantity = positionInactive ? 0 : item.requested_quantity
       const activeReservedQuantity = positionInactive ? 0 : item.reserved_quantity
       const materialKey = getAggregateIdentityKey(item.table, item.raw, item)
-      const dateKey = plannedDateKey(item.planned_material_date)
+      const materialFactoryKey = `${factoryKey(item.factory_id)}|${materialKey}`
+      const matchingMachineDates = machineDatesByMaterial.get(materialFactoryKey) || []
+      const ownDateKey = plannedDateKey(item.planned_material_date)
+      const dateKey = !item.machine_id && !item.planned_material_date && matchingMachineDates.length > 0
+        ? matchingMachineDates.sort()[0]
+        : ownDateKey
       const aggregateKey = `${factoryKey(item.factory_id)}|${dateKey}|${materialKey}`
       const itemSchedules = projectPlannedLongStockSchedulesToPurchasePlan(
         schedulesByItem.get(`${item.table}:${item.id}`) || [],
@@ -2288,7 +2333,7 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
       const existing = aggregates.get(aggregateKey)
       const aggregate = existing || {
         id: aggregateKey,
-        planned_material_date: item.planned_material_date,
+        planned_material_date: dateKey === 'no_planned_date' ? null : dateKey,
         category: item.category,
         item_name: item.item_name,
         unit: item.unit,
@@ -2321,7 +2366,7 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
       aggregate.planned_schedule_quantity += plannedScheduleQuantity
       aggregate.delivered_schedule_quantity += deliveredScheduleQuantity
       aggregate.unscheduled_quantity += unscheduledQuantity
-      if (!positionInactive) aggregate.machineIds.add(item.machine_id)
+      if (!positionInactive && item.machine_id) aggregate.machineIds.add(item.machine_id)
 
       const currentFactoryKey = factoryKey(item.factory_id)
       const existingFactory = aggregate.factories.get(currentFactoryKey)
@@ -2340,7 +2385,7 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
         delivered_schedule_quantity: 0,
         unscheduled_quantity: 0,
         delivery_schedule_count: 0,
-        production_date: item.planned_material_date,
+        production_date: dateKey === 'no_planned_date' ? null : dateKey,
         machineIds: new Set<string>(),
         supplyDates: new Set<string>(),
         deliveryScheduleDates: new Set<string>(),
@@ -2359,7 +2404,7 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
       factory.planned_schedule_quantity += plannedScheduleQuantity
       factory.delivered_schedule_quantity += deliveredScheduleQuantity
       factory.unscheduled_quantity += unscheduledQuantity
-      if (!positionInactive) factory.machineIds.add(item.machine_id)
+      if (!positionInactive && item.machine_id) factory.machineIds.add(item.machine_id)
       if (!positionInactive) addSupplierSummary(factory.suppliers, item, supplierNameMap)
       if (!positionInactive) {
         for (const supplyDeliveryDate of supplyDeliveryDates) {
@@ -2679,6 +2724,7 @@ function applyLongStockPurchasePlan<T extends RawOrderItem>(
   item: T,
   plans: Map<string, LongStockPurchasePlan>,
 ): T {
+  if (item.request_kind === 'stock') return item
   const plan = plans.get(longStockItemKey(item)) ?? null
   if (!plan) return item
   const purchasedWeightKg = calculateLongStockWeightForLength(
@@ -2696,11 +2742,11 @@ function applyLongStockPurchasePlan<T extends RawOrderItem>(
 
 async function loadLongStockPurchasePlanMap(
   db: LooseDb,
-  items: Array<Pick<RawOrderItem, 'table' | 'id' | 'pipe_type'>>,
+  items: Array<Pick<RawOrderItem, 'table' | 'id' | 'pipe_type' | 'request_kind'>>,
   includeReceiptBars = false,
 ) {
   const eligibleItems = items.filter((item) => (
-    isLongStockRequestItemTable(item.table)
+    item.request_kind !== 'stock' && isLongStockRequestItemTable(item.table)
     && !(item.table === 'request_pipe' && item.pipe_type === 'wire')
   ))
   if (eligibleItems.length === 0) return new Map<string, LongStockPurchasePlan>()
@@ -3030,8 +3076,11 @@ async function buildMaterialAllocationPreview(
   )
   const futureCoverageByItem = new Map<string, MaterialDeliveryFutureSchedule[]>()
   const itemsByMaterialDate = new Map<string, SupplyOrderAggregateInputItem[]>()
+  const matchingMachineDates = matchingItems.filter((item) => item.machine_id && item.planned_material_date)
+    .map((item) => item.planned_material_date!).sort()
   for (const item of matchingItems) {
-    const dateKey = plannedDateKey(item.planned_material_date)
+    const dateKey = !item.machine_id && !item.planned_material_date && matchingMachineDates.length > 0
+      ? matchingMachineDates[0] : plannedDateKey(item.planned_material_date)
     itemsByMaterialDate.set(dateKey, [...(itemsByMaterialDate.get(dateKey) || []), item])
   }
   for (const dateItems of itemsByMaterialDate.values()) {

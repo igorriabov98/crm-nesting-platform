@@ -32,7 +32,7 @@ export async function getTechnologistApprovalList() {
     if (assigned.error) throw assigned.error
     const assignedIds = new Set((assigned.data || []).map((row: any) => row.approval_version?.request_id).filter(Boolean))
     const requests = db().from('technologist_requests')
-      .select('id,machine_id,created_by,status,created_at,machines(id,name,material_type)')
+      .select('id,machine_id,request_kind,title,factory_id,needed_by,created_by,status,created_at,machines(id,name,material_type)')
       .order('created_at', { ascending: false })
     if (!reviewer && !isAdmin) {
       if (assignedIds.size > 0) requests.or(`created_by.eq.${userId},id.in.(${[...assignedIds].join(',')})`)
@@ -79,7 +79,7 @@ export async function getTechnologistApprovalDetail(requestId: string) {
     const id = requestIdSchema.parse(requestId)
     const { userId, permissionDetails } = await requirePermission('technologist_request_results', 'view')
     const requestResult = await db().from('technologist_requests')
-      .select('id,machine_id,created_by,status,created_at,machines(id,name,material_type),users!technologist_requests_created_by_fkey(full_name)')
+      .select('id,machine_id,request_kind,title,factory_id,needed_by,created_by,status,created_at,machines(id,name,material_type),users!technologist_requests_created_by_fkey(full_name)')
       .eq('id', id).maybeSingle()
     if (requestResult.error) throw new Error(requestResult.error.message || 'Не удалось прочитать заявку')
     if (!requestResult.data) throw new Error('Заявка не найдена')
@@ -112,10 +112,17 @@ export async function getTechnologistApprovalDetail(requestId: string) {
     }
     const currentDraft = ['returned','superseded'].includes(latest?.state)
     let currentSnapshot = latest?.summary_snapshot || null
-    if (currentDraft && order) {
+    if (currentDraft && (order || requestResult.data.request_kind === 'stock')) {
       const source = await db().rpc('fn_technologist_approval_source', { p_request_id: id })
       if (source.error) throw source.error
-      currentSnapshot = snapshotFromSource(source.data, id, order, latest.completion_payload)
+      const request = requestResult.data
+      currentSnapshot = request.request_kind === 'stock'
+        ? {
+          ...snapshotFromSource(source.data, id, { id: '', name: request.title, material_type: 'standard' },
+            { decision: 'none', enteredPlasmaMinutes: 0, wasteItems: [], futureItems: [], archives: [] }),
+          requestKind: 'stock', factoryId: request.factory_id, neededBy: request.needed_by,
+        }
+        : snapshotFromSource(source.data, id, order!, latest.completion_payload)
     }
     currentSnapshot = await withApprovalProcurement(db(), await withSheetSteelTypeNames(db(), currentSnapshot, currentDraft ? null : storedSummary), currentDraft ? null : storedSummary)
     const sheetPlans = !currentDraft && latest?.state === 'approved'
@@ -151,7 +158,9 @@ export async function getTechnologistApprovalDetail(requestId: string) {
             ? { revision_number: 0, display_revision_number: numbering.revision_numbers[0], editor_id: requestResult.data.created_by }
             : null,
         canEdit: (isAdmin || firstSubmitter === userId || requestResult.data.created_by === userId || assignedRevision)
-          && ['pending_financial_approval', 'pending_stock_check', 'stock_checked'].includes(requestResult.data.status)
+          && (requestResult.data.request_kind === 'stock'
+            ? ['pending_financial_approval', 'draft'].includes(requestResult.data.status)
+            : ['pending_financial_approval', 'pending_stock_check', 'stock_checked'].includes(requestResult.data.status))
           && versions.length > 0,
       },
       error: null,
@@ -199,9 +208,16 @@ export async function beginTechnologistRequestRevision(requestId: string) {
   try {
     const id = requestIdSchema.parse(requestId)
     const { userId, supabase } = await requirePermission('technologist_request_results', 'view')
+    const request = await db().from('technologist_requests').select('machine_id,request_kind').eq('id', id).single()
+    if (request.error || !request.data) throw new Error('Заявка не найдена')
+    if (request.data?.request_kind === 'stock') {
+      const { error } = await (supabase as any).rpc('fn_begin_stock_request_revision', { p_request_id: id, p_actor: userId })
+      if (error) throw error
+      revalidateApproval(id)
+      return { success: true, href: `${ROUTES.MATERIAL_REQUESTS}/stock/${id}` }
+    }
     const { error } = await (supabase as any).rpc('fn_begin_technologist_request_revision', { p_request_id: id, p_actor: userId })
     if (error) throw error
-    const request = await db().from('technologist_requests').select('machine_id').eq('id', id).single()
     revalidateApproval(id)
     return { success: true, href: `${ROUTES.SALES_PLAN}/${request.data?.machine_id}/request/${id}` }
   } catch (error) { return { success: false, error: getErrorMessage(error) } }
@@ -211,10 +227,11 @@ export async function returnTechnologistRequest(input: z.input<typeof returnSche
   try {
     const parsed = returnSchema.parse(input)
     const { userId, supabase } = await requirePermission('technologist_request_results', 'view')
-    const version = await db().from('technologist_request_approval_versions').select('request_id').eq('id', parsed.versionId).single()
+    const version = await db().from('technologist_request_approval_versions').select('request_id,technologist_requests(request_kind)').eq('id', parsed.versionId).single()
     if (version.error || !version.data) throw new Error('Версия не найдена')
-    const { error } = await (supabase as any).rpc('fn_return_technologist_request_for_revision', {
-      p_approval_version_id: parsed.versionId, p_actor: userId, p_reason: parsed.reason,
+    const stock = (version.data.technologist_requests as { request_kind?: string } | null)?.request_kind === 'stock'
+    const { error } = await (supabase as any).rpc(stock ? 'fn_return_stock_request_for_revision' : 'fn_return_technologist_request_for_revision', {
+      [stock ? 'p_version_id' : 'p_approval_version_id']: parsed.versionId, p_actor: userId, p_reason: parsed.reason,
     })
     if (error) throw error
     revalidateApproval(version.data.request_id)
@@ -226,9 +243,12 @@ export async function approveTechnologistRequest(versionId: string) {
   try {
     const id = versionIdSchema.parse(versionId)
     const { userId, supabase } = await requirePermission('technologist_request_results', 'view')
-    const version = await db().from('technologist_request_approval_versions').select('request_id').eq('id', id).single()
+    const version = await db().from('technologist_request_approval_versions').select('request_id,technologist_requests(request_kind)').eq('id', id).single()
     if (version.error || !version.data) throw new Error('Версия не найдена')
-    const { error } = await (supabase as any).rpc('fn_approve_technologist_request', { p_approval_version_id: id, p_actor: userId })
+    const stock = (version.data.technologist_requests as { request_kind?: string } | null)?.request_kind === 'stock'
+    const { error } = await (supabase as any).rpc(stock ? 'fn_approve_stock_request' : 'fn_approve_technologist_request', {
+      [stock ? 'p_version_id' : 'p_approval_version_id']: id, p_actor: userId,
+    })
     if (error) throw error
     revalidateApproval(version.data.request_id)
     return { success: true }
