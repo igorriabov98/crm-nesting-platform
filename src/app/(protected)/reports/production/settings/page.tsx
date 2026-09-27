@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { getProductionReportSettingsData } from '@/lib/actions/production-reports'
 import { ROUTES } from '@/lib/constants/routes'
 
-export const metadata = { title: 'Настройки производственной аналитики — CRM Завода' }
+export const metadata = { title: 'Настройки производственной аналитики — CRM Leda' }
 export const dynamic = 'force-dynamic'
 
 async function ProductionReportSettingsPage({ searchParams }: { searchParams?: Promise<{ factory?: string }> }) {

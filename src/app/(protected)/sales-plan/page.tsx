@@ -6,7 +6,7 @@ import { hasPermission } from '@/lib/permissions/resources'
 import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
 
 export const metadata = {
-  title: 'План продаж — CRM Завода',
+  title: 'План продаж — CRM Leda',
 }
 
 async function SalesPlanPage({

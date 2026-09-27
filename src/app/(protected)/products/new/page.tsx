@@ -5,7 +5,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { buttonVariants } from '@/components/ui/button'
 
 export const metadata = {
-  title: 'Новый продукт — CRM Завода',
+  title: 'Новый продукт — CRM Leda',
 }
 
 function NewProductPage() {

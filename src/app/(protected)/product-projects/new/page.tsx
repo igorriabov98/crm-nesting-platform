@@ -11,7 +11,7 @@ import type { MailLinkInput } from '@/lib/mail/types'
 import { ArrowLeft, Sparkles } from 'lucide-react'
 
 export const metadata = {
-  title: 'Новый проект изделия — CRM Завода',
+  title: 'Новый проект изделия — CRM Leda',
 }
 
 async function NewProductProjectPage({

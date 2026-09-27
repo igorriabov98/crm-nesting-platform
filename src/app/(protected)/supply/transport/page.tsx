@@ -2,7 +2,7 @@ import { withPagePermission } from '@/lib/permissions/page-guard'
 import { TransportWorkspacePage } from '@/components/features/supply/TransportWorkspacePage'
 import { getTransportWorkspace } from '@/lib/actions/transport-trips'
 
-export const metadata = { title: 'Транспорт | CRM Завода' }
+export const metadata = { title: 'Транспорт | CRM Leda' }
 
 async function SupplyTransportPage() {
   const { data, error } = await getTransportWorkspace()

@@ -4,7 +4,7 @@ import { MeetingSettingsWorkspace } from "@/components/features/meetings-v2/Meet
 import { getMeetingSettingsV2 } from "@/app/(protected)/meetings/v2-actions";
 import { requirePermission } from "@/lib/permissions/server";
 
-export const metadata = { title: "Конструктор совещаний | CRM Завода" };
+export const metadata = { title: "Конструктор совещаний | CRM Leda" };
 
 async function MeetingSettingsPage() {
   const canView = await requirePermission("meeting_templates", "view")

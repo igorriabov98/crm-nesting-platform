@@ -34,8 +34,8 @@ const SECTION_ICONS: Record<SupplierDirectorySection, React.ElementType> = {
 
 export async function generateMetadata({ params }: { params: Promise<{ section: string }> }) {
   const { section } = await params
-  if (!isSupplierDirectorySection(section)) return { title: 'База данных — CRM Завода' }
-  return { title: `${SUPPLIER_DIRECTORY_SECTIONS[section].title} — CRM Завода` }
+  if (!isSupplierDirectorySection(section)) return { title: 'База данных — CRM Leda' }
+  return { title: `${SUPPLIER_DIRECTORY_SECTIONS[section].title} — CRM Leda` }
 }
 
 async function SupplierDirectorySectionPage({ params }: { params: Promise<{ section: string }> }) {

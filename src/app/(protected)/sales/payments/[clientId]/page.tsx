@@ -6,7 +6,7 @@ import { ClientPaymentsDetail } from '@/components/features/payments/ClientPayme
 import { getClientPaymentDetails } from '@/lib/actions/client-payments'
 import { ROUTES } from '@/lib/constants/routes'
 
-export const metadata = { title: 'Оплаты компании — CRM Завода' }
+export const metadata = { title: 'Оплаты компании — CRM Leda' }
 export const dynamic = 'force-dynamic'
 
 async function ClientPaymentsPage({ params }: { params: Promise<{ clientId: string }> }) {

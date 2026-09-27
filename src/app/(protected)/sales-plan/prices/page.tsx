@@ -4,7 +4,7 @@ import { ClientPricesPage } from '@/components/features/client-prices/ClientPric
 import { getClientPricesPageData } from '@/lib/actions/client-product-prices'
 
 export const metadata = {
-  title: 'Цены клиентов — CRM Завода',
+  title: 'Цены клиентов — CRM Leda',
 }
 
 async function SalesPlanPricesPage({

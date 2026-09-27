@@ -11,7 +11,7 @@ import type { NestingResult } from '@/lib/nesting/api'
 import { assertCanAccessNestingProject } from '@/lib/nesting/project-access'
 import { isCompletedNestingStatus } from '@/lib/nesting/status'
 
-export const metadata = { title: 'Результат раскладки — CRM Завода' }
+export const metadata = { title: 'Результат раскладки — CRM Leda' }
 
 async function NestingResultPage({
   params,

@@ -9,7 +9,7 @@ import { AlertTriangle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 export const metadata = {
-  title: 'Настройки компании - CRM Завода',
+  title: 'Настройки компании - CRM Leda',
 }
 
 async function createSignedImageUrl(

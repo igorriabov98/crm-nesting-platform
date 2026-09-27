@@ -5,7 +5,7 @@ import { getTransactions } from '@/lib/actions/inventory'
 import { ROUTES } from '@/lib/constants/routes'
 
 export const metadata = {
-  title: 'История склада - CRM Завода',
+  title: 'История склада - CRM Leda',
 }
 
 async function InventoryHistoryRoute({

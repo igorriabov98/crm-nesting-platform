@@ -2,7 +2,7 @@ import { withPagePermission } from '@/lib/permissions/page-guard'
 import { SupplyOutsourcingRequestsPage } from '@/components/features/supply/SupplyOutsourcingRequestsPage'
 import { getSupplyOutsourcingRequests } from '@/lib/actions/outsourcing'
 
-export const metadata = { title: 'Согласование аутсорсинга | CRM Завода' }
+export const metadata = { title: 'Согласование аутсорсинга | CRM Leda' }
 
 async function SupplyOutsourcingRequestsRoute() {
   const { data, error } = await getSupplyOutsourcingRequests()

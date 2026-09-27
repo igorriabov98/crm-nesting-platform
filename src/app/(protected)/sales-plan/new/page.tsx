@@ -7,7 +7,7 @@ import { getProductOptions, getProductProjectSampleOptions } from '@/lib/actions
 import { requirePermission } from '@/lib/permissions/server'
 
 export const metadata = {
-  title: 'Новая машина — CRM Завода',
+  title: 'Новая машина — CRM Leda',
 }
 
 async function NewMachinePage() {

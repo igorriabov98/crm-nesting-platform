@@ -2,7 +2,7 @@ import { withPagePermission } from '@/lib/permissions/page-guard'
 import { ConsumablesWorkspace } from '@/components/features/consumables/ConsumablesWorkspace'
 import { getConsumablesWorkspaceData } from '@/lib/actions/consumables'
 
-export const metadata = { title: 'Расходники производства — CRM Завода' }
+export const metadata = { title: 'Расходники производства — CRM Leda' }
 
 async function ConsumablesPage({
   searchParams,

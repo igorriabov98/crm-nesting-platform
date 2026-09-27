@@ -6,7 +6,7 @@ import { getMailSettingsView } from '@/lib/actions/mail-settings'
 import { requirePermission } from '@/lib/permissions/server'
 import { mailBaseUrl } from '@/lib/mail/config'
 
-export const metadata = { title: 'Настройки почты — CRM Завода' }
+export const metadata = { title: 'Настройки почты — CRM Leda' }
 
 async function MailSettingsRoute() {
   const allowed = await requirePermission('mail_settings', 'view').then(() => true).catch(() => false)

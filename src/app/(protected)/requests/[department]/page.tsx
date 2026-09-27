@@ -17,8 +17,8 @@ export async function generateMetadata({
   params: Promise<{ department: string }>
 }) {
   const { department } = await params
-  if (!isDepartmentRequestTarget(department)) return { title: 'Запросы | CRM Завода' }
-  return { title: `Запросы · ${DEPARTMENT_REQUEST_TARGETS[department].label} | CRM Завода` }
+  if (!isDepartmentRequestTarget(department)) return { title: 'Запросы | CRM Leda' }
+  return { title: `Запросы · ${DEPARTMENT_REQUEST_TARGETS[department].label} | CRM Leda` }
 }
 
 async function DepartmentRequestsRoute({

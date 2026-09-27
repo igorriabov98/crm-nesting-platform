@@ -6,7 +6,7 @@ import { getSteelTypes } from '@/lib/actions/steel-types'
 import { requirePermission } from '@/lib/permissions/server'
 
 export const metadata = {
-  title: 'Справочник материалов - CRM Завода',
+  title: 'Справочник материалов - CRM Leda',
 }
 
 async function AdminMaterialsPage({

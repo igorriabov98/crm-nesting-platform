@@ -5,7 +5,7 @@ import { getFileArchiveDashboard } from '@/lib/actions/file-archive'
 import { requirePermission } from '@/lib/permissions/server'
 import { hasPermission } from '@/lib/permissions/resources'
 
-export const metadata = { title: 'Архив файлов — CRM Завода' }
+export const metadata = { title: 'Архив файлов — CRM Leda' }
 export const dynamic = 'force-dynamic'
 
 async function FileArchiveSettingsRoute() {

@@ -3,7 +3,7 @@ import { getInvoices } from './actions'
 import { InvoiceList } from '@/components/features/invoices/InvoiceList'
 import { INVOICES_LIST_LIMIT } from '@/lib/constants/performance-limits'
 
-export const metadata = { title: 'Инвойсы — CRM Завода' }
+export const metadata = { title: 'Инвойсы — CRM Leda' }
 
 async function InvoicesPage() {
   let data

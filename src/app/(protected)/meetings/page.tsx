@@ -5,7 +5,7 @@ import { getMeetingDashboardV2 } from "./v2-actions";
 import { requirePermission } from "@/lib/permissions/server";
 
 export const metadata: Metadata = {
-  title: "Собрания | CRM Завода",
+  title: "Собрания | CRM Leda",
   description: "Операционный штаб совещаний, вопросов и решений",
 };
 

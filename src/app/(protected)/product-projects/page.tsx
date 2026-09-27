@@ -3,7 +3,7 @@ import { ProductProjectList } from '@/components/features/products/ProductProjec
 import { getProductProjects } from '@/lib/actions/products'
 
 export const metadata = {
-  title: 'Проекты изделий — CRM Завода',
+  title: 'Проекты изделий — CRM Leda',
 }
 
 async function ProductProjectsPage() {

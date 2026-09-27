@@ -2,7 +2,7 @@ import { withPagePermission } from '@/lib/permissions/page-guard'
 import { DetailingWarehousePage } from '@/components/features/inventory/DetailingWarehousePage'
 import { getDetailingWarehouse } from '@/lib/actions/detailing'
 
-export const metadata = { title: 'Деталировка - CRM Завода' }
+export const metadata = { title: 'Деталировка - CRM Leda' }
 
 async function DetailingInventoryRoute({
   searchParams,

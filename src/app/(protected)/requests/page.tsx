@@ -6,7 +6,7 @@ import {
 import { normalizeDepartmentRequestFilters } from '@/lib/department-requests'
 
 export const metadata = {
-  title: 'Запросы | CRM Завода',
+  title: 'Запросы | CRM Leda',
 }
 
 async function MyDepartmentRequestsPage({

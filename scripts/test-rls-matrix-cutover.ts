@@ -44,11 +44,16 @@ const usersSelfVisibilityFixPath = join(
   root,
   'supabase/migrations/20260917050000_fix_users_self_visibility.sql',
 )
+const inventoryHistoryViewPath = join(
+  root,
+  'supabase/migrations/20260927172954_inventory_history_display_category.sql',
+)
 const migration = readFileSync(migrationPath, 'utf8')
 const rollback = readFileSync(rollbackPath, 'utf8')
 const factoryScopeCompatibility = readFileSync(factoryScopeCompatibilityPath, 'utf8')
 const draftVisibilityFix = readFileSync(draftVisibilityFixPath, 'utf8')
 const usersSelfVisibilityFix = readFileSync(usersSelfVisibilityFixPath, 'utf8')
+const inventoryHistoryView = readFileSync(inventoryHistoryViewPath, 'utf8')
 const policySnapshotPath = join(root, 'supabase/reports/rls_dependency_affected_tables_policy_snapshot.json')
 const functionSnapshotPath = join(root, 'supabase/reports/rls_legacy_function_snapshot.json')
 
@@ -87,6 +92,9 @@ assert.match(migration, /SET LOCAL lock_timeout = '5s'/)
 assert.match(migration, /SET LOCAL statement_timeout = '15min'/)
 assert.match(migration, /CREATE TABLE IF NOT EXISTS private\.rls_cutover_object_snapshot/)
 assert.match(migration, /ALTER VIEW public\.machines_with_totals SET \(security_invoker = true\)/)
+assert.match(inventoryHistoryView, /create view public\.inventory_history_transactions_with_category\s+with \(security_invoker = true\)/i)
+assert.match(inventoryHistoryView, /revoke all on public\.inventory_history_transactions_with_category from public, anon;/i)
+assert.match(inventoryHistoryView, /grant select on public\.inventory_history_transactions_with_category to authenticated;/i)
 assert.match(migration, /REVOKE SELECT, INSERT, UPDATE ON public\.products FROM authenticated/)
 assert.match(migration, /column_name <> 'base_price_eur'/)
 assert.match(migration, /CREATE OR REPLACE FUNCTION public\.fn_get_product_base_prices/)
@@ -239,6 +247,7 @@ assert.deepEqual(
     '20260924130000_inventory_cutting_writeoff_source.sql',
     '20260924140000_future_scrap_fact_and_metal_weight.sql',
     '20260925120000_stock_material_requests.sql',
+    '20260927172954_inventory_history_display_category.sql',
 
   ],
   'После cutover разрешены только проверенные follow-up миграции',

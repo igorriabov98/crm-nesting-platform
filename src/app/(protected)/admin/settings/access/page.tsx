@@ -4,7 +4,7 @@ import { RolePermissionsPage } from '@/components/features/settings/RolePermissi
 import { getRolePermissionsPageData } from '@/lib/actions/role-permissions'
 
 export const metadata = {
-  title: 'Права доступа - CRM Завода',
+  title: 'Права доступа - CRM Leda',
 }
 
 async function AccessSettingsRoute() {

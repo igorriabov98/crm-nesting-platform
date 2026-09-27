@@ -5,7 +5,7 @@ import { loadCustomsClearanceWorkspace } from '@/lib/actions/customs-clearance'
 import { PermissionDeniedError } from '@/lib/permissions/server'
 
 export const dynamic = 'force-dynamic'
-export const metadata = { title: 'Затамаживание | CRM Завода' }
+export const metadata = { title: 'Затамаживание | CRM Leda' }
 
 async function loadPageData() {
   try {

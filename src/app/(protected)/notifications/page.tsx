@@ -2,7 +2,7 @@ import { withPagePermission } from '@/lib/permissions/page-guard'
 import { getNotifications } from './actions'
 import { NotificationList } from '@/components/features/notifications/NotificationList'
 
-export const metadata = { title: 'Уведомления — CRM Завода' }
+export const metadata = { title: 'Уведомления — CRM Leda' }
 
 async function NotificationsPage({
   searchParams

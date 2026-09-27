@@ -62,7 +62,7 @@ function formatTripDate(value: string | null) {
 }
 
 export const metadata = {
-  title: 'Рабочий запрос | CRM Завода',
+  title: 'Рабочий запрос | CRM Leda',
 }
 
 async function DepartmentRequestDetailPage({

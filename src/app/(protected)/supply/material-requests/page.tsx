@@ -3,7 +3,7 @@ import { SupplyMaterialRequestQueue } from '@/components/features/supply-materia
 import { getSupplyMaterialRequestQueue } from '@/lib/actions/supply-material-request-queue'
 
 export const metadata = {
-  title: 'Бронь склада | CRM Завода',
+  title: 'Бронь склада | CRM Leda',
 }
 
 export const dynamic = 'force-dynamic'

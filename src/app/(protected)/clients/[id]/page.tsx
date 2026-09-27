@@ -8,7 +8,7 @@ import { requireClientCardAccess } from '@/lib/permissions/commercial-visibility
 import { AccessDenied } from '@/components/ui/AccessDenied'
 
 export const metadata = {
-  title: 'Карточка клиента — CRM Завода',
+  title: 'Карточка клиента — CRM Leda',
 }
 
 async function ClientPage({ params }: { params: Promise<{ id: string }> }) {

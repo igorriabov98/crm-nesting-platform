@@ -427,7 +427,7 @@ assert.doesNotMatch(outsourcingActions, /weight_unit: operation\?\.operation_kin
 assert.match(outsourcingActions, /20 kg became 20,000 kg/)
 
 const inventoryActions = readFileSync(resolve('src/lib/actions/inventory.ts'), 'utf8')
-assert.match(inventoryActions, /ensureCategory\('circle'\)/)
+assert.match(inventoryActions, /for \(const category of HISTORY_SUMMARY_CATEGORIES\) ensureCategory\(category\)/)
 const inventoryHistoryPage = readFileSync(resolve('src/components/features/inventory/InventoryWarehouseHistoryPage.tsx'), 'utf8')
 assert.match(inventoryHistoryPage, /if \(category === 'circle'\) return 'Круги'/)
 

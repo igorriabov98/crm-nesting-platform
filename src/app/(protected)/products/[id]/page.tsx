@@ -30,7 +30,7 @@ import { getCurrentUserPermissions } from '@/lib/permissions/server'
 import { hasPermission } from '@/lib/permissions/resources'
 
 export const metadata = {
-  title: 'Изделие — CRM Завода',
+  title: 'Изделие — CRM Leda',
 }
 
 const statusLabels = {

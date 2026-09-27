@@ -21,7 +21,7 @@ import {
 import { getStageIntervals, prorateStageIntervalsForPeriod, type ProductionStageIntervalValue } from '@/lib/production-stage-intervals'
 
 export const metadata = {
-  title: 'Дашборд — CRM Завода',
+  title: 'Дашборд — CRM Leda',
 }
 
 type DashboardMeeting = {

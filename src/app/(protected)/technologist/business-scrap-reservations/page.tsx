@@ -2,7 +2,7 @@ import { withPagePermission } from '@/lib/permissions/page-guard'
 import { BusinessScrapQueue } from '@/components/features/business-scrap/BusinessScrapQueue'
 import { getBusinessScrapReservationQueue } from '@/lib/actions/business-scrap-corrections'
 
-export const metadata = { title: 'Бронь делового остатка | CRM Завода' }
+export const metadata = { title: 'Бронь делового остатка | CRM Leda' }
 
 async function BusinessScrapReservationsPage() {
   const result = await getBusinessScrapReservationQueue()

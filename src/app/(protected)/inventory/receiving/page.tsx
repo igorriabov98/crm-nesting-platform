@@ -9,7 +9,7 @@ import { VrbReceivingPanel } from '@/components/features/inventory/VrbReceivingP
 import { getVrbReceivingCards } from '@/lib/actions/vrb-outsourcing'
 
 export const metadata = {
-  title: 'Прием материала - CRM Завода',
+  title: 'Прием материала - CRM Leda',
 }
 
 async function InventoryReceivingRoute({

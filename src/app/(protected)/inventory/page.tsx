@@ -6,7 +6,7 @@ import { getSuppliers } from '@/lib/actions/suppliers'
 import { INVENTORY_LIST_LIMIT } from '@/lib/constants/performance-limits'
 
 export const metadata = {
-  title: 'Склад - CRM Завода',
+  title: 'Склад - CRM Leda',
 }
 
 async function InventoryRoute({

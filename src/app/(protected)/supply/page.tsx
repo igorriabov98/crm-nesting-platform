@@ -5,7 +5,7 @@ import { getOrdersSummary } from '@/lib/actions/supply-orders'
 import { getSupplyRequestCards } from '@/lib/actions/supply-request'
 import { SUPPLY_DASHBOARD_MACHINE_LIMIT } from '@/lib/constants/performance-limits'
 
-export const metadata = { title: 'Дашборд снабжения — CRM Завода' }
+export const metadata = { title: 'Дашборд снабжения — CRM Leda' }
 
 async function SupplyPage({
   searchParams,

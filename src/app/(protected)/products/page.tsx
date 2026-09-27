@@ -3,7 +3,7 @@ import { ProductList } from '@/components/features/products/ProductList'
 import { getProducts } from '@/lib/actions/products'
 
 export const metadata = {
-  title: 'База продукции — CRM Завода',
+  title: 'База продукции — CRM Leda',
 }
 
 async function ProductsPage() {

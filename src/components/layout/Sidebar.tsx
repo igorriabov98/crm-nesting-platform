@@ -442,7 +442,7 @@ export function Sidebar({ user, permissions: initialPermissions, isMobile = fals
               <FactoryIcon className="h-4 w-4 text-white" />
             </div>
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-[#1B3A6B]">CRM Завода</p>
+              <p className="truncate text-sm font-semibold text-[#1B3A6B]">CRM Leda</p>
               <p className="truncate text-xs text-[#9CA3AF]">{user.factory?.name ?? '-'}</p>
             </div>
           </div>

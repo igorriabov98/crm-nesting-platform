@@ -16,7 +16,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { getMachineVrbMeshStatus } from '@/lib/actions/vrb-outsourcing'
 
 export const metadata = {
-  title: 'Карточка машины | CRM Завода',
+  title: 'Карточка машины | CRM Leda',
 }
 
 async function MachineDetailPage({
