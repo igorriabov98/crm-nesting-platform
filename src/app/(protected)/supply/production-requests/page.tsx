@@ -2,7 +2,7 @@ import { withPagePermission } from '@/lib/permissions/page-guard'
 import { ConsumableRequestsPage } from '@/components/features/consumables/ConsumableRequestsPage'
 import { getConsumableRequestsPageData } from '@/lib/actions/consumables'
 
-export const metadata = { title: 'Надобности производства — CRM Завода' }
+export const metadata = { title: 'Надобности производства — CRM Leda' }
 
 async function SupplyConsumableRequestsPage({
   searchParams,

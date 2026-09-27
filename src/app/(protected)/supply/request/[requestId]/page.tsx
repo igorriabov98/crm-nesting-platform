@@ -5,7 +5,7 @@ import { getRequestForSupply } from '@/lib/actions/supply-request'
 import { getDetailingRequestWorkspace } from '@/lib/actions/detailing'
 
 export const metadata = {
-  title: 'Заявка для снабжения | CRM Завода',
+  title: 'Заявка для снабжения | CRM Leda',
 }
 
 async function SupplyRequestRoute({

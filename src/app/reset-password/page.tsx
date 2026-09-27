@@ -1,6 +1,6 @@
 import { ResetPasswordForm } from '@/components/features/auth/ResetPasswordForm'
 
-export const metadata = { title: 'Новый пароль — CRM Завода' }
+export const metadata = { title: 'Новый пароль — CRM Leda' }
 
 export default async function ResetPasswordPage({
   searchParams,

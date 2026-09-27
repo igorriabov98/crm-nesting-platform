@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 
 export const metadata = {
-  title: 'Профиль — CRM Завода',
+  title: 'Профиль — CRM Leda',
 }
 
 async function ProfilePage() {

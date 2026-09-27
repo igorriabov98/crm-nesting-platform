@@ -2,7 +2,7 @@ import { withPagePermission } from '@/lib/permissions/page-guard'
 import { FinanceCalendar } from '@/components/features/finance/FinanceCalendar'
 import { getFinanceCalendarData } from '@/lib/actions/finance'
 
-export const metadata = { title: 'Финансовый план — CRM Завода' }
+export const metadata = { title: 'Финансовый план — CRM Leda' }
 
 async function FinanceCalendarPage({
   searchParams,

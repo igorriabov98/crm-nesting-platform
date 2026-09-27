@@ -4,7 +4,7 @@ import { FinanceCalendar } from '@/components/features/finance/FinanceCalendar'
 import { getSupplyFinanceData } from '@/lib/actions/finance'
 import { ROUTES } from '@/lib/constants/routes'
 
-export const metadata = { title: 'Финансы снабжения — CRM Завода' }
+export const metadata = { title: 'Финансы снабжения — CRM Leda' }
 
 async function SupplyFinancePage({
   searchParams,

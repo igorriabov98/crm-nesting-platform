@@ -5,7 +5,7 @@ import { LoginForm } from '@/components/features/auth/LoginForm'
 import { UnregisteredAccount } from '@/components/features/auth/UnregisteredAccount'
 
 export const metadata = {
-  title: 'Вход — CRM Завода',
+  title: 'Вход — CRM Leda',
 }
 
 export default async function LoginPage() {

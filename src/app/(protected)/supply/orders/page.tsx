@@ -18,7 +18,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { normalizeSupplyRequestId } from '@/lib/supply-request-flow'
 
 export const metadata = {
-  title: 'Заказы снабжения — CRM Завода',
+  title: 'Заказы снабжения — CRM Leda',
 }
 
 async function SupplyOrdersRoute({

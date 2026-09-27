@@ -9,6 +9,7 @@ import {
   Minus,
   PackageCheck,
   PackageMinus,
+  Paintbrush,
   ShieldCheck,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -22,14 +23,17 @@ import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
 import { displayMaterialCategory } from '@/lib/materials/display-category'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
+import { groupWeightTrendByWeek, type WeightWeek } from '@/lib/inventory/warehouse-history'
 import { ROUTES } from '@/lib/constants/routes'
+import { PaintStockSheet } from './PaintStockSheet'
 import type {
   InventoryFactory,
   InventoryTransactionWithRelations,
   InventoryWarehouseHistoryCategorySummary,
   InventoryWarehouseHistoryOverview,
+  PaintStockPosition,
 } from '@/lib/actions/inventory'
-import type { InventoryTransactionType } from '@/lib/types'
+import type { InventoryTransactionType, MaterialCategory } from '@/lib/types'
 
 type Props = {
   overview: InventoryWarehouseHistoryOverview
@@ -37,6 +41,9 @@ type Props = {
   factories: InventoryFactory[]
   activeFactoryId: string | null
   transactionType?: InventoryTransactionType | null
+  category: MaterialCategory | null
+  paintPositions: PaintStockPosition[]
+  paintError: string | null
   page: number
   pageSize: number
   total: number
@@ -68,6 +75,9 @@ export function InventoryWarehouseHistoryPage({
   factories,
   activeFactoryId,
   transactionType,
+  category,
+  paintPositions,
+  paintError,
   page,
   pageSize,
   total,
@@ -77,6 +87,7 @@ export function InventoryWarehouseHistoryPage({
   const currentTo = Math.min(total, (page + 1) * pageSize)
   const activeFactory = factories.find((factory) => factory.id === activeFactoryId) || null
   const trendState = overview.deltaWeightKg > 0 ? 'up' : overview.deltaWeightKg < 0 ? 'down' : 'flat'
+  const paint = overview.categories.find((item) => item.category === 'paint')
 
   return (
     <div className="space-y-5">
@@ -97,6 +108,7 @@ export function InventoryWarehouseHistoryPage({
 
           <form action={ROUTES.INVENTORY_HISTORY} className="grid gap-2 sm:grid-cols-[1fr_1fr_1.1fr_auto_auto] lg:min-w-[720px]">
             {activeFactoryId && <input type="hidden" name="factory" value={activeFactoryId} />}
+            {category && <input type="hidden" name="category" value={category} />}
             <label className="text-xs font-medium uppercase tracking-wide text-[#6B7280]">
               С
               <input
@@ -149,7 +161,7 @@ export function InventoryWarehouseHistoryPage({
             {factories.map((factory) => (
               <Link
                 key={factory.id}
-                href={periodHref(overview, factory.id, transactionType)}
+                href={periodHref(overview, factory.id, transactionType, category)}
                 className={factory.id === activeFactoryId
                   ? 'rounded-md bg-[#1B3A6B] px-3 py-2 text-sm font-semibold text-white'
                   : 'rounded-md border border-[#CED7E2] px-3 py-2 text-sm font-semibold text-[#1B3A6B] hover:bg-[#F3F6FA]'}
@@ -162,10 +174,10 @@ export function InventoryWarehouseHistoryPage({
         )}
       </section>
 
-      <section className="grid gap-3 lg:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
         <MetricCard
           icon={Boxes}
-          label="Текущий вес склада"
+          label="Текущий вес металла"
           value={formatKg(overview.currentWeightKg)}
           note={`Было ${formatKg(overview.previousWeightKg)}`}
         />
@@ -178,26 +190,34 @@ export function InventoryWarehouseHistoryPage({
         />
         <MetricCard
           icon={PackageCheck}
-          label="Приход"
+          label="Приход металла"
           value={formatKg(overview.receiptWeightKg)}
-          note={`${overview.transactionCount} операций всего`}
+          note={`${overview.transactionCount} операций с металлом`}
           tone="up"
         />
         <MetricCard
           icon={PackageMinus}
-          label="Списание"
+          label="Списание металла"
           value={formatKg(overview.writeOffWeightKg)}
           note={`Бронь ${formatKg(overview.reserveWeightKg)}`}
           tone="down"
         />
+        <PaintStockSheet positions={paintPositions} error={paintError}>
+          <MetricCard
+            icon={Paintbrush}
+            label="Краска на складе"
+            value={formatKg(paint?.currentWeightKg || 0)}
+            note={paintError ? 'Позиции временно недоступны' : `Доступно ${formatKg(paintPositions.reduce((total, position) => total + position.availableKg, 0))} · Показать позиции`}
+          />
+        </PaintStockSheet>
       </section>
 
       <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="rounded-xl border border-[#E0E7EF] bg-white p-4 shadow-sm">
+        <div className="flex min-w-0 flex-col rounded-xl border border-[#E0E7EF] bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h3 className="text-lg font-semibold text-[#1B3A6B]">Динамика веса</h3>
-              <p className="mt-1 text-sm text-[#6B7280]">Изменение общего веса по дням выбранного периода.</p>
+              <h3 className="text-lg font-semibold text-[#1B3A6B]">Динамика веса металла</h3>
+              <p className="mt-1 text-sm text-[#6B7280]">Изменение веса листов, ножей, кругов и труб за выбранный период.</p>
             </div>
             <TrendBadge value={overview.deltaWeightKg} />
           </div>
@@ -207,9 +227,11 @@ export function InventoryWarehouseHistoryPage({
         <div className="rounded-xl border border-[#E0E7EF] bg-white p-4 shadow-sm">
           <h3 className="text-lg font-semibold text-[#1B3A6B]">Категории</h3>
           <div className="mt-4 space-y-3">
-            {overview.categories.map((category) => (
-              <CategoryRow key={category.category} item={category} />
-            ))}
+            {overview.categories.map((item) => item.category === 'paint' ? (
+              <PaintStockSheet key={item.category} positions={paintPositions} error={paintError}>
+                <CategoryRow item={item} />
+              </PaintStockSheet>
+            ) : <CategoryRow key={item.category} item={item} />)}
             {overview.categories.length === 0 && (
               <div className="rounded-lg border border-dashed border-[#CED7E2] p-4 text-sm text-[#6B7280]">
                 Нет складских остатков и операций за период.
@@ -220,26 +242,48 @@ export function InventoryWarehouseHistoryPage({
       </section>
 
       <section className="rounded-xl border border-[#E0E7EF] bg-white shadow-sm">
-        <div className="flex flex-col gap-2 border-b border-[#E8ECF0] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 border-b border-[#E8ECF0] px-4 py-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <h3 className="text-lg font-semibold text-[#1B3A6B]">Журнал операций</h3>
             <p className="mt-1 text-sm text-[#6B7280]">
               Записи {currentFrom}-{currentTo} из {total}. Страница {page + 1} из {pageCount}.
             </p>
           </div>
-          <div className="flex gap-2">
-            <Link
-              href={pageHref(overview, activeFactoryId, transactionType, page)}
-              className={page <= 0 ? 'pointer-events-none rounded-md border border-[#CED7E2] px-3 py-2 text-sm font-semibold text-[#1B3A6B] opacity-50' : 'rounded-md border border-[#CED7E2] px-3 py-2 text-sm font-semibold text-[#1B3A6B] hover:bg-[#F3F6FA]'}
-            >
-              Назад
-            </Link>
-            <Link
-              href={pageHref(overview, activeFactoryId, transactionType, page + 2)}
-              className={page + 1 >= pageCount ? 'pointer-events-none rounded-md border border-[#CED7E2] px-3 py-2 text-sm font-semibold text-[#1B3A6B] opacity-50' : 'rounded-md border border-[#CED7E2] px-3 py-2 text-sm font-semibold text-[#1B3A6B] hover:bg-[#F3F6FA]'}
-            >
-              Вперед
-            </Link>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+            <form action={ROUTES.INVENTORY_HISTORY} className="flex items-end gap-2">
+              {activeFactoryId && <input type="hidden" name="factory" value={activeFactoryId} />}
+              <input type="hidden" name="from" value={overview.period.from} />
+              <input type="hidden" name="to" value={overview.period.to} />
+              {transactionType && <input type="hidden" name="type" value={transactionType} />}
+              <label className="min-w-0 text-xs font-medium text-[#475569]">
+                Категория журнала
+                <select name="category" defaultValue={category || ''} className="mt-1 h-10 w-full min-w-[180px] rounded-md border border-[#CED7E2] bg-white px-3 text-sm text-[#111827] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B3A6B]">
+                  <option value="">Все категории</option>
+                  {(Object.keys(MATERIAL_CATEGORY_LABELS) as MaterialCategory[]).map((value) => (
+                    <option key={value} value={value}>{categoryLabel(value)}</option>
+                  ))}
+                </select>
+              </label>
+              <button type="submit" className="inline-flex h-10 items-center justify-center rounded-md bg-[#1B3A6B] px-3 text-sm font-semibold text-white hover:bg-[#16315C] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B3A6B] focus-visible:ring-offset-2">Показать</button>
+            </form>
+            <div className="flex gap-2">
+              <Link
+                href={pageHref(overview, activeFactoryId, transactionType, category, page)}
+                aria-disabled={page <= 0}
+                tabIndex={page <= 0 ? -1 : undefined}
+                className={page <= 0 ? 'pointer-events-none rounded-md border border-[#CED7E2] px-3 py-2 text-sm font-semibold text-[#1B3A6B] opacity-50' : 'rounded-md border border-[#CED7E2] px-3 py-2 text-sm font-semibold text-[#1B3A6B] hover:bg-[#F3F6FA]'}
+              >
+                Назад
+              </Link>
+              <Link
+                href={pageHref(overview, activeFactoryId, transactionType, category, page + 2)}
+                aria-disabled={page + 1 >= pageCount}
+                tabIndex={page + 1 >= pageCount ? -1 : undefined}
+                className={page + 1 >= pageCount ? 'pointer-events-none rounded-md border border-[#CED7E2] px-3 py-2 text-sm font-semibold text-[#1B3A6B] opacity-50' : 'rounded-md border border-[#CED7E2] px-3 py-2 text-sm font-semibold text-[#1B3A6B] hover:bg-[#F3F6FA]'}
+              >
+                Вперед
+              </Link>
+            </div>
           </div>
         </div>
 
@@ -362,31 +406,84 @@ function MetricCard({
 }
 
 function TrendChart({ overview }: { overview: InventoryWarehouseHistoryOverview }) {
-  const maxDelta = Math.max(1, ...overview.trend.map((point) => Math.abs(point.deltaWeightKg)))
-  const showLabels = overview.trend.length <= 45
+  const weeks = groupWeightTrendByWeek(overview.trend)
+  const dailyOnDesktop = overview.trend.length <= 42
 
   return (
-    <div className="mt-5">
-      <div className="flex h-36 items-end gap-1 border-b border-[#E8ECF0] pb-2">
-        {overview.trend.map((point) => {
-          const height = Math.max(4, Math.round((Math.abs(point.deltaWeightKg) / maxDelta) * 104))
-          const color = point.deltaWeightKg > 0 ? 'bg-emerald-500' : point.deltaWeightKg < 0 ? 'bg-red-500' : 'bg-slate-300'
-          return (
-            <div key={point.date} className="group flex min-w-[5px] flex-1 flex-col items-center justify-end">
-              <div className="hidden rounded-md border border-[#E0E7EF] bg-white px-2 py-1 text-xs text-[#334155] shadow-sm group-hover:block">
-                {formatDate(point.date)}: {signedKg(point.deltaWeightKg)}
-              </div>
-              <div className={`w-full max-w-5 rounded-t-sm ${color}`} style={{ height }} />
-            </div>
-          )
-        })}
+    <div className="mt-5 flex min-h-[420px] flex-1 flex-col">
+      <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-[#475569]">
+        <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-emerald-600" />Рост веса</span>
+        <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-red-600" />Снижение веса</span>
+        <span className="text-[#64748B]">Итог недели: изменение · вес на конец</span>
       </div>
-      {showLabels && (
-        <div className="mt-2 flex justify-between text-xs text-[#94A3B8]">
-          <span>{formatDate(overview.period.from)}</span>
-          <span>{formatDate(overview.period.to)}</span>
+      {(!dailyOnDesktop || overview.trend.length > 14) && <p className="mb-2 text-xs text-[#64748B] md:hidden">Листайте график вправо, чтобы увидеть остальные недели.</p>}
+      {dailyOnDesktop && (
+        <div className={overview.trend.length > 14 ? 'hidden min-h-0 flex-1 md:flex' : 'flex min-h-0 flex-1'}>
+          <TrendBars weeks={weeks} mode="daily" />
         </div>
       )}
+      {(!dailyOnDesktop || overview.trend.length > 14) && (
+        <div className={dailyOnDesktop ? 'flex min-h-0 flex-1 md:hidden' : 'flex min-h-0 flex-1'}>
+          <TrendBars weeks={weeks} mode="weekly" />
+        </div>
+      )}
+      <details className="mt-3 text-sm text-[#1B3A6B]">
+        <summary className="w-fit cursor-pointer rounded-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B3A6B]">Таблица значений по дням</summary>
+        <div className="mt-2 max-h-56 overflow-auto rounded-lg border border-[#E0E7EF]">
+          <table className="w-full text-left text-xs tabular-nums">
+            <thead className="sticky top-0 bg-[#F8FAFC] text-[#475569]"><tr><th className="px-3 py-2">Дата</th><th className="px-3 py-2">Изменение</th><th className="px-3 py-2">Вес склада</th></tr></thead>
+            <tbody className="divide-y divide-[#E8ECF0]">
+              {overview.trend.map((point) => <tr key={point.date}><td className="px-3 py-2">{formatDate(point.date)}</td><td className="px-3 py-2">{signedKg(point.deltaWeightKg)}</td><td className="px-3 py-2">{formatKg(point.weightKg)}</td></tr>)}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+  )
+}
+
+function TrendBars({ weeks, mode }: { weeks: WeightWeek[]; mode: 'daily' | 'weekly' }) {
+  const bars = mode === 'daily'
+    ? weeks.flatMap((week) => week.days)
+    : weeks.map((week) => ({ date: week.to, deltaWeightKg: week.deltaWeightKg, weightKg: week.closingWeightKg }))
+  const positiveMax = Math.max(0, ...bars.map((point) => point.deltaWeightKg))
+  const negativeMax = Math.max(0, ...bars.map((point) => -point.deltaWeightKg))
+  const positiveShare = positiveMax === 0 && negativeMax === 0 ? 0.5
+    : positiveMax === 0 ? 0.08 : negativeMax === 0 ? 0.92
+    : Math.min(0.72, Math.max(0.28, positiveMax / (positiveMax + negativeMax)))
+  const minWidth = mode === 'daily' ? Math.max(bars.length * 16, weeks.length * 104) : weeks.length * 112
+
+  return (
+    <div className="flex min-h-0 w-full flex-1 flex-col overflow-x-auto rounded-lg border border-[#E0E7EF] bg-[#FBFCFE]" aria-label={mode === 'daily' ? 'Изменение веса металла по дням' : 'Изменение веса металла по неделям'}>
+      <div className="flex min-h-[320px] w-full flex-1 flex-col" style={{ minWidth }}>
+        <div className="relative flex min-h-[250px] flex-1">
+          <div className="pointer-events-none absolute inset-x-0 z-10 border-t border-[#94A3B8]" style={{ top: `${positiveShare * 100}%` }} />
+          {weeks.map((week, index) => {
+            const points = mode === 'daily' ? week.days : [{ date: week.to, deltaWeightKg: week.deltaWeightKg, weightKg: week.closingWeightKg }]
+            return <div key={week.from} className={`relative flex border-r border-[#CBD5E1] ${index % 2 ? 'bg-slate-50/80' : 'bg-white'}`} style={{ flex: mode === 'daily' ? week.days.length : 1, minWidth: mode === 'daily' ? 104 : 112 }}>
+              {points.map((point) => {
+                const positive = point.deltaWeightKg > 0
+                const negative = point.deltaWeightKg < 0
+                const height = positive ? positiveShare * point.deltaWeightKg / positiveMax * 100
+                  : negative ? (1 - positiveShare) * -point.deltaWeightKg / negativeMax * 100 : 0
+                const top = positive ? positiveShare * 100 - height : positiveShare * 100
+                const tooltip = `${mode === 'daily' ? formatDate(point.date) : `${formatDate(week.from)}–${formatDate(week.to)}`}: ${signedKg(point.deltaWeightKg)}. Вес ${formatKg(point.weightKg)}`
+                return <div key={point.date} role="img" tabIndex={0} aria-label={tooltip} title={tooltip} className="group relative min-w-0 flex-1 cursor-default focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B3A6B]">
+                  <div className={`absolute left-1/2 w-3/5 max-w-7 -translate-x-1/2 ${positive ? 'rounded-t-sm bg-emerald-600' : negative ? 'rounded-b-sm bg-red-600' : 'h-[2px] rounded bg-slate-400'}`} style={{ top: `${top}%`, height: positive || negative ? `${height}%` : 2 }} />
+                  <span className="pointer-events-none absolute left-1/2 top-2 z-30 hidden min-w-max -translate-x-1/2 rounded-md border border-[#CBD5E1] bg-white px-2 py-1 text-xs font-medium text-[#111827] shadow-sm group-hover:block group-focus:block">{tooltip}</span>
+                </div>
+              })}
+            </div>
+          })}
+        </div>
+        <div className="flex border-t border-[#CBD5E1]">
+          {weeks.map((week, index) => <div key={week.from} className={`border-r border-[#CBD5E1] px-2 py-2 text-center text-xs tabular-nums ${index % 2 ? 'bg-slate-50/80' : 'bg-white'}`} style={{ flex: mode === 'daily' ? week.days.length : 1, minWidth: mode === 'daily' ? 104 : 112 }}>
+            <div className="font-semibold text-[#334155]">{formatWeekRange(week)}</div>
+            <div className={`mt-1 font-bold ${week.deltaWeightKg > 0 ? 'text-emerald-700' : week.deltaWeightKg < 0 ? 'text-red-700' : 'text-[#475569]'}`}>{signedKg(week.deltaWeightKg)}</div>
+            <div className="mt-1 text-[#475569]">Вес {formatKg(week.closingWeightKg)}</div>
+          </div>)}
+        </div>
+      </div>
     </div>
   )
 }
@@ -453,6 +550,7 @@ function pageHref(
   overview: InventoryWarehouseHistoryOverview,
   factoryId: string | null,
   transactionType: InventoryTransactionType | null | undefined,
+  category: MaterialCategory | null | undefined,
   page: number,
 ) {
   const params = new URLSearchParams()
@@ -460,17 +558,19 @@ function pageHref(
   params.set('from', overview.period.from)
   params.set('to', overview.period.to)
   if (transactionType) params.set('type', transactionType)
+  if (category) params.set('category', category)
   if (page > 1) params.set('page', String(page))
   const query = params.toString()
   return query ? `${ROUTES.INVENTORY_HISTORY}?${query}` : ROUTES.INVENTORY_HISTORY
 }
 
-function periodHref(overview: InventoryWarehouseHistoryOverview, factoryId: string | null, transactionType: InventoryTransactionType | null | undefined) {
+function periodHref(overview: InventoryWarehouseHistoryOverview, factoryId: string | null, transactionType: InventoryTransactionType | null | undefined, category: MaterialCategory | null | undefined) {
   const params = new URLSearchParams()
   if (factoryId) params.set('factory', factoryId)
   params.set('from', overview.period.from)
   params.set('to', overview.period.to)
   if (transactionType) params.set('type', transactionType)
+  if (category) params.set('category', category)
   return `${ROUTES.INVENTORY_HISTORY}?${params.toString()}`
 }
 
@@ -514,11 +614,20 @@ function variantSummary(row: InventoryTransactionWithRelations) {
 function categoryLabel(category?: InventoryTransactionWithRelations['material_category'] | InventoryWarehouseHistoryCategorySummary['category'] | null) {
   if (!category) return '-'
   if (category === 'circle') return 'Круги'
+  if (category === 'pipe') return 'Трубы'
   return MATERIAL_CATEGORY_LABELS[category] ?? category
 }
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T00:00:00.000Z`))
+}
+
+function formatWeekRange(week: WeightWeek) {
+  const start = new Date(`${week.from}T00:00:00.000Z`)
+  const end = new Date(`${week.to}T00:00:00.000Z`)
+  const dayMonth = new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', timeZone: 'UTC' })
+  if (start.getUTCFullYear() === end.getUTCFullYear()) return `${dayMonth.format(start)}–${dayMonth.format(end)}`
+  return `${formatDate(week.from)}–${formatDate(week.to)}`
 }
 
 function formatDateTime(value: string) {

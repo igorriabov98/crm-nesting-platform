@@ -2,7 +2,7 @@ import { withPagePermission } from '@/lib/permissions/page-guard'
 import { MailPageClient } from '@/components/features/mail/MailPageClient'
 import { getMailAccountStatus, getMailLabels, getMailThreads } from '@/lib/actions/mail'
 
-export const metadata = { title: 'Почта — CRM Завода' }
+export const metadata = { title: 'Почта — CRM Leda' }
 
 async function MailPage({ searchParams }: { searchParams: Promise<{ thread?: string }> }) {
   const [status, params] = await Promise.all([getMailAccountStatus(), searchParams])

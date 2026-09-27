@@ -5,7 +5,7 @@ import { getSupplyByMachine } from '../actions'
 import { SupplyMachineDetail } from '@/components/features/supply/SupplyMachineDetail'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 
-export const metadata = { title: 'Детали снабжения машины — CRM Завода' }
+export const metadata = { title: 'Детали снабжения машины — CRM Leda' }
 
 async function SupplyMachinePage({ params }: { params: Promise<{ machineId: string }> }) {
   const { machineId } = await params

@@ -4,7 +4,7 @@ import { getClientOptions } from '@/lib/actions/clients'
 import { getContracts } from '@/lib/actions/contracts'
 
 export const metadata = {
-  title: 'Контракты — CRM Завода',
+  title: 'Контракты — CRM Leda',
 }
 
 async function ContractsPage() {

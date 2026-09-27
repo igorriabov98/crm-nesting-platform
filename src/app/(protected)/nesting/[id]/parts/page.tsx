@@ -9,7 +9,7 @@ import { getMachineItemNestingContext, type MachineItemNestingContext } from '@/
 import { assertCanAccessNestingProject } from '@/lib/nesting/project-access'
 import type { SteelType } from '@/lib/types/database'
 
-export const metadata = { title: 'Детали раскладки — CRM Завода' }
+export const metadata = { title: 'Детали раскладки — CRM Leda' }
 
 async function NestingPartsPage({
   params,

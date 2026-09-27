@@ -1,10 +1,11 @@
 import { withPagePermission } from '@/lib/permissions/page-guard'
 import { InventoryWarehouseHistoryPage } from '@/components/features/inventory/InventoryWarehouseHistoryPage'
-import { getInventoryFactories, getTransactions, getWarehouseHistoryOverview } from '@/lib/actions/inventory'
-import type { InventoryTransactionType } from '@/lib/types'
+import { getInventoryFactories, getPaintStockPositions, getTransactions, getWarehouseHistoryOverview } from '@/lib/actions/inventory'
+import { MATERIAL_CATEGORY_LABELS } from '@/lib/constants/procurement'
+import type { InventoryTransactionType, MaterialCategory } from '@/lib/types'
 
 export const metadata = {
-  title: 'История склада - CRM Завода',
+  title: 'История склада - CRM Leda',
 }
 
 type SearchParams = {
@@ -12,11 +13,12 @@ type SearchParams = {
   from?: string
   to?: string
   type?: string
+  category?: string
   page?: string
 }
 
 const PAGE_SIZE = 50
-const TRANSACTION_TYPES: InventoryTransactionType[] = ['receipt', 'reserve', 'unreserve', 'write_off', 'adjustment']
+const TRANSACTION_TYPES: InventoryTransactionType[] = ['receipt', 'reserve', 'unreserve', 'write_off', 'adjustment', 'transfer_out', 'transfer_in']
 
 async function InventoryWarehouseHistoryRoute({
   searchParams,
@@ -31,8 +33,9 @@ async function InventoryWarehouseHistoryRoute({
   const period = normalizePeriod(resolvedSearchParams?.from, resolvedSearchParams?.to)
   const page = Math.max(0, Number.isFinite(Number(resolvedSearchParams?.page)) ? Number(resolvedSearchParams?.page || 1) - 1 : 0)
   const transactionType = parseTransactionType(resolvedSearchParams?.type)
+  const category = parseCategory(resolvedSearchParams?.category)
 
-  const [overviewResult, transactionsResult] = await Promise.all([
+  const [overviewResult, transactionsResult, paintResult] = await Promise.all([
     getWarehouseHistoryOverview({
       factory_id: activeFactoryId,
       from_date: period.from,
@@ -43,9 +46,11 @@ async function InventoryWarehouseHistoryRoute({
       from_date: `${period.from}T00:00:00.000Z`,
       to_date: `${period.to}T23:59:59.999Z`,
       type: transactionType || undefined,
+      category: category || undefined,
       page,
       pageSize: PAGE_SIZE,
     }),
+    getPaintStockPositions(activeFactoryId),
   ])
   const pageError = factoriesResult.error || overviewResult.error || transactionsResult.error
 
@@ -64,6 +69,9 @@ async function InventoryWarehouseHistoryRoute({
           factories={factories}
           activeFactoryId={activeFactoryId}
           transactionType={transactionType}
+          category={category}
+          paintPositions={paintResult.data || []}
+          paintError={paintResult.error}
           page={transactionsResult.pagination.page}
           pageSize={transactionsResult.pagination.pageSize}
           total={transactionsResult.pagination.total}
@@ -76,6 +84,12 @@ async function InventoryWarehouseHistoryRoute({
 function parseTransactionType(value?: string): InventoryTransactionType | null {
   if (!value) return null
   return TRANSACTION_TYPES.includes(value as InventoryTransactionType) ? value as InventoryTransactionType : null
+}
+
+function parseCategory(value?: string): MaterialCategory | null {
+  return value && Object.prototype.hasOwnProperty.call(MATERIAL_CATEGORY_LABELS, value)
+    ? value as MaterialCategory
+    : null
 }
 
 function normalizePeriod(fromDate?: string, toDate?: string) {

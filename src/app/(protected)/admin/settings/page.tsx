@@ -14,7 +14,7 @@ import {
 } from '@/lib/permissions/resources'
 
 export const metadata = {
-  title: 'Настройки - CRM Завода',
+  title: 'Настройки - CRM Leda',
 }
 
 type SettingsCard = {

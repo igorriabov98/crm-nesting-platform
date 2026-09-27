@@ -4,7 +4,7 @@ import { getStockMaterialRequest } from '@/lib/actions/stock-material-requests'
 import { getSteelTypes } from '@/lib/actions/steel-types'
 import { StockMaterialRequestEditor } from '@/components/features/material-requests/StockMaterialRequestEditor'
 
-export const metadata = { title: 'Заявка на склад | CRM Завода' }
+export const metadata = { title: 'Заявка на склад | CRM Leda' }
 
 async function StockRequestPage({ params }: { params: Promise<{ requestId: string }> }) {
   const { requestId } = await params

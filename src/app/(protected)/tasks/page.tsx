@@ -6,7 +6,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { TASKS_LIST_LIMIT } from '@/lib/constants/performance-limits'
 
 export const metadata = {
-  title: 'Мои задачи | CRM Завода',
+  title: 'Мои задачи | CRM Leda',
 }
 
 async function TasksPage({

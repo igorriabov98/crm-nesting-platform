@@ -6,7 +6,7 @@ import { getMeetingDetailV2 } from "../v2-actions";
 import { requirePermission } from "@/lib/permissions/server";
 
 export const metadata: Metadata = {
-  title: "Карточка собрания | CRM Завода",
+  title: "Карточка собрания | CRM Leda",
 };
 
 async function MeetingPage({

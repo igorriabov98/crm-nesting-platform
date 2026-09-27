@@ -4,7 +4,7 @@ import { LongStockLayoutSettingsPage } from '@/components/features/settings/Long
 import { getLongStockLayoutSettings } from '@/lib/actions/long-stock-layout-settings'
 import { requirePermission } from '@/lib/permissions/server'
 
-export const metadata = { title: 'Раскладка хлыстов — CRM Завода' }
+export const metadata = { title: 'Раскладка хлыстов — CRM Leda' }
 export const dynamic = 'force-dynamic'
 
 async function LongStockLayoutSettingsRoute() {

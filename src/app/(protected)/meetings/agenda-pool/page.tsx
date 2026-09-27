@@ -5,7 +5,7 @@ import { getAgendaPoolV2 } from "@/app/(protected)/meetings/v2-actions";
 import { requirePermission } from "@/lib/permissions/server";
 
 export const metadata = {
-  title: "Пул повесток | CRM Завода",
+  title: "Пул повесток | CRM Leda",
 };
 
 async function AgendaPoolPage({

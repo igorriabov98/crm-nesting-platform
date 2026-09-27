@@ -76,7 +76,7 @@ export function LoginForm() {
         </div>
 
         <div className="text-center">
-          <CardTitle className="text-2xl font-bold text-[#1B3A6B]">CRM Завода</CardTitle>
+          <CardTitle className="text-2xl font-bold text-[#1B3A6B]">CRM Leda</CardTitle>
           <CardDescription className="mt-1 text-[#9CA3AF]">
             Система управления производством
           </CardDescription>

@@ -12,7 +12,7 @@ import {
   type ShipmentReportFilters,
 } from '@/lib/reports/shipment-report'
 
-export const metadata = { title: 'Комплексные отчёты — CRM Завода' }
+export const metadata = { title: 'Комплексные отчёты — CRM Leda' }
 export const dynamic = 'force-dynamic'
 
 type SearchParams = {

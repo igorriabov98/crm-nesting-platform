@@ -4,7 +4,7 @@ import { FactoryLocationsForm } from '@/components/features/settings/FactoryLoca
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
-export const metadata = { title: 'Площадки и заводы — CRM Завода' }
+export const metadata = { title: 'Площадки и заводы — CRM Leda' }
 
 async function FactoryLocationsPage() {
   await requirePermission('company_settings', 'view')

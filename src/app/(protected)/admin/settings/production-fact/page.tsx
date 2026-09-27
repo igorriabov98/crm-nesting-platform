@@ -4,7 +4,7 @@ import { ProductionFactSettingsPage } from '@/components/features/production/Pro
 import { getProductionFactSettingsData } from '@/lib/actions/production-fact'
 
 export const metadata = {
-  title: 'Настройки факта производства - CRM Завода',
+  title: 'Настройки факта производства - CRM Leda',
 }
 
 function isAccessError(error: unknown) {

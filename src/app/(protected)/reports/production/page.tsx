@@ -23,7 +23,7 @@ import {
 } from '@/lib/reports/production-analytics'
 import { cn } from '@/lib/utils'
 
-export const metadata = { title: 'Производственная аналитика — CRM Завода' }
+export const metadata = { title: 'Производственная аналитика — CRM Leda' }
 export const dynamic = 'force-dynamic'
 
 type SearchParams = Partial<Record<keyof ProductionReportFilters, string>>

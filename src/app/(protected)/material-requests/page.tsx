@@ -4,7 +4,7 @@ import { getMaterialRequestQueue } from '@/lib/actions/material-request-queue'
 import { getStockMaterialRequests } from '@/lib/actions/stock-material-requests'
 
 export const metadata = {
-  title: 'Заявки на материалы | CRM Завода',
+  title: 'Заявки на материалы | CRM Leda',
 }
 
 async function MaterialRequestsPage() {

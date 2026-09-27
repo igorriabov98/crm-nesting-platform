@@ -11,7 +11,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 export const metadata = {
-  title: 'Заявка на материалы | CRM Завода',
+  title: 'Заявка на материалы | CRM Leda',
 }
 
 async function RequestDetailPage({

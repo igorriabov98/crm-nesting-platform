@@ -7,7 +7,7 @@ import { AlertTriangle, ServerOff } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 export const metadata = {
-  title: 'Настройки AI — CRM Завода',
+  title: 'Настройки AI — CRM Leda',
 }
 
 function getErrorMessage(error: unknown) {

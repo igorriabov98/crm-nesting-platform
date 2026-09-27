@@ -4,7 +4,7 @@ import { getSuppliers } from '@/lib/actions/suppliers'
 import { requirePermission } from '@/lib/permissions/server'
 
 export const metadata = {
-  title: 'База данных — CRM Завода',
+  title: 'База данных — CRM Leda',
 }
 
 async function SupplierDatabasePage() {

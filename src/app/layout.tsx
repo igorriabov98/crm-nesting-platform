@@ -31,7 +31,7 @@ const firaCode = Fira_Code({
 })
 
 export const metadata: Metadata = {
-  title: 'CRM Завода',
+  title: 'CRM Leda',
   description: 'Система управления производством металлоконструкций',
 }
 

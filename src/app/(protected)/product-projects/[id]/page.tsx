@@ -14,7 +14,7 @@ import { hasPermission } from '@/lib/permissions/resources'
 import type { MailLinkInput } from '@/lib/mail/types'
 
 export const metadata = {
-  title: 'Проект изделия — CRM Завода',
+  title: 'Проект изделия — CRM Leda',
 }
 
 async function ProductProjectDetailPage({

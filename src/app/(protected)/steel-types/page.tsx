@@ -2,7 +2,7 @@ import { SteelTypesSection } from '@/components/features/materials/SteelTypesSec
 import { getSteelTypes } from '@/lib/actions/steel-types'
 import { requirePermission } from '@/lib/permissions/server'
 
-export const metadata = { title: 'Марки стали - CRM Завода' }
+export const metadata = { title: 'Марки стали - CRM Leda' }
 
 export default async function SteelTypesPage() {
   await requirePermission('nesting_catalog', 'manage')

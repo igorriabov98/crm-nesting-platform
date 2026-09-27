@@ -14,7 +14,7 @@ import {
   getSheets,
 } from '@/lib/nesting/catalog-api'
 
-export const metadata = { title: 'Справочники раскладки — CRM Завода' }
+export const metadata = { title: 'Справочники раскладки — CRM Leda' }
 
 const tabs: CatalogTab[] = ['sheets', 'gaps', 'kfactors', 'remnants']
 const materials = ['Сталь', 'Нержавейка', 'Алюминий']

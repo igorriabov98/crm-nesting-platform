@@ -38,7 +38,7 @@ function requestVersion(row: ApprovalListRow, revision: number) {
     : formatApprovalVersion(revision, row.request_number)
 }
 
-export const metadata = { title: 'Итог по заявкам | CRM Завода' }
+export const metadata = { title: 'Итог по заявкам | CRM Leda' }
 
 async function TechnologistRequestResultsPage() {
   const result = await getTechnologistApprovalList()

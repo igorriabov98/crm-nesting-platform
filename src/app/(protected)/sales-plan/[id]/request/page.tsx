@@ -8,7 +8,7 @@ import { hasPermission } from '@/lib/permissions/resources'
 import { getCurrentUserContextOrRedirect } from '@/lib/auth/current-user'
 
 export const metadata = {
-  title: 'Заявки на материалы | CRM Завода',
+  title: 'Заявки на материалы | CRM Leda',
 }
 
 async function RequestPage({ params }: { params: Promise<{ id: string }> }) {

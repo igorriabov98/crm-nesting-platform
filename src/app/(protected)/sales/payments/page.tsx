@@ -3,7 +3,7 @@ import { CreditCard } from 'lucide-react'
 import { PaymentCompaniesList } from '@/components/features/payments/PaymentCompaniesList'
 import { getPaymentCompanies } from '@/lib/actions/client-payments'
 
-export const metadata = { title: 'Оплаты — CRM Завода' }
+export const metadata = { title: 'Оплаты — CRM Leda' }
 export const dynamic = 'force-dynamic'
 
 async function PaymentsPage() {

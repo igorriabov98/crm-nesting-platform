@@ -6,7 +6,7 @@ import { requirePermission } from '@/lib/permissions/server'
 import { canAccessAllFactories } from '@/lib/permissions/factory-scope'
 import type { FactorySummary } from '@/lib/types'
 
-export const metadata = { title: 'Запросы производства | CRM Завода' }
+export const metadata = { title: 'Запросы производства | CRM Leda' }
 
 async function ProductionOutsourcingRequestsRoute({
   searchParams,

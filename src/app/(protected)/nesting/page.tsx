@@ -11,7 +11,7 @@ import { nestingStatuses } from '@/lib/nesting/status'
 import { cn } from '@/lib/utils'
 import { requirePermission } from '@/lib/permissions/server'
 
-export const metadata = { title: 'Раскладка металла - CRM Завода' }
+export const metadata = { title: 'Раскладка металла - CRM Leda' }
 
 const statuses: NestingStatus[] = [...nestingStatuses]
 

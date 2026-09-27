@@ -5,7 +5,7 @@ import { getTelegramStatus, getUsersWithTelegram } from '@/lib/actions/telegram-
 import { requirePermission } from '@/lib/permissions/server'
 
 export const metadata = {
-  title: 'Настройки Telegram - CRM Завода',
+  title: 'Настройки Telegram - CRM Leda',
 }
 
 async function TelegramSettingsRoute() {

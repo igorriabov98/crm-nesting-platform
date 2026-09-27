@@ -109,7 +109,7 @@ export function Header({ user, permissions: initialPermissions, isImpersonating 
     .toUpperCase()
     .slice(0, 2) ?? '?'
 
-  const title = PAGE_TITLES[pathname] || 'CRM Завода'
+  const title = PAGE_TITLES[pathname] || 'CRM Leda'
   const membershipLabels = (user.department_memberships || [])
     .map((membership) => {
       const position = membership.position?.name

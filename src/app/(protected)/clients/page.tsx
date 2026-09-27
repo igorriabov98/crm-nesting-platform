@@ -5,7 +5,7 @@ import { getClients } from '@/lib/actions/clients'
 import { CLIENTS_LIST_LIMIT } from '@/lib/constants/performance-limits'
 
 export const metadata = {
-  title: 'Клиенты — CRM Завода',
+  title: 'Клиенты — CRM Leda',
 }
 
 async function ClientsPage() {

@@ -7,7 +7,7 @@ import { getProductionOutsourcingSummary } from '@/lib/actions/outsourcing'
 import { requirePermission } from '@/lib/permissions/server'
 import type { FactorySummary } from '@/lib/types'
 
-export const metadata = { title: 'Производство — CRM Завода' }
+export const metadata = { title: 'Производство — CRM Leda' }
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Неизвестная ошибка'
