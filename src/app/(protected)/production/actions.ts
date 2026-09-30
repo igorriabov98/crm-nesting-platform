@@ -7,6 +7,9 @@ import { normalizeNightShiftDates } from '@/lib/utils/night-shift-dates'
 import { getStageIntervals, type ProductionStageIntervalValue } from '@/lib/production-stage-intervals'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { loadVrbMeshStatuses, type VrbMeshStatus } from '@/lib/vrb/status'
+import { assertProductionDraftMachineAccess } from '@/lib/production-plan-draft-access'
+import { canAccessAllFactories } from '@/lib/permissions/factory-scope'
+import { hasPermission } from '@/lib/permissions/resources'
 
 export type StageStatus = 'not_planned' | 'active' | 'completed' | 'overdue' | 'skipped'
 
@@ -153,8 +156,10 @@ function applyProductionManagerFactoryScope<T>(query: T, factoryId: string | nul
   return scopedQuery.or(`factory_id.eq.${factoryId},factory_id.is.null`)
 }
 
-export async function getProductionData(factoryFilter?: string | null) {
-  const { supabase, role: userRole, factoryId: userFactoryId } = await requirePermission('production', 'view')
+export async function getProductionData(factoryFilter?: string | null, draftMachineIds: string[] = []) {
+  const permission = await requirePermission('production', 'view')
+  await assertProductionDraftMachineAccess(permission, factoryFilter, draftMachineIds)
+  const { supabase, role: userRole, factoryId: userFactoryId } = permission
 
   const selectWithDeadline = `
     id, name, created_at, total_weight, has_zinc, has_hot_zinc, has_cold_zinc, has_painting, factory_id,
@@ -208,10 +213,15 @@ export async function getProductionData(factoryFilter?: string | null) {
       .select(columns)
       .eq('is_archived', false)
 
-    if (userRole === 'production_manager') {
-      builtQuery = applyProductionManagerFactoryScope(builtQuery, userFactoryId)
+    if (!canAccessAllFactories(permission, 'production', 'view')) {
+      if (!userFactoryId) throw new Error('Не определён доступный завод')
+      builtQuery = userRole === 'production_manager' && hasPermission(permission.permissions, 'production', 'manage')
+        ? applyProductionManagerFactoryScope(builtQuery, userFactoryId)
+        : builtQuery.eq('factory_id', userFactoryId)
     } else if (factoryFilter && factoryFilter !== 'all') {
-      builtQuery = builtQuery.eq('factory_id', factoryFilter)
+      builtQuery = draftMachineIds.length > 0
+        ? builtQuery.or(`factory_id.eq.${factoryFilter},id.in.(${draftMachineIds.join(',')})`)
+        : builtQuery.eq('factory_id', factoryFilter)
     }
 
     return builtQuery.order('created_at', { ascending: false })

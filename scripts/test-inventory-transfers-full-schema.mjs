@@ -194,6 +194,12 @@ runPsql(
   'full_schema_inventory_transfer_compat.sql',
   readFileSync(transferCompatPath, 'utf8'),
 )
+if (migrations.includes('20260929180000_production_plan_versions.sql')) {
+  runPsql(
+    'production_plan_versions_test.sql',
+    readFileSync(path.join(root, 'supabase', 'tests', 'production_plan_versions_test.sql'), 'utf8'),
+  )
+}
 if(process.env.FULL_SCHEMA_REPLAY_ONLY==='true')process.exit(0)
 
 runPsql(

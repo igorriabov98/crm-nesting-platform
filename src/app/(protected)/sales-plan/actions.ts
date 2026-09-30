@@ -17,7 +17,7 @@ import { syncMaterialTypeTask } from '@/lib/actions/material-type-tasks'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
 import { ensureProductVersionCompletionTask, type ProductVersionCompletionSnapshot } from '@/lib/actions/product-version-completion-tasks'
 import { ensureVrbApprovalTasksForMachine } from '@/lib/actions/vrb-outsourcing'
-import { isMachineInConfirmedProductionPlan, notifyMachineEnteredReadyProductionPlan } from '@/lib/actions/production-plan'
+import { stageProductionPlanChange } from '@/lib/actions/production-plan-versions'
 import { promoteShippedProjectSamplesToProducts } from '@/lib/actions/products'
 import { loadMachineProgressContexts, resolveMachineProgressWithContext } from '@/lib/actions/machine-progress'
 import { loadClientProductPriceLookup, resolveClientProductPrice, type ClientPriceDb, type ClientProductPriceLookup } from '@/lib/client-prices/server'
@@ -697,24 +697,6 @@ async function createPlanningDirectorReviewTasks(db: LooseDb, machineId: string,
   }
 }
 
-async function notifyProductionManagersAboutFactoryAssignment(
-  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
-  factoryId: string,
-  machineId: string,
-  machineName: string
-) {
-  const { error } = await (supabase as RpcClient).rpc('notify_users_by_role_in_factory', {
-    p_factory_id: factoryId,
-    p_role: 'production_manager',
-    p_type: 'factory_assigned',
-    p_title: 'Машина назначена на завод',
-    p_message: `Машина ${machineName} назначена на ваш завод.`,
-    p_machine_id: machineId,
-  })
-
-  if (error) throw new Error(error.message || 'Не удалось отправить уведомление начальнику производства')
-}
-
 function getDisplayMachineStatus(machine: {
   status: MachineStatus
   is_confirmed?: boolean | null
@@ -872,6 +854,27 @@ async function syncCoatingDependentProductionStages(db: LooseDb, machineId: stri
   const hasZinc = coatings.some(isZincCoating)
   const hasPainting = coatings.includes('powder_coating')
 
+  const { data: machineData, error: machineError } = await db.from('machines')
+    .select('factory_id, production_month').eq('id', machineId).single()
+  if (machineError) throw machineError
+  const assigned = Boolean((machineData as { factory_id: string | null; production_month: string | null })
+    .factory_id && (machineData as { factory_id: string | null; production_month: string | null }).production_month)
+  if (assigned) {
+    const { data: stages, error: stagesError } = await db.from('production_stages')
+      .select('id, stage_type, is_skipped').eq('machine_id', machineId)
+      .in('stage_type', ['galvanizing', 'post_galvanizing_cleaning', 'painting'])
+    if (stagesError) throw stagesError
+    for (const stage of (stages || []) as Array<{ id: string; stage_type: string; is_skipped: boolean }>) {
+      const desired = stage.stage_type === 'painting' ? !hasPainting : !hasZinc
+      if (stage.is_skipped === desired) continue
+      const staged = await stageProductionPlanChange({
+        target: 'stage', id: stage.id, stage_id: stage.id, fields: { is_skipped: desired },
+      })
+      if (!staged.success) throw new Error(staged.error || 'Не удалось обновить черновик этапа')
+    }
+    return
+  }
+
   const zincStages = ['galvanizing', 'post_galvanizing_cleaning']
   const { error: zincError } = await db
     .from('production_stages')
@@ -927,30 +930,48 @@ export async function getProductionMonthFilterOptions(factoryFilter?: string | n
 export async function moveMachineInProductionQueue(input: unknown) {
   try {
     const parsed = productionQueueMoveSchema.parse(input)
-    const { user } = await requireSalesPlanPermission('manage')
-    const admin = createAdminClient() as unknown as RpcClient
-    const { data, error } = await admin.rpc('reorder_machine_production_queue', {
-      p_machine_id: parsed.machineId,
-      p_target_factory_id: parsed.targetFactoryId,
-      p_target_workshop: parsed.targetWorkshop,
-      p_target_queue_number: parsed.targetQueueNumber,
-      p_changed_by: user.id,
+    await requireSalesPlanPermission('manage')
+    const admin = createAdminClient() as unknown as LooseDb
+    const { data: machine, error: machineError } = await admin.from('machines')
+      .select('id, name, factory_id, production_month, production_workshop, production_queue_number')
+      .eq('id', parsed.machineId).single()
+    if (machineError || !machine) throw new Error('Машина не найдена')
+    const current = machine as {
+      id: string; name: string; factory_id: string | null; production_month: string | null
+      production_workshop: number | null; production_queue_number: number | null
+    }
+    if (!current.factory_id || !current.production_month) throw new Error('Машина ещё не назначена в план месяца')
+    const staged = await stageProductionPlanChange({
+      target: 'machine', id: parsed.machineId,
+      fields: {
+        factory_id: parsed.targetFactoryId,
+        production_workshop: parsed.targetWorkshop,
+        production_queue_number: parsed.targetQueueNumber,
+      },
     })
+    if (!staged.success) throw new Error(staged.error || 'Не удалось изменить общий черновик')
 
-    if (error) throw new Error(error.message || 'Не удалось изменить очередь производства')
-    if (!data) throw new Error('Сервер не вернул результат изменения очереди')
+    const [currentFactoryName, targetFactoryName] = await Promise.all([
+      getFactoryName(admin, current.factory_id),
+      getFactoryName(admin, parsed.targetFactoryId),
+    ])
 
-    after(async () => {
-      await dispatchPendingTelegramDeliveries({ machineId: parsed.machineId }).catch((telegramError) => {
-        console.error('Не удалось отправить Telegram-уведомления об изменении очереди:', telegramError)
-      })
-    })
+    const data: ProductionQueueMoveResult = {
+      machineId: current.id,
+      machineName: current.name,
+      productionMonth: current.production_month,
+      before: { factoryId: current.factory_id, factoryName: currentFactoryName,
+        workshop: current.production_workshop ?? 1, queueNumber: current.production_queue_number ?? 1 },
+      after: { factoryId: parsed.targetFactoryId, factoryName: targetFactoryName,
+        workshop: parsed.targetWorkshop, queueNumber: parsed.targetQueueNumber },
+      message: 'Изменение очереди добавлено в общий черновик. Оно станет общим после «Обновить».',
+    }
 
     revalidatePath(ROUTES.SALES_PLAN)
     revalidatePath(`${ROUTES.SALES_PLAN}/${parsed.machineId}`)
     revalidatePath(ROUTES.PRODUCTION)
 
-    return { success: true as const, data: data as ProductionQueueMoveResult }
+    return { success: true as const, data }
   } catch (error: unknown) {
     return { success: false as const, error: getErrorMessage(error) }
   }
@@ -1283,8 +1304,8 @@ export async function createMachine(data: CreateMachineInput) {
       .from('machines')
       .insert({
         name: '',
-        factory_id: parsed.factory_id,
-        status: 'factory_assigned',
+        factory_id: null,
+        status: 'created',
         client_id: parsed.client_id,
         contract_id: parsed.contract_id || null,
         specification_number: parsed.specification_number || null,
@@ -1296,9 +1317,9 @@ export async function createMachine(data: CreateMachineInput) {
         material_type: 'undefined',
         is_confirmed: parsed.is_confirmed || false,
         desired_shipping_date: parsed.desired_shipping_date || null,
-        production_month: productionMonth,
-        production_workshop: productionWorkshop,
-        production_queue_number: productionQueueNumber,
+        production_month: null,
+        production_workshop: null,
+        production_queue_number: null,
         created_by: user.id
       } satisfies MachineInsert)
       .select()
@@ -1361,6 +1382,17 @@ export async function createMachine(data: CreateMachineInput) {
         const { error: expError } = await db.from('machine_expenses').insert(expToInsert satisfies MachineExpenseInsert[])
         if (expError) throw expError
       }
+
+      const staged = await stageProductionPlanChange({
+        target: 'machine', id: machineId,
+        fields: {
+          factory_id: parsed.factory_id,
+          production_month: productionMonth,
+          production_workshop: productionWorkshop,
+          production_queue_number: productionQueueNumber,
+        },
+      })
+      if (!staged.success) throw new Error(staged.error || 'Не удалось добавить машину в черновик плана')
       
     } catch (nestedError: unknown) {
       // Если добавление items/expenses упало, вручную откатываем машину
@@ -1369,9 +1401,8 @@ export async function createMachine(data: CreateMachineInput) {
     }
 
     await notifyDirectorsAboutNewMachine(supabase, machineId, newMachine.name)
-    await notifyProductionManagersAboutFactoryAssignment(supabase, parsed.factory_id, machineId, newMachine.name)
     await createPlanningDirectorReviewTasks(db, machineId, newMachine.name)
-    await notifyMachineEnteredReadyProductionPlan(machineId, user.id)
+    // Production notifications are dispatched when the shared plan is published.
     await syncTransportCostTask(db, machineId)
     await syncMaterialTypeTask(db, machineId)
     await ensureVrbApprovalTasksForMachine(machineId)
@@ -1552,13 +1583,6 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
     if (data.actual_material_date !== undefined) {
       throw new Error('Факт поставки материала заполняется автоматически после приемки всех материалов по заявке')
     }
-    if (
-      !hasPermission(context.permissions, 'production_reports', 'manage') &&
-      data.planned_material_date !== undefined &&
-      await isMachineInConfirmedProductionPlan(id)
-    ) {
-      throw new Error('План месяца подтверждён. Отправьте запрос на изменение дат руководителю отдела планирования.')
-    }
 
     const currentClientIdForPricing = data.client_id !== undefined || data.items !== undefined
       ? await getMachineClientId(db, id)
@@ -1588,7 +1612,6 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
     }
 
     let previousFactoryId: string | null | undefined
-    let machineNameForNotifications: string | undefined
     let currentProductionMonth: string | null | undefined
     let currentProductionWorkshop: number | null | undefined
     let currentProductionQueueNumber: number | null | undefined
@@ -1612,7 +1635,6 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
         production_queue_number: number | null
       }
       previousFactoryId = machine.factory_id
-      machineNameForNotifications = machine.name
       currentProductionMonth = machine.production_month
       currentProductionWorkshop = machine.production_workshop
       currentProductionQueueNumber = machine.production_queue_number
@@ -1675,6 +1697,15 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
       }
     }
 
+    const stagedPlanFields: Record<string, unknown> = {}
+    for (const field of ['factory_id', 'production_month', 'production_workshop',
+      'production_queue_number', 'planned_material_date'] as const) {
+      if (field in machineUpdates && (currentProductionMonth || nextProductionMonth)) {
+        stagedPlanFields[field] = machineUpdates[field]
+        delete machineUpdates[field]
+      }
+    }
+
     if (Object.keys(machineUpdates).length > 0) {
       const { error } = await db.from('machines')
         .update(machineUpdates)
@@ -1682,29 +1713,12 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
       
       if (error) throw error
 
-      const nextFactoryId = data.factory_id === 'none' ? null : data.factory_id
-      if (data.factory_id !== undefined && nextFactoryId && previousFactoryId !== nextFactoryId) {
-        await notifyProductionManagersAboutFactoryAssignment(
-          supabase,
-          nextFactoryId,
-          id,
-          machineNameForNotifications || 'Машина'
-        )
-      }
-
-      if (
-        data.factory_id !== undefined ||
-        data.material_type !== undefined ||
-        data.planned_material_date !== undefined
-      ) {
+      if (data.material_type !== undefined) {
         await notifyNewTasks(id)
       }
 
       if (data.material_type !== undefined) {
         await refreshMaterialUndefinedAgenda(supabase, data.material_type)
-      }
-      if (productionQueueGroupChanged) {
-        await notifyMachineEnteredReadyProductionPlan(id, user.id)
       }
     }
 
@@ -1943,6 +1957,13 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
       data.desired_shipping_date !== undefined
     ) {
       await syncTransportCostTask(db, id)
+    }
+
+    if (Object.keys(stagedPlanFields).length > 0) {
+      const staged = await stageProductionPlanChange({
+        target: 'machine', id, fields: stagedPlanFields,
+      })
+      if (!staged.success) throw new Error(staged.error || 'Не удалось сохранить черновик плана')
     }
 
     revalidatePath(ROUTES.SALES_PLAN)

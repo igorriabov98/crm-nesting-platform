@@ -11,6 +11,9 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { loadVrbMeshStatuses, type VrbMeshStatus } from '@/lib/vrb/status'
 import { aggregateGanttMaterialItems } from '@/lib/production/gantt-material-items'
 import type { StageType } from '@/lib/types'
+import { assertProductionDraftMachineAccess } from '@/lib/production-plan-draft-access'
+import { canAccessAllFactories } from '@/lib/permissions/factory-scope'
+import { hasPermission } from '@/lib/permissions/resources'
 
 export type GanttStageStatus = 'not_planned' | 'active' | 'completed' | 'overdue'
 
@@ -678,9 +681,12 @@ export async function getGanttData(
     stageTypes?: string[]
     search?: string
     showSupply?: boolean
-  }
+  },
+  draftMachineIds: string[] = [],
 ): Promise<GanttData> {
-  const { supabase, factoryId: userFactoryId, role: userRole } = await requirePermission('production', 'view')
+  const permission = await requirePermission('production', 'view')
+  await assertProductionDraftMachineAccess(permission, factoryFilter, draftMachineIds)
+  const { supabase, factoryId: userFactoryId, role: userRole } = permission
 
   const selectWithDeadline = `
     id, name, created_at, total_weight, factory_id, production_month, production_workshop,
@@ -717,12 +723,19 @@ export async function getGanttData(
       .select(columns)
       .eq('is_archived', false)
 
-    if (userRole === 'production_manager') {
-      builtQuery = applyProductionManagerFactoryScope(builtQuery, userFactoryId)
+    if (!canAccessAllFactories(permission, 'production', 'view')) {
+      if (!userFactoryId) throw new Error('Не определён доступный завод')
+      builtQuery = userRole === 'production_manager' && hasPermission(permission.permissions, 'production', 'manage')
+        ? applyProductionManagerFactoryScope(builtQuery, userFactoryId)
+        : builtQuery.eq('factory_id', userFactoryId)
     } else if (factoryFilter && factoryFilter !== 'all') {
-      builtQuery = builtQuery.eq('factory_id', factoryFilter)
+      builtQuery = draftMachineIds.length > 0
+        ? builtQuery.or(`factory_id.eq.${factoryFilter},id.in.(${draftMachineIds.join(',')})`)
+        : builtQuery.eq('factory_id', factoryFilter)
     } else {
-      builtQuery = builtQuery.not('factory_id', 'is', null)
+      builtQuery = draftMachineIds.length > 0
+        ? builtQuery.or(`factory_id.not.is.null,id.in.(${draftMachineIds.join(',')})`)
+        : builtQuery.not('factory_id', 'is', null)
     }
 
     return builtQuery.order('created_at', { ascending: false })
