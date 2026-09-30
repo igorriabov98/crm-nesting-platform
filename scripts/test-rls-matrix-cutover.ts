@@ -248,6 +248,7 @@ assert.deepEqual(
     '20260924140000_future_scrap_fact_and_metal_weight.sql',
     '20260925120000_stock_material_requests.sql',
     '20260927172954_inventory_history_display_category.sql',
+    '20260929180000_production_plan_versions.sql',
 
   ],
   'После cutover разрешены только проверенные follow-up миграции',

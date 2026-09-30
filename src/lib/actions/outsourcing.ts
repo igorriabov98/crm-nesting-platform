@@ -5,6 +5,7 @@ import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { stageProductionPlanChange } from '@/lib/actions/production-plan-versions'
 import { ACTIVE_OUTSOURCING_NEED_STATUSES, isMachineWorkVisible } from '@/lib/machine-work-visibility'
 import { requirePermission } from '@/lib/permissions/server'
 import { hasPermission } from '@/lib/permissions/resources'
@@ -1027,55 +1028,6 @@ async function loadOperationsForSourcePlan(db: LooseDb, factoryId: string, produ
     }))
 }
 
-async function syncConfirmedTransportForIncomingPlan(db: LooseDb, operationId: string) {
-  const { data: rawOperationData, error: operationError } = await db
-    .from('machine_outsourcing_operations')
-    .select('*')
-    .eq('id', operationId)
-    .maybeSingle()
-  if (operationError || !rawOperationData) {
-    throw new Error(operationError?.message || 'Не удалось загрузить входящую работу для транспорта')
-  }
-
-  const [operation] = await hydrateOperations(
-    db,
-    [rawOperationData as Record<string, unknown> & { id: string; machine_id: string }],
-  )
-  if (!operation || operation.executor_type !== 'factory') return
-
-  const machine = await getMachineOrThrow(db, operation.machine_id)
-  let sourceFactoryName: string | null = null
-  if (machine.factory_id) {
-    const { data: factoryData, error: factoryError } = await db
-      .from('factories')
-      .select('id, name')
-      .eq('id', machine.factory_id)
-      .maybeSingle()
-    if (factoryError) throw new Error(factoryError.message || 'Не удалось загрузить исходный завод')
-    sourceFactoryName = (factoryData as { name?: string } | null)?.name || null
-  }
-
-  const enrichedOperation = {
-    ...operation,
-    machine_name: machine.name,
-    source_factory_name: sourceFactoryName,
-  }
-  const supplyHeadId = await findSupplyDepartmentHead(db)
-
-  if (operation.incoming_date_start) {
-    await createNeedAndTask(db, enrichedOperation, 'outbound', 'confirmed', supplyHeadId)
-  } else {
-    await cancelActiveTransportNeed(db, operation.id, 'outbound', 'confirmed')
-  }
-  if (operation.incoming_date_end) {
-    await createNeedAndTask(db, enrichedOperation, 'return', 'confirmed', supplyHeadId)
-  } else {
-    await cancelActiveTransportNeed(db, operation.id, 'return', 'confirmed')
-  }
-
-  await dispatchPendingTelegramDeliveries({ userId: supplyHeadId })
-}
-
 async function syncConfirmedTransportForSupplierOperation(db: LooseDb, operationId: string) {
   const { data: rawOperationData, error: operationError } = await db
     .from('machine_outsourcing_operations')
@@ -1363,15 +1315,6 @@ export async function saveOutsourcingOperation(input: z.infer<typeof operationSc
       if (!current) throw new Error('Операция аутсорсинга не найдена')
     }
 
-    if (current && !hasPermission(context.permissions, 'sales_plan', 'manage') && planStatus === 'confirmed') {
-      if (
-        (dateOnly(current.planned_send_date) !== dateOnly(parsed.plannedSendDate) ||
-          dateOnly(current.planned_return_date) !== dateOnly(parsed.plannedReturnDate))
-      ) {
-        throw new Error('План месяца подтверждён. Отправьте запрос на изменение дат аутсорсинга руководителю отдела планирования.')
-      }
-    }
-
     const workTypeId = await resolveWorkTypeId(db, parsed.workTypeId, parsed.workTypeName)
     const itemIds = await ensureSelectedItemsBelongToMachine(db, parsed.machineId, parsed.itemIds)
     const payload: Record<string, unknown> = {
@@ -1383,8 +1326,8 @@ export async function saveOutsourcingOperation(input: z.infer<typeof operationSc
       responsible: parsed.executorType === 'supplier' ? responsible : 'production',
       executor_factory_id: parsed.executorType === 'factory' ? parsed.executorFactoryId : null,
       note: parsed.note || null,
-      planned_send_date: dateOnly(parsed.plannedSendDate),
-      planned_return_date: dateOnly(parsed.plannedReturnDate),
+      planned_send_date: current?.planned_send_date ?? null,
+      planned_return_date: current?.planned_return_date ?? null,
       updated_by: context.userId,
       updated_at: new Date().toISOString(),
     }
@@ -1394,7 +1337,7 @@ export async function saveOutsourcingOperation(input: z.infer<typeof operationSc
       || current.supplier_id !== (parsed.executorType === 'supplier' ? parsed.supplierId || null : null)
       || current.responsible !== (parsed.executorType === 'supplier' ? responsible : 'production')
     ))
-    if (current && (supplyScopeChanged || dateOnly(current.planned_return_date) !== dateOnly(parsed.plannedReturnDate))) {
+    if (current && supplyScopeChanged) {
       payload.supply_terms_confirmed_at = null
       payload.supply_terms_confirmed_by = null
     }
@@ -1418,6 +1361,22 @@ export async function saveOutsourcingOperation(input: z.infer<typeof operationSc
       operationId = (data as { id: string }).id
     }
 
+    const plannedSendDate = dateOnly(parsed.plannedSendDate)
+    const plannedReturnDate = dateOnly(parsed.plannedReturnDate)
+    let datesStaged = false
+    if (operationId && (!current || dateOnly(current.planned_send_date) !== plannedSendDate ||
+        dateOnly(current.planned_return_date) !== plannedReturnDate)) {
+      const staged = await stageProductionPlanChange({
+        target: 'outsourcing', id: operationId,
+        fields: { planned_send_date: plannedSendDate, planned_return_date: plannedReturnDate },
+      })
+      if (!staged.success) {
+        if (!current) await db.from('machine_outsourcing_operations').delete().eq('id', operationId)
+        throw new Error(staged.error || 'Не удалось сохранить даты аутсорсинга в черновик')
+      }
+      datesStaged = true
+    }
+
     const { error: deleteItemsError } = await db.from('machine_outsourcing_operation_items').delete().eq('operation_id', operationId)
     if (deleteItemsError) throw new Error(deleteItemsError.message || 'Не удалось обновить товары аутсорсинга')
     const { error: insertItemsError } = await db
@@ -1435,7 +1394,7 @@ export async function saveOutsourcingOperation(input: z.infer<typeof operationSc
     }
 
     const productionMonth = normalizeMonthOrNull(machine.production_month)
-    if (machine.factory_id && productionMonth && planStatus !== 'draft') {
+    if (machine.factory_id && productionMonth && planStatus !== 'draft' && !datesStaged) {
       await syncOutsourcingTransportForProductionPlan(
         machine.factory_id,
         productionMonth,
@@ -1526,7 +1485,8 @@ export async function upsertZincOutsourcingDefault(input: z.infer<typeof zincDef
   }
 }
 
-async function syncZincOperation(db: LooseDb, machineId: string, stageDates: { dateStart?: string | null; dateEnd?: string | null }, actorUserId?: string | null) {
+async function syncZincOperation(db: LooseDb, machineId: string, stageDates: { dateStart?: string | null; dateEnd?: string | null }, actorUserId?: string | null,
+  options: { onlyIfMissing?: boolean; deferTransport?: boolean } = {}) {
   const machine = await getMachineOrThrow(db, machineId)
   if (!machine.factory_id) return
 
@@ -1550,6 +1510,7 @@ async function syncZincOperation(db: LooseDb, machineId: string, stageDates: { d
     .maybeSingle()
   if (currentError) throw new Error(currentError.message || 'Не удалось проверить операцию цинка')
   const current = currentData as { id: string } | null
+  if (current && options.onlyIfMissing) return
 
   const payload = {
     machine_id: machine.id,
@@ -1587,7 +1548,20 @@ async function syncZincOperation(db: LooseDb, machineId: string, stageDates: { d
     .insert(zincItems.map((item) => ({ operation_id: operationId, machine_item_id: item.id })))
   if (itemsError) throw new Error(itemsError.message || 'Не удалось сохранить товары цинка')
 
-  await syncOutsourcingTransportForMachine(db, machine)
+  if (!options.deferTransport) await syncOutsourcingTransportForMachine(db, machine)
+}
+
+export async function ensureZincOutsourcingOperationForDraft(machineId: string, actorUserId: string) {
+  const db = dbFrom(createAdminClient())
+  const { data, error } = await db.from('production_stages')
+    .select('date_start, date_end').eq('machine_id', machineId)
+    .eq('stage_type', 'galvanizing').maybeSingle()
+  if (error) throw new Error(error.message)
+  const stage = data as { date_start: string | null; date_end: string | null } | null
+  if (!stage) return
+  await syncZincOperation(db, machineId,
+    { dateStart: stage.date_start, dateEnd: stage.date_end }, actorUserId,
+    { onlyIfMissing: true, deferTransport: true })
 }
 
 export async function syncZincOutsourcingFromStage(
@@ -1623,7 +1597,8 @@ export async function syncZincOutsourcingForMachine(machineId: string) {
 
 export async function getProductionOutsourcingSummary(factoryId: string): Promise<{ data: ProductionOutsourcingSummary; error: string | null }> {
   try {
-    await requirePermission('production', 'view')
+    const context = await requirePermission('production', 'view')
+    assertFactoryAccess(context, 'production', 'view', factoryId)
     const db = dbFrom(createAdminClient())
     const [{ data: outgoingMachinesData, error: outgoingMachinesError }, { data: incomingData, error: incomingError }] = await Promise.all([
       db.from('machines').select('id, name, factory_id').eq('factory_id', factoryId).eq('is_archived', false),
@@ -1686,40 +1661,24 @@ export async function getProductionOutsourcingSummary(factoryId: string): Promis
 export async function updateIncomingOutsourcingPlan(input: z.infer<typeof incomingPlanSchema>) {
   try {
     const parsed = incomingPlanSchema.parse(input)
-    const { db, context, operation } = await requireExecutorFactoryAccess(parsed.operationId)
+    const { operation } = await requireExecutorFactoryAccess(parsed.operationId)
     if (parsed.incomingDateStart && parsed.incomingDateEnd && parsed.incomingDateEnd < parsed.incomingDateStart) {
       throw new Error('Дата окончания не может быть раньше даты начала')
     }
     const month = normalizeMonthOrNull(parsed.incomingProductionMonth || null)
-    const { error } = await db
-      .from('machine_outsourcing_operations')
-      .update({
+    const staged = await stageProductionPlanChange({
+      target: 'outsourcing', id: operation.id,
+      fields: {
         incoming_production_month: month,
         incoming_workshop: parsed.incomingWorkshop ?? null,
         incoming_queue_number: parsed.incomingQueueNumber ?? null,
         incoming_date_start: dateOnly(parsed.incomingDateStart),
         incoming_date_end: dateOnly(parsed.incomingDateEnd),
-        updated_by: context.userId,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', operation.id)
-    if (error) throw new Error(error.message || 'Не удалось обновить входящую работу')
-
-    await syncConfirmedTransportForIncomingPlan(db, operation.id)
-    await createSystemMachineChatMessage({
-      machineId: operation.machine_id,
-      body: parsed.incomingDateStart && parsed.incomingDateEnd
-        ? `Принимающий завод подтвердил даты аутсорсинга: ${formatDate(parsed.incomingDateStart)} — ${formatDate(parsed.incomingDateEnd)}. Создан запрос на транспорт.`
-        : 'Принимающий завод обновил план входящей работы аутсорсинга.',
-      eventKey: `outsourcing_incoming_plan:${operation.id}:${parsed.incomingDateStart || 'none'}:${parsed.incomingDateEnd || 'none'}`,
-      excludeUserId: context.userId,
+      },
     })
+    if (!staged.success) throw new Error(staged.error || 'Не удалось сохранить входящую работу в черновик')
     revalidatePath(ROUTES.PRODUCTION)
     revalidatePath(ROUTES.PRODUCTION_OUTSOURCING_REQUESTS)
-    revalidatePath(ROUTES.SUPPLY_OUTSOURCING_REQUESTS)
-    revalidatePath(ROUTES.SUPPLY_TRANSPORT)
-    revalidatePath(ROUTES.TASKS)
-    revalidatePath(`${ROUTES.SALES_PLAN}/${operation.machine_id}`)
     return { success: true, error: null }
   } catch (error) {
     return { success: false, error: getErrorMessage(error) }
@@ -2395,8 +2354,6 @@ export async function confirmOutsourcingServiceTerms(input: z.infer<typeof suppl
     const now = new Date().toISOString()
     const updatePayload: Record<string, unknown> = {
       supplier_id: supplierId,
-      planned_send_date: plannedSendDate,
-      planned_return_date: parsed.plannedReturnDate,
       service_cost_planned: parsed.serviceCostPlanned ?? null,
       supply_terms_confirmed_at: now,
       supply_terms_confirmed_by: context.userId,
@@ -2423,6 +2380,12 @@ export async function confirmOutsourcingServiceTerms(input: z.infer<typeof suppl
       .eq('id', operation.id)
     if (updateError) throw new Error(updateError.message || 'Не удалось подтвердить условия аутсорсинга')
 
+    const staged = await stageProductionPlanChange({
+      target: 'outsourcing', id: operation.id,
+      fields: { planned_send_date: plannedSendDate, planned_return_date: parsed.plannedReturnDate },
+    })
+    if (!staged.success) throw new Error(staged.error || 'Не удалось сохранить даты в черновик плана')
+
     if (isVrb && operation.approval_task_id) {
       const { error: taskError } = await db
         .from('tasks')
@@ -2431,12 +2394,7 @@ export async function confirmOutsourcingServiceTerms(input: z.infer<typeof suppl
       if (taskError) throw new Error(taskError.message || 'Не удалось завершить задачу согласования VRB')
     }
 
-    if (operation.responsible === 'supply') {
-      await syncConfirmedTransportForSupplierOperation(db, operation.id)
-    } else {
-      const machine = await getMachineOrThrow(db, operation.machine_id)
-      await syncOutsourcingTransportForMachine(db, machine)
-    }
+    // Transport needs for changed planned dates are generated after publication.
     revalidatePath(ROUTES.SUPPLY_TRANSPORT)
     revalidatePath(ROUTES.SUPPLY_OUTSOURCING_REQUESTS)
     revalidatePath(ROUTES.PRODUCTION)

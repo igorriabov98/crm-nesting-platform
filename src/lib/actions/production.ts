@@ -2,16 +2,15 @@
 
 import { revalidatePath } from 'next/cache'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
-import { hasPermission } from '@/lib/permissions/resources'
 import { ROUTES } from '@/lib/constants/routes'
 import { isZincCoating } from '@/lib/constants/coatings'
 import { STAGE_ORDER, stageHasSingleDate, stageHasWorkshop, stageSupportsIntervals } from '@/lib/constants/stages'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
-import { syncZincOutsourcingFromStage } from '@/lib/actions/outsourcing'
+import { ensureZincOutsourcingOperationForDraft, syncZincOutsourcingFromStage } from '@/lib/actions/outsourcing'
 import { promoteShippedProjectSamplesToProducts } from '@/lib/actions/products'
-import { isMachineInConfirmedProductionPlan, notifyProductionPlanShippingDateChanged } from '@/lib/actions/production-plan'
+import { notifyProductionPlanShippingDateChanged } from '@/lib/actions/production-plan'
+import { stageProductionPlanChange } from '@/lib/actions/production-plan-versions'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import { promoteDueFutureBusinessScrap } from '@/lib/inventory/secure-rpc'
 import { normalizeNightShiftDates, primaryNightShiftDate } from '@/lib/utils/night-shift-dates'
@@ -35,6 +34,7 @@ type MachineDateField =
   | 'delivery_to_client_date'
 type ProductionMutationOptions = {
   revalidate?: boolean
+  expectedDraftRevision?: number
 }
 export type ProductionStageIntervalMutation = {
   operation: 'create' | 'update' | 'delete'
@@ -195,7 +195,7 @@ async function requireAuth() {
 
 export async function updateProductionStage(stageId: string, data: ProductionStageUpdate, options: ProductionMutationOptions = {}) {
   try {
-    const { supabase, user, permissions } = await requireAuth()
+    const { supabase, user } = await requireAuth()
     data = { ...data }
 
     if ('manual_overdue' in data) {
@@ -228,16 +228,6 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
     const machine = stageObj.machines
     if (!machine) throw new Error('Машина не найдена')
     if (machine.is_archived) throw new Error('Машина архивирована. Действия с ней остановлены.')
-    const dateFields = ['date_start', 'date_end', 'night_shift_date', 'night_shift_dates'] as const
-    const changesPlanDate = dateFields.some((field) => field in data)
-    if (
-      !hasPermission(permissions, 'sales_plan', 'manage') &&
-      changesPlanDate &&
-      await isMachineInConfirmedProductionPlan(stageObj.machine_id)
-    ) {
-      throw new Error('План месяца подтверждён. Отправьте запрос на изменение дат руководителю отдела планирования.')
-    }
-
     if (data.is_skipped === true && stageObj.stage_type === 'galvanizing') {
       const { data: machineItemsData, error: itemsErr } = await supabase
         .from('machine_items')
@@ -320,6 +310,24 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
       })
     }
 
+    const planFields = ['date_start', 'date_end', 'workshop', 'is_skipped',
+      'is_night_shift', 'night_shift_date', 'night_shift_dates'] as const
+    if (stageObj.stage_type !== 'actual_shipping' &&
+      Object.keys(data).some((field) => planFields.includes(field as typeof planFields[number]))) {
+      if (Object.keys(data).some((field) => !planFields.includes(field as typeof planFields[number]))) {
+        throw new Error('Плановые и фактические поля нужно изменять отдельно')
+      }
+      if (stageObj.stage_type === 'galvanizing' && ('date_start' in data || 'date_end' in data)) {
+        await ensureZincOutsourcingOperationForDraft(stageObj.machine_id, user.id)
+      }
+      const staged = await stageProductionPlanChange({
+        target: 'stage', id: stageId, stage_id: stageId,
+        fields: data as Record<string, unknown>,
+      }, options.expectedDraftRevision)
+      if (!staged.success) throw new Error(staged.error || 'Не удалось сохранить черновик плана')
+      return { success: true, draftRevision: staged.revision }
+    }
+
     const { error: updateErr } = await supabase
       .from('production_stages')
       .update(data as never)
@@ -382,7 +390,7 @@ export async function mutateProductionStageInterval(
   options: ProductionMutationOptions = {},
 ) {
   try {
-    const { supabase, user, permissions } = await requireAuth()
+    const { supabase } = await requireAuth()
     const { data: stage, error: stageError } = await supabase
       .from('production_stages')
       .select('id, machine_id, stage_type, date_start, date_end, machines(factory_id, is_archived)')
@@ -399,9 +407,6 @@ export async function mutateProductionStageInterval(
     if (!stageSupportsIntervals(selectedStage.stage_type)) throw new Error('Этот этап нельзя делить на подходы')
     if (!selectedStage.machines) throw new Error('Машина не найдена')
     if (selectedStage.machines.is_archived) throw new Error('Машина архивирована. Действия с ней остановлены.')
-    if (!hasPermission(permissions, 'sales_plan', 'manage') && await isMachineInConfirmedProductionPlan(selectedStage.machine_id)) {
-      throw new Error('План месяца подтверждён. Отправьте запрос на изменение подходов руководителю отдела планирования.')
-    }
 
     const dateStart = dateOnly(mutation.dateStart)
     const dateEnd = dateOnly(mutation.dateEnd)
@@ -409,51 +414,14 @@ export async function mutateProductionStageInterval(
       throw new Error('Дата окончания подхода не может быть раньше даты начала')
     }
 
-    const rpc = createAdminClient() as unknown as {
-      rpc: (fn: 'fn_mutate_production_stage_interval', args: {
-        p_operation: string
-        p_stage_id: string
-        p_interval_id: string | null
-        p_date_start: string | null
-        p_date_end: string | null
-        p_workshop: number | null
-        p_updated_by: string
-      }) => Promise<{ data: string | null; error: { message: string } | null }>
-    }
-    const { data: intervalId, error } = await rpc.rpc('fn_mutate_production_stage_interval', {
-      p_operation: mutation.operation,
-      p_stage_id: stageId,
-      p_interval_id: mutation.intervalId ?? null,
-      p_date_start: dateStart,
-      p_date_end: dateEnd,
-      p_workshop: selectedStage.stage_type === 'assembly' ? (mutation.workshop ?? null) : null,
-      p_updated_by: user.id,
-    })
-    if (error) throw error
-
-    const { data: allStages, error: allStagesError } = await supabase
-      .from('production_stages')
-      .select('id, stage_type, date_start, date_end, is_skipped')
-      .eq('machine_id', selectedStage.machine_id)
-    if (allStagesError) throw allStagesError
-    validateStageDates((allStages ?? []) as StageDateRow[], stageId)
-
-    if (selectedStage.stage_type === 'cutting') {
-      try {
-        await promoteDueFutureBusinessScrap()
-      } catch {
-        // Calendar editing must not fail if best-effort scrap promotion is temporarily unavailable.
-      }
-      revalidatePath(ROUTES.INVENTORY)
-    }
-
-    if (options.revalidate !== false) {
-      revalidatePath(ROUTES.PRODUCTION)
-      revalidatePath(ROUTES.GANTT)
-      revalidatePath(ROUTES.DASHBOARD)
-      revalidatePath(`${ROUTES.SALES_PLAN}/${selectedStage.machine_id}`)
-    }
-    return { success: true, intervalId, error: null }
+    const intervalId = mutation.intervalId || crypto.randomUUID()
+    const staged = await stageProductionPlanChange({
+      target: 'interval', id: intervalId, stage_id: stageId,
+      fields: { operation: mutation.operation, date_start: dateStart,
+        date_end: dateEnd, workshop: mutation.workshop ?? null },
+    }, options.expectedDraftRevision)
+    if (!staged.success) throw new Error(staged.error || 'Не удалось сохранить черновик подхода')
+    return { success: true, intervalId, draftRevision: staged.revision, error: null }
   } catch (error: unknown) {
     return { success: false, intervalId: null, error: getErrorMessage(error) }
   }
@@ -466,7 +434,7 @@ export async function updateMachineDate(
   options: ProductionMutationOptions = {}
 ) {
   try {
-    const { supabase, permissions } = await requireAuth()
+    const { supabase } = await requireAuth()
 
     if (field === 'actual_material_date') {
       throw new Error('Факт поставки материала заполняется автоматически после приемки всех материалов по заявке')
@@ -485,12 +453,12 @@ export async function updateMachineDate(
     if (field === 'actual_shipping_date' && dateValue && dateValue < todayDateOnly()) {
       throw new Error('Факт отгрузки нельзя поставить раньше сегодняшнего дня')
     }
-    if (
-      !hasPermission(permissions, 'sales_plan', 'manage') &&
-      field === 'planned_material_date' &&
-      await isMachineInConfirmedProductionPlan(machineId)
-    ) {
-      throw new Error('План месяца подтверждён. Отправьте запрос на изменение дат руководителю отдела планирования.')
+    if (field === 'planned_material_date') {
+      const staged = await stageProductionPlanChange({
+        target: 'machine', id: machineId, fields: { planned_material_date: dateValue },
+      }, options.expectedDraftRevision)
+      if (!staged.success) throw new Error(staged.error || 'Не удалось сохранить черновик плана')
+      return { success: true, draftRevision: staged.revision, error: null }
     }
 
     const updateData: MachineUpdate = { [field]: dateValue }

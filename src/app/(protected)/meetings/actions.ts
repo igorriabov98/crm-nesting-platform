@@ -7,6 +7,7 @@ import { getCommercialVisibilityForClients } from '@/lib/permissions/commercial-
 import { isFactoryWorkshopAllowed } from '@/lib/constants/factory-workshops'
 import { MEETINGS_LIST_LIMIT } from '@/lib/constants/meetings-performance'
 import { requirePermission } from '@/lib/permissions/server'
+import { stageProductionPlanChange } from '@/lib/actions/production-plan-versions'
 import { dispatchPendingTelegramDeliveries, notifyNewTasks } from '@/lib/services/task-notifications'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import type {
@@ -1970,8 +1971,22 @@ export async function addDecision(meetingId: string, data: AddDecisionInput) {
     if (decError) throw decError
 
     if (data.machine_id) {
-      const updates: { factory_id?: string; status?: 'factory_assigned'; material_type?: MaterialType } = {}
+      let plannedAssignment = false
       if (data.assigned_factory_id) {
+        const { data: machineData, error: machineError } = await db.from('machines')
+          .select('production_month').eq('id', data.machine_id).single()
+        if (machineError) throw machineError
+        if ((machineData as { production_month: string | null }).production_month) {
+          const staged = await stageProductionPlanChange({
+            target: 'machine', id: data.machine_id,
+            fields: { factory_id: data.assigned_factory_id },
+          })
+          if (!staged.success) throw new Error(staged.error || 'Не удалось изменить черновик плана')
+          plannedAssignment = true
+        }
+      }
+      const updates: { factory_id?: string; status?: 'factory_assigned'; material_type?: MaterialType } = {}
+      if (data.assigned_factory_id && !plannedAssignment) {
         updates.factory_id = data.assigned_factory_id
         updates.status = 'factory_assigned'
       }
@@ -2132,12 +2147,16 @@ export async function planMaterialFromAgenda(
     const { error: machineError } = await db
       .from('machines')
       .update({
-        planned_material_date: input.planned_material_date,
         material_type: input.material_type,
       })
       .eq('id', input.machine_id)
 
     if (machineError) throw machineError
+    const staged = await stageProductionPlanChange({
+      target: 'machine', id: input.machine_id,
+      fields: { planned_material_date: input.planned_material_date },
+    })
+    if (!staged.success) throw new Error(staged.error || 'Не удалось сохранить дату в черновик плана')
 
     const { data: decisionData, error: decisionError } = await db
       .from('meeting_decisions')
@@ -2145,7 +2164,7 @@ export async function planMaterialFromAgenda(
         meeting_id: meetingId,
         machine_id: input.machine_id,
         assigned_material_type: input.material_type,
-        decision_text: `Запланирована поставка материала на ${input.planned_material_date}. Тип материала: ${input.material_type}.`,
+        decision_text: `Дата поставки материала внесена в черновик плана. Тип материала: ${input.material_type}.`,
       })
       .select('id')
       .single()
@@ -2246,6 +2265,23 @@ export async function checkNewMachineFromAgenda(
       }
     }
 
+    if (machine.production_month) {
+      const plannedFields: Record<string, unknown> = {}
+      for (const field of ['factory_id', 'production_workshop', 'production_queue_number'] as const) {
+        if (field in updates) {
+          plannedFields[field] = updates[field]
+          delete updates[field]
+        }
+      }
+      delete updates.status
+      if (Object.keys(plannedFields).length > 0) {
+        const staged = await stageProductionPlanChange({
+          target: 'machine', id: input.machine_id, fields: plannedFields,
+        })
+        if (!staged.success) throw new Error(staged.error || 'Не удалось изменить черновик плана')
+      }
+    }
+
     if (Object.keys(updates).length > 0) {
       const { error: updateError } = await db
         .from('machines')
@@ -2290,11 +2326,20 @@ export async function assignFactoryDirectly(machineId: string, factoryId: string
     const { db, isDirector } = await requireAuth()
     if (!isDirector) throw new Error('Нет прав')
 
-    const { error: machError } = await db.from('machines').update({
-      factory_id: factoryId,
-      status: 'factory_assigned',
-      material_type: materialType
-    }).eq('id', machineId)
+    const { data: machineData, error: machineLookupError } = await db.from('machines')
+      .select('production_month').eq('id', machineId).single()
+    if (machineLookupError) throw machineLookupError
+    const plannedAssignment = Boolean((machineData as { production_month: string | null }).production_month)
+    if (plannedAssignment) {
+      const staged = await stageProductionPlanChange({
+        target: 'machine', id: machineId, fields: { factory_id: factoryId },
+      })
+      if (!staged.success) throw new Error(staged.error || 'Не удалось изменить черновик плана')
+    }
+    const { error: machError } = await db.from('machines').update(plannedAssignment
+      ? { material_type: materialType }
+      : { factory_id: factoryId, status: 'factory_assigned', material_type: materialType })
+      .eq('id', machineId)
     if (machError) throw machError
 
     await notifyNewTasks(machineId)

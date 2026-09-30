@@ -6,6 +6,7 @@ import { ru } from 'date-fns/locale'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
+import { assertFactoryAccess } from '@/lib/permissions/factory-scope'
 import { ROUTES } from '@/lib/constants/routes'
 import { STAGES } from '@/lib/constants/stages'
 import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
@@ -14,7 +15,7 @@ import { promoteDueFutureBusinessScrap } from '@/lib/inventory/secure-rpc'
 import { getStageIntervalSequenceError, intervalPayloadEquals, type ProductionStageIntervalValue } from '@/lib/production-stage-intervals'
 import { createSystemMachineChatMessage } from '@/lib/actions/machine-activity'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
-import { getIncomingOutsourcingPlanBlockers, syncOutsourcingTransportForProductionPlan, syncZincOutsourcingFromStage } from '@/lib/actions/outsourcing'
+import { ensureZincOutsourcingOperationForDraft, getIncomingOutsourcingPlanBlockers, syncOutsourcingTransportForProductionPlan, syncZincOutsourcingFromStage } from '@/lib/actions/outsourcing'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import type { ProductionDateChangeRequestStatus, ProductionMonthPlanStatus, StageType, TaskStatus, TaskType } from '@/lib/types'
 
@@ -44,6 +45,7 @@ export type ProductionMonthPlanSummary = {
   status: ProductionMonthPlanStatus
   preliminary_ready_at: string | null
   confirmed_at: string | null
+  published_version_number: number
 }
 
 type ProductionPlanDateFieldChangeInput = {
@@ -448,12 +450,13 @@ async function findPlanningDepartmentHead(db: LooseDb) {
 
 export async function getProductionMonthPlans(factoryId: string): Promise<{ data: ProductionMonthPlanSummary[]; error: string | null }> {
   try {
-    await requirePermission('production', 'view')
+    const context = await requirePermission('production', 'view')
+    assertFactoryAccess(context, 'production', 'view', factoryId)
 
     const db = dbFrom(createAdminClient())
     const { data, error } = await db
       .from('production_month_plans')
-      .select('id, factory_id, production_month, status, preliminary_ready_at, confirmed_at')
+      .select('id, factory_id, production_month, status, preliminary_ready_at, confirmed_at, published_version_number')
       .eq('factory_id', factoryId)
       .order('production_month', { ascending: false })
 
@@ -469,6 +472,7 @@ export async function markProductionMonthPlanStatus(factoryId: string, productio
     const nextStatus = planStatusSchema.parse(nextStatusValue)
     const productionMonth = normalizeMonthOrThrow(productionMonthValue)
     const context = await requireProductionManage()
+    assertFactoryAccess(context, 'production', 'manage', factoryId)
     const db = dbFrom(createAdminClient())
     const plan = await ensurePlan(db, factoryId, productionMonth, context.userId)
 
@@ -494,24 +498,16 @@ export async function markProductionMonthPlanStatus(factoryId: string, productio
       }
     }
 
-    const now = new Date().toISOString()
-    const updates: Record<string, unknown> = { status: nextStatus }
-    if (nextStatus === 'preliminary_ready') {
-      updates.preliminary_ready_at = plan.preliminary_ready_at || now
-      updates.preliminary_ready_by = plan.preliminary_ready_by || context.userId
-    }
-    if (nextStatus === 'confirmed') {
-      updates.preliminary_ready_at = plan.preliminary_ready_at || now
-      updates.preliminary_ready_by = plan.preliminary_ready_by || context.userId
-      updates.confirmed_at = now
-      updates.confirmed_by = context.userId
-    }
-
+    const changed = await db.rpc('fn_set_production_plan_version_status', {
+      p_plan_id: plan.id,
+      p_status: nextStatus,
+      p_actor: context.userId,
+    })
+    if (changed.error) throw new Error(changed.error.message || 'Не удалось изменить статус плана')
     const { data, error } = await db
       .from('production_month_plans')
-      .update(updates)
-      .eq('id', plan.id)
       .select('*')
+      .eq('id', plan.id)
       .single()
 
     if (error || !data) throw new Error(error?.message || 'Не удалось обновить статус плана')
@@ -1069,6 +1065,11 @@ export async function decideProductionPlanDateChangeRequest(input: {
       return { success: true, outcome: 'conflicted' as const, error: null }
     }
 
+    if (items.some((item) => item.stage_type === 'galvanizing' && (
+      item.field_name === 'date_start' || item.field_name === 'date_end'
+    ))) {
+      await ensureZincOutsourcingOperationForDraft(request.machine.id, context.userId)
+    }
     await applyRequestItems(db, request.id, context.userId, parsed.comment || null)
     if (items.some((item) => item.stage_type === 'cutting' && (
       item.target_type === 'stage_interval' || item.field_name === 'date_start'

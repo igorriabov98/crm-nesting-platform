@@ -49,6 +49,7 @@ import {
   type ProductionPlanStageIntervalChangeInput,
 } from '@/lib/actions/production-plan'
 import type { ProductionOutsourcingSummaryOperation } from '@/lib/actions/outsourcing'
+import type { ProductionPlanDraftSummary } from '@/lib/actions/production-plan-versions'
 import { useRole } from '@/lib/hooks/useRole'
 import { ROUTES } from '@/lib/constants/routes'
 import { barGeometry, generateDateScale, type GanttScale } from '@/lib/utils/gantt'
@@ -73,6 +74,8 @@ interface ProductionPlannerProps {
   productionData: ProductionRow[]
   outsourcingOperations?: ProductionOutsourcingSummaryOperation[]
   monthPlans?: ProductionMonthPlanSummary[]
+  drafts?: ProductionPlanDraftSummary[]
+  canManageFactory?: boolean
   filters?: GanttFilters
   onFiltersChange?: (filters: GanttFilters) => void
   height?: string
@@ -1749,14 +1752,16 @@ export function ProductionPlanner({
   productionData,
   outsourcingOperations = [],
   monthPlans = [],
+  drafts = [],
+  canManageFactory = true,
   filters: externalFilters,
   onFiltersChange,
   height = 'clamp(430px, 62dvh, 700px)',
 }: ProductionPlannerProps) {
   const router = useRouter()
   const { can } = useRole()
-  const canEdit = can('production', 'manage')
-  const canEditConfirmedPlan = can('production_reports', 'manage')
+  const canEdit = can('production', 'manage') && canManageFactory
+  const canEditConfirmedPlan = canEdit
   const [plannerView, setPlannerView] = useState<PlannerView>('gantt')
   const [dayWidth, setDayWidth] = useState(38)
   const [rangeStart, setRangeStart] = useState<Date>(() => subDays(findEarliestDate(data), 30))
@@ -1783,6 +1788,13 @@ export function ProductionPlanner({
   const rangeExtendLockRef = useRef(false)
   const scrollCheckTimeoutRef = useRef<number | null>(null)
   const scrollSyncLockRef = useRef(false)
+  const draftRevisionsRef = useRef(new Map<string, number>())
+
+  useEffect(() => {
+    draftRevisionsRef.current = new Map(drafts.map((draft) => [
+      `${draft.factory_id}|${draft.production_month}`, draft.revision,
+    ]))
+  }, [drafts])
 
   useEffect(() => {
     const stored = window.localStorage.getItem('production-planner-view')
@@ -1869,6 +1881,26 @@ export function ProductionPlanner({
     return new Map(effectiveProductionData.map((row) => [row.machine.id, row]))
   }, [effectiveProductionData])
 
+  const draftKeyForMachine = useCallback((machineId: string) => {
+    const sourceDraft = drafts.find((draft) => Object.values(draft.changes)
+      .some((patch) => patch.target === 'machine' && patch.id === machineId))
+    if (sourceDraft) return `${sourceDraft.factory_id}|${sourceDraft.production_month}`
+    const machine = effectiveProductionData.find((row) => row.machine.id === machineId)?.machine
+    const month = normalizeProductionMonthValue(machine?.production_month)
+    return machine?.factory_id && month ? `${machine.factory_id}|${month}` : null
+  }, [drafts, effectiveProductionData])
+
+  const draftRevisionForMachine = useCallback((machineId: string) => {
+    const key = draftKeyForMachine(machineId)
+    return key ? draftRevisionsRef.current.get(key) ?? 0 : 0
+  }, [draftKeyForMachine])
+
+  const rememberDraftRevision = useCallback((machineId: string, revision: number | null | undefined) => {
+    if (revision == null) return
+    const key = draftKeyForMachine(machineId)
+    if (key) draftRevisionsRef.current.set(key, revision)
+  }, [draftKeyForMachine])
+
   const ganttMachineById = useMemo(() => {
     return new Map(effectiveData.machines.map((machine) => [machine.id, machine]))
   }, [effectiveData.machines])
@@ -1886,10 +1918,21 @@ export function ProductionPlanner({
       if (normalized) months.add(normalized)
     }
 
+    for (const plan of monthPlans) {
+      const normalized = normalizeProductionMonthValue(plan.production_month)
+      if (normalized) months.add(normalized)
+    }
+
     return Array.from(months)
       .sort((a, b) => a.localeCompare(b))
-      .map((value) => ({ value, label: formatProductionMonth(value) }))
-  }, [effectiveData.machines, effectiveProductionData])
+      .map((value) => {
+        const plan = monthPlans.find((item) => item.production_month === value)
+        const status = plan?.status === 'confirmed' ? 'Подтверждён'
+          : plan?.status === 'preliminary_ready' ? 'Предварительно готов' : 'Черновик'
+        const version = plan?.published_version_number ? `версия ${plan.published_version_number}` : 'без версии'
+        return { value, label: `${formatProductionMonth(value)} · ${status} · ${version}` }
+      })
+  }, [effectiveData.machines, effectiveProductionData, monthPlans])
 
   const plannerRows = useMemo<PlannerRow[]>(() => {
     const selectedWorkshop = filters.workshop ? parseInt(filters.workshop) : null
@@ -2441,15 +2484,16 @@ export function ProductionPlanner({
       dateStart: mutation.dateStart,
       dateEnd: mutation.dateEnd,
       workshop: mutation.workshop,
-    }, { revalidate: false })
+    }, { revalidate: false, expectedDraftRevision: draftRevisionForMachine(row.machine.id) })
     if (result.success) {
+      rememberDraftRevision(row.machine.id, result.draftRevision)
       toast.success('Подход сохранён')
     } else {
       setStageIntervalOptimisticPatches((current) => ({ ...current, [stage.id]: previous }))
       toast.error(result.error || 'Не удалось сохранить подход')
     }
     return result
-  }, [productionData, productionRowRequiresApproval, recordIntervalDraft, stageIntervalOptimisticPatches])
+  }, [productionData, productionRowRequiresApproval, recordIntervalDraft, stageIntervalOptimisticPatches, draftRevisionForMachine, rememberDraftRevision])
 
   const saveStageField = useCallback(async (
     stageId: string,
@@ -2459,14 +2503,19 @@ export function ProductionPlanner({
   ) => {
     const shouldRefresh = options.refresh === true
     const stage = effectiveProductionData.flatMap((row) => row.stages).find((item) => item.id === stageId)
+    const machineId = effectiveProductionData.find((row) => row.stages.some((item) => item.id === stageId))?.machine.id
     const nextPatch = { [field]: value } as StageOptimisticPatch
     const rollbackPatch = stage && field in stage
       ? ({ [field]: stage[field as keyof ProductionStage] } as StageOptimisticPatch)
       : null
 
     updateStageOptimisticPatch(stageId, nextPatch)
-    const result = await updateProductionStage(stageId, { [field]: value }, { revalidate: shouldRefresh })
+    const result = await updateProductionStage(stageId, { [field]: value }, {
+      revalidate: shouldRefresh,
+      expectedDraftRevision: machineId ? draftRevisionForMachine(machineId) : undefined,
+    })
     if (result.success) {
+      if (machineId && 'draftRevision' in result) rememberDraftRevision(machineId, result.draftRevision)
       toast.success('Сохранено')
       if (shouldRefresh) {
         router.refresh()
@@ -2476,7 +2525,7 @@ export function ProductionPlanner({
       toast.error(result.error || 'Ошибка сохранения')
     }
     return result
-  }, [effectiveProductionData, router, updateStageOptimisticPatch])
+  }, [effectiveProductionData, router, updateStageOptimisticPatch, draftRevisionForMachine, rememberDraftRevision])
 
   const saveNightShiftDates = useCallback(async (stage: ProductionStage, values: string[]) => {
     const previousDates = getStageNightShiftDraftValues(stage)
@@ -2493,15 +2542,20 @@ export function ProductionPlanner({
     }
 
     updateStageOptimisticPatch(stage.id, nextPatch)
-    const result = await updateProductionStage(stage.id, nextPatch, { revalidate: false })
+    const machineId = effectiveProductionData.find((row) => row.stages.some((item) => item.id === stage.id))?.machine.id
+    const result = await updateProductionStage(stage.id, nextPatch, {
+      revalidate: false,
+      expectedDraftRevision: machineId ? draftRevisionForMachine(machineId) : undefined,
+    })
     if (result.success) {
+      if (machineId && 'draftRevision' in result) rememberDraftRevision(machineId, result.draftRevision)
       toast.success('Сохранено')
     } else {
       updateStageOptimisticPatch(stage.id, rollbackPatch)
       toast.error(result.error || 'Ошибка сохранения')
     }
     return result
-  }, [getStageNightShiftDraftValues, updateStageOptimisticPatch])
+  }, [getStageNightShiftDraftValues, updateStageOptimisticPatch, effectiveProductionData, draftRevisionForMachine, rememberDraftRevision])
 
   const saveStageDate = useCallback(async (
     row: ProductionRow,
@@ -2572,8 +2626,11 @@ export function ProductionPlanner({
     const nextValue = dateOnlyKey(value)
     updateMachineDateOptimisticPatch(machineId, field, nextValue)
 
-    const result = await updateMachineDate(machineId, field, nextValue, { revalidate: false })
+    const result = await updateMachineDate(machineId, field, nextValue, {
+      revalidate: false, expectedDraftRevision: draftRevisionForMachine(machineId),
+    })
     if (result.success) {
+      if ('draftRevision' in result) rememberDraftRevision(machineId, result.draftRevision)
       toast.success('Сохранено')
     } else {
       updateMachineDateOptimisticPatch(machineId, field, previousValue)
@@ -2587,6 +2644,8 @@ export function ProductionPlanner({
     recordDateDraft,
     selectedMachine,
     updateMachineDateOptimisticPatch,
+    draftRevisionForMachine,
+    rememberDraftRevision,
   ])
 
   const clearStageDates = useCallback(async (stage: ProductionStage) => {
@@ -2621,8 +2680,15 @@ export function ProductionPlanner({
     updateStageOptimisticPatch(stage.id, { date_start: null, date_end: null })
     setClearingStageId(stage.id)
     try {
-      const result = await clearProductionStageDates(stage.id, { revalidate: false })
+      const result = await clearProductionStageDates(stage.id, {
+        revalidate: false,
+        expectedDraftRevision: selectedProductionRow
+          ? draftRevisionForMachine(selectedProductionRow.machine.id) : undefined,
+      })
       if (result.success) {
+        if (selectedProductionRow && 'draftRevision' in result) {
+          rememberDraftRevision(selectedProductionRow.machine.id, result.draftRevision)
+        }
         toast.success('Даты этапа очищены')
       } else {
         updateStageOptimisticPatch(stage.id, { date_start: previousStart, date_end: previousEnd })
@@ -2632,7 +2698,8 @@ export function ProductionPlanner({
     } finally {
       setClearingStageId(null)
     }
-  }, [getStageDraftValue, recordDateDraft, selectedMachineRequiresApproval, selectedProductionRow, updateStageOptimisticPatch])
+  }, [getStageDraftValue, recordDateDraft, selectedMachineRequiresApproval, selectedProductionRow,
+    updateStageOptimisticPatch, draftRevisionForMachine, rememberDraftRevision])
 
   const submitDateChangeRequest = useCallback(async () => {
     if (!selectedMachineId || selectedDateChanges.length === 0) return

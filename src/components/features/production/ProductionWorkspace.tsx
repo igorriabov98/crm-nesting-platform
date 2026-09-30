@@ -3,16 +3,20 @@
 import Link from 'next/link'
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { CalendarCheck, CheckCircle2, Factory, Loader2, ShieldCheck } from 'lucide-react'
+import { CalendarCheck, CheckCircle2, Factory, History, Loader2, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { ProductionPlanner } from '@/components/features/production/ProductionPlanner'
 import { STAGE_ORDER } from '@/lib/constants/stages'
 import { markProductionMonthPlanStatus, type ProductionMonthPlanSummary } from '@/lib/actions/production-plan'
+import {
+  getProductionPlanVersionHistory, previewProductionPlanRestore,
+  previewProductionPlanDraft, publishProductionPlanDraft, restoreProductionPlanVersion,
+  type ProductionPlanDraftSummary, type ProductionPlanVersionSummary,
+} from '@/lib/actions/production-plan-versions'
 import type { ProductionOutsourcingSummary } from '@/lib/actions/outsourcing'
 import { formatProductionMonth } from '@/lib/utils/production-months'
-import { useRole } from '@/lib/hooks/useRole'
 import { cn } from '@/lib/utils'
 import type { GanttData } from '@/app/(protected)/production/gantt/actions'
 import type { ProductionRow } from '@/app/(protected)/production/actions'
@@ -25,6 +29,8 @@ interface ProductionWorkspaceProps {
   ganttData: GanttData
   productionData: ProductionRow[]
   monthPlans: ProductionMonthPlanSummary[]
+  drafts: ProductionPlanDraftSummary[]
+  canManageFactory: boolean
   outsourcingSummary: ProductionOutsourcingSummary
   monthPlanError?: string | null
 }
@@ -46,28 +52,121 @@ function planStatusText(status: ProductionMonthPlanSummary['status'] | 'draft') 
   return 'Черновик'
 }
 
+function versionKindText(kind: ProductionPlanVersionSummary['change_kind']) {
+  if (kind === 'baseline') return 'исходный план'
+  if (kind === 'status') return 'смена статуса'
+  if (kind === 'restore') return 'восстановление'
+  return 'обновление графика'
+}
+
 function ProductionMonthPlanPanel({
   factoryId,
   selectedMonth,
   plans,
+  drafts,
+  canManageFactory,
+  factories,
   error,
 }: {
   factoryId: string
   selectedMonth: string
   plans: ProductionMonthPlanSummary[]
+  drafts: ProductionPlanDraftSummary[]
+  canManageFactory: boolean
+  factories: FactorySummary[]
   error?: string | null
 }) {
   const router = useRouter()
-  const { canManageProduction } = useRole()
   const [savingStatus, setSavingStatus] = useState<'preliminary_ready' | 'confirmed' | null>(null)
+  const [savingVersion, setSavingVersion] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [history, setHistory] = useState<ProductionPlanVersionSummary[]>([])
+  const [selectedVersionId, setSelectedVersionId] = useState('')
+  const [restorePreview, setRestorePreview] = useState<Awaited<ReturnType<typeof previewProductionPlanRestore>> | null>(null)
+  const [draftPreview, setDraftPreview] = useState<Awaited<ReturnType<typeof previewProductionPlanDraft>> | null>(null)
+  const [draftPreviewRevision, setDraftPreviewRevision] = useState<number | null>(null)
   const plan = useMemo(
     () => plans.find((item) => item.factory_id === factoryId && item.production_month === selectedMonth) || null,
     [factoryId, plans, selectedMonth],
   )
   const status = plan?.status || 'draft'
-  const canManage = canManageProduction
+  const draft = drafts.find((item) => item.factory_id === factoryId && item.production_month === selectedMonth)
+  const draftCount = Object.keys(draft?.changes ?? {}).length
+  const canManage = canManageFactory
   const hasSelectedMonth = Boolean(selectedMonth)
   const isConfirmed = status === 'confirmed'
+
+  async function publish() {
+    if (!selectedMonth || !draft || draftCount === 0) return
+    setSavingVersion(true)
+    try {
+      const result = await publishProductionPlanDraft(factoryId, selectedMonth, draft.revision)
+      if (!result.success) throw new Error(result.error || 'Не удалось обновить график')
+      toast.success(`График обновлён · версия ${result.version}`)
+      if (result.warning) toast.warning(result.warning)
+      setRestorePreview(null)
+      setDraftPreview(null)
+      router.refresh()
+    } catch (publishError) {
+      toast.error(publishError instanceof Error ? publishError.message : 'Не удалось обновить график')
+    } finally {
+      setSavingVersion(false)
+    }
+  }
+
+  async function previewDraft() {
+    if (!selectedMonth || draftCount === 0) return
+    try {
+      setDraftPreview(await previewProductionPlanDraft(factoryId, selectedMonth))
+      setDraftPreviewRevision(draft?.revision ?? null)
+    } catch (previewError) {
+      toast.error(previewError instanceof Error ? previewError.message : 'Не удалось сравнить черновик')
+    }
+  }
+
+  async function openHistory() {
+    if (!selectedMonth) return
+    try {
+      const versions = await getProductionPlanVersionHistory(factoryId, selectedMonth)
+      setHistory(versions)
+      setHistoryOpen(true)
+      setSelectedVersionId('')
+      setRestorePreview(null)
+    } catch (historyError) {
+      toast.error(historyError instanceof Error ? historyError.message : 'Не удалось загрузить версии')
+    }
+  }
+
+  async function previewRestore() {
+    if (!selectedMonth || !selectedVersionId) return
+    try {
+      setRestorePreview(await previewProductionPlanRestore(factoryId, selectedMonth, selectedVersionId))
+    } catch (previewError) {
+      toast.error(previewError instanceof Error ? previewError.message : 'Не удалось сравнить версии')
+    }
+  }
+
+  async function restore() {
+    if (!selectedMonth || !selectedVersionId || !restorePreview || restorePreview.blockers.length > 0) return
+    const affected = restorePreview.affectedMonths.map((item) => (
+      `${factories.find((factory) => factory.id === item.factoryId)?.name || item.factoryId} · ${formatProductionMonth(item.month)}`
+    )).join(', ')
+    if (!window.confirm(`Восстановить выбранную версию? Будут обновлены планы: ${affected}.`)) return
+    setSavingVersion(true)
+    try {
+      const result = await restoreProductionPlanVersion(factoryId, selectedMonth, selectedVersionId, plan?.published_version_number ?? 0)
+      if (!result.success) throw new Error(result.error || 'Не удалось восстановить график')
+      toast.success(`Создана версия ${result.version}`)
+      if (result.warning) toast.warning(result.warning)
+      setHistoryOpen(false)
+      setRestorePreview(null)
+      router.refresh()
+    } catch (restoreError) {
+      toast.error(restoreError instanceof Error ? restoreError.message : 'Не удалось восстановить график')
+    } finally {
+      setSavingVersion(false)
+    }
+  }
 
   async function markStatus(nextStatus: 'preliminary_ready' | 'confirmed') {
     if (!selectedMonth) return
@@ -114,17 +213,35 @@ function ProductionMonthPlanPanel({
               )}>
                 {planStatusText(status)}
               </span>
+              {hasSelectedMonth && <span className="text-xs font-medium text-slate-600">
+                {plan?.published_version_number ? `Версия ${plan.published_version_number}` : 'Без опубликованной версии'}
+              </span>}
             </div>
+            {canManage && draftCount > 0 && <div className="mt-1 text-xs font-medium text-amber-700">
+              Общий черновик: {draftCount} {draftCount === 1 ? 'изменение' : 'изменений'} · версия ещё не обновлена
+            </div>}
             {error && <div className="mt-1 text-sm text-red-700">{error}</div>}
           </div>
         </div>
 
-        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+        {canManage && <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+          {draftCount > 0 && <Button type="button" variant="outline" size="sm"
+            disabled={savingVersion} onClick={previewDraft} className="min-h-11 sm:min-h-10">
+            Изменения черновика
+          </Button>}
+          <Button type="button" variant="outline" size="sm" disabled={!hasSelectedMonth || savingVersion}
+            onClick={openHistory} className="min-h-11 gap-2 sm:min-h-10">
+            <History className="h-4 w-4" /> История версий
+          </Button>
+          <Button type="button" size="sm" disabled={!hasSelectedMonth || draftCount === 0 || savingVersion || savingStatus !== null}
+            onClick={publish} className="min-h-11 bg-blue-800 text-white hover:bg-blue-900 sm:min-h-10">
+            {savingVersion ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Обновить
+          </Button>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            disabled={!canManage || !hasSelectedMonth || isConfirmed || savingStatus !== null || status === 'preliminary_ready'}
+            disabled={!hasSelectedMonth || isConfirmed || savingStatus !== null || status === 'preliminary_ready' || draftCount > 0}
             onClick={() => markStatus('preliminary_ready')}
             className="min-h-11 gap-2 px-3 sm:min-h-10"
           >
@@ -134,15 +251,50 @@ function ProductionMonthPlanPanel({
           <Button
             type="button"
             size="sm"
-            disabled={!canManage || !hasSelectedMonth || isConfirmed || savingStatus !== null}
+            disabled={!hasSelectedMonth || isConfirmed || savingStatus !== null || draftCount > 0}
             onClick={() => markStatus('confirmed')}
             className="min-h-11 gap-2 bg-emerald-700 px-3 text-white hover:bg-emerald-800 sm:min-h-10"
           >
             {savingStatus === 'confirmed' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
             Подтвердить план
           </Button>
-        </div>
+        </div>}
       </div>
+      {canManage && draftPreview && draftCount > 0 && draftPreviewRevision === draft?.revision && <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-slate-700">
+        <div className="font-semibold text-blue-950">Предварительный просмотр черновика</div>
+        <div className="mt-1">Затронутые планы: {draftPreview.affectedMonths.map((item) => (
+          `${factories.find((factory) => factory.id === item.factoryId)?.name || item.factoryId} · ${formatProductionMonth(item.month)}`
+        )).join(', ')}</div>
+        <ul className="mt-2 list-disc space-y-1 pl-5">
+          {draftPreview.changes.map((change, index) => <li key={`${index}:${change}`}>{change}</li>)}
+        </ul>
+      </div>}
+      {canManage && historyOpen && hasSelectedMonth && <div className="mt-4 space-y-3 border-t border-slate-200 pt-4">
+        <div className="text-sm font-semibold text-blue-950">История опубликованных версий</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <select aria-label="Версия графика для восстановления" value={selectedVersionId}
+            onChange={(event) => { setSelectedVersionId(event.target.value); setRestorePreview(null) }}
+            className="min-h-10 rounded-md border border-slate-300 bg-white px-3 text-sm text-blue-950">
+            <option value="">Выберите версию</option>
+            {history.map((version) => <option key={version.id} value={version.id}>
+              Версия {version.version_number} · {versionKindText(version.change_kind)} · {planStatusText(version.status)} · {new Date(version.created_at).toLocaleString('ru-RU')}
+            </option>)}
+          </select>
+          <Button type="button" variant="outline" size="sm" disabled={!selectedVersionId || savingVersion}
+            onClick={previewRestore}>Сравнить с текущим планом</Button>
+          <Button type="button" size="sm" disabled={!restorePreview || restorePreview.blockers.length > 0 || draftCount > 0 || savingVersion}
+            onClick={restore}>Восстановить как новую версию</Button>
+        </div>
+        {restorePreview && <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+          <div className="font-medium text-blue-950">Затронутые планы: {restorePreview.affectedMonths.map((item) => (
+            `${factories.find((factory) => factory.id === item.factoryId)?.name || item.factoryId} · ${formatProductionMonth(item.month)}`
+          )).join(', ')}</div>
+          {restorePreview.blockers.map((blocker) => <p key={blocker} className="mt-1 text-red-700">{blocker}</p>)}
+          {restorePreview.changes.length === 0 ? <p className="mt-2">Различий нет.</p> : <ul className="mt-2 list-disc space-y-1 pl-5">
+            {restorePreview.changes.map((change, index) => <li key={`${index}:${change}`}>{change}</li>)}
+          </ul>}
+        </div>}
+      </div>}
     </section>
   )
 }
@@ -153,12 +305,24 @@ export function ProductionWorkspace({
   ganttData,
   productionData,
   monthPlans,
+  drafts,
+  canManageFactory,
   outsourcingSummary,
   monthPlanError,
 }: ProductionWorkspaceProps) {
   const [plannerFilters, setPlannerFilters] = useState<GanttFilters>(defaultGanttFilters)
+  const visibleOutsourcing = useMemo<ProductionOutsourcingSummary>(() => {
+    const changes = drafts.filter((draft) => draft.factory_id === activeFactoryId)
+      .flatMap((draft) => Object.values(draft.changes))
+      .filter((patch) => patch.target === 'outsourcing')
+    const apply = (operations: ProductionOutsourcingSummary['outgoing']) => operations.map((operation) => {
+      const patch = changes.find((change) => change.id === operation.id)
+      return patch ? { ...operation, ...patch.fields } : operation
+    }) as ProductionOutsourcingSummary['outgoing']
+    return { outgoing: apply(outsourcingSummary.outgoing), incoming: apply(outsourcingSummary.incoming) }
+  }, [activeFactoryId, drafts, outsourcingSummary])
   const ganttDataWithIncomingOutsourcing = useMemo<GanttData>(() => {
-    const incomingMachines = outsourcingSummary.incoming
+    const incomingMachines = visibleOutsourcing.incoming
       .filter((operation) => operation.incoming_date_start && operation.incoming_date_end)
       .map((operation) => ({
         id: `outsourcing:${operation.id}`,
@@ -203,7 +367,7 @@ export function ProductionWorkspace({
       ...ganttData,
       machines: [...ganttData.machines, ...incomingMachines],
     }
-  }, [ganttData, outsourcingSummary.incoming])
+  }, [ganttData, visibleOutsourcing.incoming])
 
   return (
     <div className="space-y-4">
@@ -243,9 +407,13 @@ export function ProductionWorkspace({
       </div>
 
       <ProductionMonthPlanPanel
+        key={`${activeFactoryId}:${plannerFilters.productionMonth}`}
         factoryId={activeFactoryId}
         selectedMonth={plannerFilters.productionMonth}
         plans={monthPlans}
+        drafts={drafts}
+        canManageFactory={canManageFactory}
+        factories={factories}
         error={monthPlanError}
       />
 
@@ -253,7 +421,9 @@ export function ProductionWorkspace({
         data={ganttDataWithIncomingOutsourcing}
         productionData={productionData}
         monthPlans={monthPlans}
-        outsourcingOperations={outsourcingSummary.outgoing.concat(outsourcingSummary.incoming)}
+        drafts={drafts}
+        canManageFactory={canManageFactory}
+        outsourcingOperations={visibleOutsourcing.outgoing.concat(visibleOutsourcing.incoming)}
         filters={plannerFilters}
         onFiltersChange={setPlannerFilters}
       />
