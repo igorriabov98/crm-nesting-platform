@@ -280,7 +280,43 @@ assert.equal(report.rows.find((row) => row.material === 'Редуктор')?.qua
 assert.equal(supplyDateOrderFilename(reportDate), 'zakaz-materialov-2026-09-10.xlsx')
 assert.equal(supplyDateOrderFilename('no_supply_date'), 'zakaz-materialov-bez-daty.xlsx')
 
+const splitPurchase = structuredClone(pendingSheet)
+splitPurchase.id = 'split-purchase'
+splitPurchase.quantity = splitPurchase.factories[0].quantity = 30
+splitPurchase.requested_quantity = splitPurchase.factories[0].requested_quantity = 35
+splitPurchase.reserved_quantity = splitPurchase.factories[0].reserved_quantity = 5
+splitPurchase.delivered_schedule_quantity = splitPurchase.factories[0].delivered_schedule_quantity = 25
+splitPurchase.unscheduled_quantity = splitPurchase.factories[0].unscheduled_quantity = 5
+const machinePurchase = makeItem({
+  id: 'machine-purchase', request_id: 'old-machine', request_kind: 'machine',
+  machine_name: 'ТЕС.КОМ-20-2026', planned_material_date: reportDate,
+  quantity: 25, requested_quantity: 30, reserved_quantity: 5,
+  unscheduled_quantity: 0, delivered_schedule_quantity: 25,
+  delivery_schedules: [makeSchedule({
+    id: 'sheet-physical-30', quantity: 30, received_quantity: 30,
+    allocated_quantity: 25, allocated_physical_quantity: 25, excess_quantity: 5,
+  })],
+})
+const newStockPurchase = makeItem({
+  id: 'stock-purchase', request_id: 'new-stock', request_kind: 'stock',
+  machine_id: '', machine_name: 'На склад · новая заявка', planned_material_date: null,
+  quantity: 5, requested_quantity: 5, reserved_quantity: 0,
+  unscheduled_quantity: 5, delivery_schedules: [],
+})
+splitPurchase.factories[0].items = [machinePurchase, newStockPurchase]
+const undatedStockReport = buildSupplyDateOrderReport([splitPurchase], 'no_supply_date')
+assert.deepEqual(undatedStockReport.rows.map((row) => [row.quantity, row.machines]),
+  [[5, 'На склад · новая заявка']], 'the undated export must contain only the five new stock sheets')
+assert.equal(buildSupplyDateOrderReport([splitPurchase], reportDate).rows.length, 0,
+  'the accepted machine receipt must not be exported as an unplaced purchase')
+
 async function verifyWorkbook() {
+const stockWorkbook = new ExcelJS.Workbook()
+await stockWorkbook.xlsx.load(await buildSupplyDateOrderXlsx(undatedStockReport))
+const stockSheet = stockWorkbook.getWorksheet('Заказ без даты')
+assert(stockSheet)
+assert.equal(stockSheet.getRow(7).getCell(8).value, 5)
+assert.equal(stockSheet.getRow(7).getCell(12).value, 'На склад · новая заявка')
 const selectedBuffer = await buildSupplyDateOrderXlsx(sheetOnly, new Date('2026-09-07T09:30:00Z'))
 const selectedWorkbook = new ExcelJS.Workbook()
 await selectedWorkbook.xlsx.load(selectedBuffer)
@@ -309,7 +345,7 @@ assert.deepEqual((worksheet.getRow(6).values as unknown[]).slice(1), [
   'Ед.',
   'Вес, кг',
   'Поставщик',
-  'Для машин',
+  'Для заявок',
 ])
 assert.equal(worksheet.views[0]?.state, 'frozen')
 assert.equal(worksheet.views[0]?.ySplit, 6)

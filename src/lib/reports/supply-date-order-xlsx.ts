@@ -16,7 +16,7 @@ const COLUMN_HEADERS = [
   'Ед.',
   'Вес, кг',
   'Поставщик',
-  'Для машин',
+  'Для заявок',
 ] as const
 
 const BORDER_COLOR = 'FFDCE3EA'

@@ -312,9 +312,12 @@ export type SupplyOrderAggregateSourceItem = {
   category: MaterialCategory
   item_name: string
   request_id: string
+  request_kind?: 'machine' | 'stock'
   machine_id: string
   machine_name: string
   planned_material_date?: string | null
+  requested_quantity?: number
+  reserved_quantity?: number
   quantity: number
   unit: string
   supplier_id: string | null
@@ -2382,9 +2385,12 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
         category: item.category,
         item_name: item.item_name,
         request_id: item.request_id,
+        request_kind: item.request_kind,
         machine_id: item.machine_id,
         machine_name: item.machine_name,
         planned_material_date: item.planned_material_date,
+        requested_quantity: item.requested_quantity,
+        reserved_quantity: item.reserved_quantity,
         quantity: item.to_order,
         unit: item.unit,
         supplier_id: item.supplier_id,

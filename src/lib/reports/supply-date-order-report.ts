@@ -8,6 +8,7 @@ import {
 import {
   groupSupplyOrderAggregatesBySupplyDate,
   isSupplyOrderBarMaterial,
+  supplyOrderDateSliceItems,
   summarizeSupplyOrderUnscheduledMachineRoutes,
 } from '@/components/features/supply-orders/supply-order-view'
 
@@ -45,10 +46,11 @@ export function buildSupplyDateOrderReport(
     .filter((slice) => slice.unscheduledQuantity > QUANTITY_EPSILON)
     .flatMap((slice): SupplyDateOrderReportRow[] => {
       const factory = slice.aggregate.factories[0]
+      const sliceItems = supplyOrderDateSliceItems(slice)
       const machineRoutes = factory
-        ? summarizeSupplyOrderUnscheduledMachineRoutes(factory.items, slice.unscheduledQuantity)
+        ? summarizeSupplyOrderUnscheduledMachineRoutes(sliceItems, slice.unscheduledQuantity)
         : []
-      const remainingItems = factory?.items.filter((item) => item.unscheduled_quantity > QUANTITY_EPSILON) || []
+      const remainingItems = sliceItems.filter((item) => item.unscheduled_quantity > QUANTITY_EPSILON)
       const supplierNames = Array.from(new Set(
         remainingItems.map((item) => item.supplier_name).filter((name): name is string => Boolean(name)),
       )).sort((left, right) => left.localeCompare(right, 'ru'))
@@ -81,7 +83,7 @@ export function buildSupplyDateOrderReport(
         }]
       }
 
-      const purchase = makeRemainingLongStockPurchase(factory, slice.unscheduledQuantity)
+      const purchase = makeRemainingLongStockPurchase({ ...factory, items: sliceItems }, slice.unscheduledQuantity)
       if (purchase.components.length === 0) {
         return [{
           ...baseRow,

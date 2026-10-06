@@ -33,3 +33,14 @@ test('an unscheduled remainder is a separate requirement on the production date'
   assert.match(html, /Требуется к 07.10.2026/)
   assert.doesNotMatch(html, /Ожидается по этой поставке|Принято по этой поставке/)
 })
+
+test('split cards show only local totals and the receipt distinguishes allocated stock', () => {
+  const html = renderToStaticMarkup(<SupplyQuantitySummary
+    summary={{ ...summary, requestedQuantity: 35, stockQuantity: 5, demandQuantity: 30, allocatedQuantity: 25,
+      physicalReceivedQuantity: 30, outstandingQuantity: 5, plannedQuantity: 0, remainingToOrder: 5, deliveryExcess: 0 }}
+    unit="шт" dateSlice={{ kind: 'delivery', quantity: 30, deliveredQuantity: 30, plannedQuantity: 0,
+      deliveredScheduleCount: 1, sourceQuantities: { 'request_sheet:machine': 25 } } as unknown as SupplyOrderDateSlice}
+    productionDate="2026-10-01" weight={null} itemCount={1} showOverall={false} />)
+  assert.match(html, /Заявкам выделено 25 шт · свободный остаток 5 шт/)
+  assert.doesNotMatch(html, /По всем поставкам этой потребности|Общая потребность/)
+})
