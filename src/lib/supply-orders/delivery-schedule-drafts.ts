@@ -6,6 +6,7 @@ export type SupplyOrderScheduleDraft = {
   delivery_date: string
   quantity: string
   supplier_id: string
+  redelivery_of_schedule_id?: string | null
   piece_length_mm: string
   piece_count: string
 }
@@ -13,12 +14,15 @@ export type SupplyOrderScheduleDraft = {
 type SupplyOrderScheduleDraftDateSlice = {
   dateKey: string
   unscheduledQuantity: number
+  scheduleIds?: string[]
+  pieceLengthMm?: number | null
 }
 
 type PlannedScheduleGroup = {
   key: string
   delivery_date: string
   supplier_id: string | null
+  redelivery_of_schedule_id?: string | null
   quantity: number
   piece_length_mm: number | null
   piece_count: number | null
@@ -32,12 +36,13 @@ export function buildInitialSupplyOrderScheduleDrafts(
   const plannedGroups = new Map<string, PlannedScheduleGroup>()
   for (const item of factory.items) {
     for (const schedule of item.delivery_schedules) {
-      if (schedule.status !== 'planned') continue
-      const key = `${schedule.delivery_date}:${schedule.supplier_id || 'none'}:${schedule.planned_piece_length_mm || 'bulk'}`
+      if (schedule.status !== 'planned' || (dateSlice?.scheduleIds && !dateSlice.scheduleIds.includes(schedule.id))) continue
+      const key = `${schedule.delivery_date}:${schedule.supplier_id || 'none'}:${schedule.planned_piece_length_mm || 'bulk'}:${schedule.redelivery_of_schedule_id || 'original'}`
       const current = plannedGroups.get(key) || {
         key,
         delivery_date: schedule.delivery_date,
         supplier_id: schedule.supplier_id,
+        redelivery_of_schedule_id: schedule.redelivery_of_schedule_id || null,
         quantity: 0,
         piece_length_mm: schedule.planned_piece_length_mm,
         piece_count: schedule.planned_piece_length_mm === null ? null : 0,
@@ -59,6 +64,7 @@ export function buildInitialSupplyOrderScheduleDrafts(
       delivery_date: group.delivery_date,
       quantity: formatDraftNumber(group.quantity),
       supplier_id: group.supplier_id || '',
+      redelivery_of_schedule_id: group.redelivery_of_schedule_id || null,
       piece_length_mm: group.piece_length_mm ? formatDraftNumber(group.piece_length_mm) : '',
       piece_count: group.piece_count ? formatDraftNumber(group.piece_count) : '',
     }))
@@ -97,6 +103,7 @@ export function buildInitialSupplyOrderScheduleDrafts(
     }
 
     const remainingComponents = purchase.components
+      .filter((component) => !dateSlice?.pieceLengthMm || component.length_mm === dateSlice.pieceLengthMm)
       .map((component) => ({
         ...component,
         piece_count: Math.max(
@@ -112,6 +119,8 @@ export function buildInitialSupplyOrderScheduleDrafts(
     const components = Math.abs(remainingComponentsQuantity - remaining) <= 0.000001
       ? remainingComponents
       : purchase.components.filter((component) => (
+        (!dateSlice?.pieceLengthMm || component.length_mm === dateSlice.pieceLengthMm)
+        &&
         Number.isInteger(remaining / component.length_mm)
         && remaining / component.length_mm > 0
       )).slice(0, 1).map((component) => ({

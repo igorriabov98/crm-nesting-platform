@@ -8,6 +8,7 @@ import {
   outstandingAllocationQuantity,
   projectAggregateVirtualReceivingQuantities,
 } from '@/lib/supply-orders/receiving-quantity.mjs'
+import { linkRedeliveryRows, resolveLegacyRedeliverySchedules } from '@/lib/supply-orders/redelivery'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { PermissionOperation } from '@/lib/permissions/resources'
@@ -188,6 +189,7 @@ export type SupplyOrderDeliverySchedule = {
   received_piece_count: number | null
   allocated_piece_count: number | null
   excess_quantity: number | null
+  redelivery_of_schedule_id?: string | null
   receipt_parent_schedule_id: string | null
   delivered_at: string | null
   received_by: string | null
@@ -394,6 +396,7 @@ export type SupplyOrderAggregate = {
 }
 
 export type SupplyOrderAggregateScheduleInput = {
+  redelivery_of_schedule_id?: string | null
   delivery_date: string
   quantity: number
   supplier_id?: string | null
@@ -1488,7 +1491,7 @@ export async function getSupplyOrders(
           .eq('is_business_scrap', false)
         : Promise.resolve({ data: [], error: null } as DbResult),
       orderableRawItems.length ? db.from('inventory_reservations').select('id, request_item_table, request_item_id, consumed_at').in('request_item_id', orderableRawItems.map((item) => item.id)) : Promise.resolve({ data: [], error: null } as DbResult),
-      orderableRawItems.length ? db.from('supply_order_delivery_schedules').select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at').in('request_item_id', orderableRawItems.map((item) => item.id)).order('delivery_date', { ascending: true }) : Promise.resolve({ data: [], error: null } as DbResult),
+      orderableRawItems.length ? db.from('supply_order_delivery_schedules').select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, redelivery_of_schedule_id, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at').in('request_item_id', orderableRawItems.map((item) => item.id)).order('delivery_date', { ascending: true }) : Promise.resolve({ data: [], error: null } as DbResult),
     ])
     if (inventoryRes.error) throw new Error(inventoryRes.error.message || 'Не удалось загрузить остатки склада')
     if (reservationsRes.error) throw new Error(reservationsRes.error.message || 'Не удалось загрузить бронирования')
@@ -1526,9 +1529,9 @@ export async function getSupplyOrders(
     const reservationMap = new Map(((reservationsRes.data || []) as { id: string; request_item_table: string; request_item_id: string; consumed_at: string | null }[])
       .filter((item) => !item.consumed_at)
       .map((item) => [`${item.request_item_table}:${item.request_item_id}`, item.id]))
-    const scheduleRows = ((schedulesRes.data || []) as Array<SupplyOrderDeliverySchedule & { request_item_table: string; request_item_id: string }>)
+    const scheduleRows = resolveLegacyRedeliverySchedules(((schedulesRes.data || []) as Array<SupplyOrderDeliverySchedule & { request_item_table: string; request_item_id: string }>)
       .filter((row) => row.status !== 'cancelled')
-      .filter((row) => orderableRawItems.some((item) => item.table === row.request_item_table && item.id === row.request_item_id))
+      .filter((row) => orderableRawItems.some((item) => item.table === row.request_item_table && item.id === row.request_item_id)))
     const scheduleMap = new Map<string, typeof scheduleRows>()
     for (const schedule of scheduleRows) {
       const key = `${schedule.request_item_table}:${schedule.request_item_id}`
@@ -1645,6 +1648,7 @@ export async function getSupplyOrders(
           received_piece_count: schedule.received_piece_count === null || schedule.received_piece_count === undefined ? null : Number(schedule.received_piece_count),
           allocated_piece_count: schedule.allocated_piece_count === null || schedule.allocated_piece_count === undefined ? null : Number(schedule.allocated_piece_count),
           excess_quantity: schedule.excess_quantity === null || schedule.excess_quantity === undefined ? null : Number(schedule.excess_quantity),
+          redelivery_of_schedule_id: schedule.redelivery_of_schedule_id || null,
           receipt_parent_schedule_id: schedule.receipt_parent_schedule_id || null,
           delivered_at: schedule.delivered_at,
           received_by: schedule.received_by,
@@ -1768,7 +1772,7 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
       .map((item) => item.id)
     const [schedulesRes, revisionsRes] = await Promise.all([
       rawItems.length
-        ? db.from('supply_order_delivery_schedules').select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at').in('request_item_id', rawItems.map((item) => item.id)).order('delivery_date', { ascending: false })
+        ? db.from('supply_order_delivery_schedules').select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, redelivery_of_schedule_id, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at').in('request_item_id', rawItems.map((item) => item.id)).order('delivery_date', { ascending: false })
         : Promise.resolve({ data: [], error: null } as DbResult),
       activeRevisionItemIds.length
         ? db.from('supply_position_revisions')
@@ -2154,7 +2158,8 @@ function toScheduleDto(
     received_piece_count: schedule.received_piece_count === null || schedule.received_piece_count === undefined ? null : Number(schedule.received_piece_count),
     allocated_piece_count: schedule.allocated_piece_count === null || schedule.allocated_piece_count === undefined ? null : Number(schedule.allocated_piece_count),
     excess_quantity: schedule.excess_quantity === null || schedule.excess_quantity === undefined ? null : Number(schedule.excess_quantity),
-    receipt_parent_schedule_id: schedule.receipt_parent_schedule_id || null,
+    redelivery_of_schedule_id: schedule.redelivery_of_schedule_id || null,
+          receipt_parent_schedule_id: schedule.receipt_parent_schedule_id || null,
     delivered_at: schedule.delivered_at,
     received_by: schedule.received_by,
     created_at: schedule.created_at,
@@ -2899,7 +2904,7 @@ async function resolveReceivingSource(db: LooseDb, input: MaterialDeliveryInput)
   if (requestedScheduleIds.length > 0) {
     const { data, error } = await db
       .from('supply_order_delivery_schedules')
-      .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at')
+      .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, redelivery_of_schedule_id, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at')
       .in('id', requestedScheduleIds)
     if (error) throw new Error(error.message || 'Не удалось загрузить поставку')
     const schedulesById = new Map(((data || []) as ReceivingScheduleRow[]).map((schedule) => [schedule.id, schedule]))
@@ -3357,7 +3362,7 @@ async function loadReceivingSchedules(db: LooseDb, items: Array<Pick<RawOrderIte
 
   const { data, error } = await db
     .from('supply_order_delivery_schedules')
-    .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at')
+    .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, redelivery_of_schedule_id, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at')
     .in('request_item_id', itemIds)
     .neq('status', 'cancelled')
     .order('delivery_date', { ascending: true })
@@ -3365,8 +3370,25 @@ async function loadReceivingSchedules(db: LooseDb, items: Array<Pick<RawOrderIte
   if (error) throw new Error(error.message || 'Не удалось загрузить график поставок')
 
   const validKeys = new Set(items.map(itemKey))
-  return ((data || []) as ReceivingScheduleRow[])
-    .filter((schedule) => validKeys.has(`${schedule.request_item_table}:${schedule.request_item_id}`))
+  return resolveLegacyRedeliverySchedules(((data || []) as ReceivingScheduleRow[])
+    .filter((schedule) => validKeys.has(`${schedule.request_item_table}:${schedule.request_item_id}`)))
+}
+
+async function loadRedeliveryScheduleContext(db: LooseDb, selected: ReceivingScheduleRow[]) {
+  const byId = new Map(selected.map(row => [row.id, row]))
+  let ids = selected.flatMap(row => [row.receipt_parent_schedule_id, row.redelivery_of_schedule_id])
+    .filter((id): id is string => Boolean(id) && !byId.has(id!))
+  for (let depth = 0; depth < 8 && ids.length > 0; depth++) {
+    const { data, error } = await db.from('supply_order_delivery_schedules')
+      .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, redelivery_of_schedule_id, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at')
+      .in('id', [...new Set(ids)])
+    if (error) throw new Error(error.message || 'Не удалось загрузить исходные поставки довоза')
+    const loaded = (data || []) as ReceivingScheduleRow[]
+    for (const row of loaded) byId.set(row.id, row)
+    ids = loaded.flatMap(row => [row.receipt_parent_schedule_id, row.redelivery_of_schedule_id])
+      .filter((id): id is string => Boolean(id) && !byId.has(id!))
+  }
+  return resolveLegacyRedeliverySchedules([...byId.values()])
 }
 
 function makeReceivingItem(
@@ -4058,6 +4080,7 @@ function normalizeScheduleInputs(schedules: SupplyOrderAggregateScheduleInput[])
       delivery_date: deliveryDate,
       quantity,
       supplier_id: schedule.supplier_id || null,
+      redelivery_of_schedule_id: schedule.redelivery_of_schedule_id || null,
       piece_length_mm: pieceLengthMm,
       piece_count: pieceCount,
     }
@@ -4095,7 +4118,9 @@ function normalizeDeliveryScheduleScope(scope?: SupplyOrderDeliveryScheduleScope
 
   const replaceDeliveryDate = assertDateOrNull(scope.replace_delivery_date)
   if (!replaceDeliveryDate) throw new Error('Для изменения графика укажите исходную дату')
-  return { mode: 'date' as const, replace_delivery_date: replaceDeliveryDate }
+  const scheduleIds = scope.mode === 'date' ? scope.schedule_ids : undefined
+  if (scheduleIds && (!Array.isArray(scheduleIds) || !scheduleIds.length || scheduleIds.some(id => !/^[0-9a-f-]{36}$/i.test(id)))) throw new Error('Некорректные строки графика')
+  return { mode: 'date' as const, replace_delivery_date: replaceDeliveryDate, schedule_ids: scheduleIds }
 }
 
 function assertSingleAggregateScheduleSelection(items: SupplyOrderAggregateInputItem[]) {
@@ -4260,7 +4285,7 @@ type ScheduleCapacity = {
 
 function makePlannedScheduleRow(
   item: SupplyOrderAggregateInputItem,
-  schedule: Pick<NormalizedScheduleInput, 'delivery_date' | 'supplier_id' | 'piece_length_mm'>,
+  schedule: Pick<NormalizedScheduleInput, 'delivery_date' | 'supplier_id' | 'piece_length_mm'> & { redelivery_of_schedule_id?: string | null },
   quantity: number,
   userId: string,
 ) {
@@ -4276,6 +4301,7 @@ function makePlannedScheduleRow(
     quantity: roundScheduleQuantity(quantity),
     unit: item.unit,
     supplier_id: schedule.supplier_id,
+    redelivery_of_schedule_id: schedule.redelivery_of_schedule_id || null,
     planned_piece_length_mm: pieceLengthMm,
     planned_piece_count: pieceCount,
     created_by: userId,
@@ -4290,11 +4316,12 @@ function rowsFromRetainedAllocations(
   return allocations.map((allocation) => {
     const supplierId = allocation.schedule.supplier_id
     if (!supplierId) throw new Error('В сохранённом графике не указан поставщик')
-    return makePlannedScheduleRow(allocation.item, {
+    return { ...makePlannedScheduleRow(allocation.item, {
       delivery_date: allocation.schedule.delivery_date,
       supplier_id: supplierId,
+      redelivery_of_schedule_id: allocation.schedule.redelivery_of_schedule_id || null,
       piece_length_mm: allocation.schedule.planned_piece_length_mm,
-    }, allocation.quantity, userId)
+    }, allocation.quantity, userId), preserve_origin: true }
   })
 }
 
@@ -4407,6 +4434,7 @@ export async function saveAggregateDeliverySchedule(
     const totalScheduled = normalizedSchedules.reduce((sum, schedule) => sum + schedule.quantity, 0)
     if (normalizedSchedules.length === 0 || totalScheduled <= 0) throw new Error('Добавьте хотя бы одну дату поставки')
     const storedSchedules = await loadReceivingSchedules(db, selectedItems)
+    const redeliveryContext = await loadRedeliveryScheduleContext(db, storedSchedules)
     const existingSchedules = projectSchedulesToPurchasePlans(selectedItems, storedSchedules)
     const { coverage, allocations } = projectPlannedScheduleAllocations(selectedItems, existingSchedules)
     const allPlannedScheduleIds = storedSchedules
@@ -4526,11 +4554,11 @@ export async function saveAggregateDeliverySchedule(
       }
     } else if (normalizedScope?.mode === 'date') {
       const replacedAllocations = allocations.filter((allocation) => (
-        allocation.schedule.delivery_date === normalizedScope.replace_delivery_date
+        deliveryScheduleBelongsToScope(allocation.schedule.delivery_date, normalizedScope, allocation.schedule.id)
       ))
       if (replacedAllocations.length === 0) throw new Error('На выбранную дату нет планового графика')
       const retained = allocations.filter((allocation) => (
-        allocation.schedule.delivery_date !== normalizedScope.replace_delivery_date
+        !deliveryScheduleBelongsToScope(allocation.schedule.delivery_date, normalizedScope, allocation.schedule.id)
       ))
       const targetKeys = new Set(replacedAllocations.map((allocation) => itemKey(allocation.item)))
       const targetItems = selectedItems.filter((item) => targetKeys.has(itemKey(item)))
@@ -4557,6 +4585,7 @@ export async function saveAggregateDeliverySchedule(
       plannedScheduleIds = allPlannedScheduleIds
     }
 
+    insertRows = linkRedeliveryRows(insertRows, redeliveryContext, plannedScheduleIds)
     await replacePlannedDeliverySchedules(db, plannedScheduleIds, insertRows, selectedItems, storedSchedules)
 
 
@@ -4615,7 +4644,7 @@ export async function clearAggregateDeliverySchedule(
       plannedScheduleIds = storedSchedules
         .filter((schedule) => (
           schedule.status === 'planned'
-          && deliveryScheduleBelongsToScope(schedule.delivery_date, normalizedScope)
+          && deliveryScheduleBelongsToScope(schedule.delivery_date, normalizedScope, schedule.id)
         ))
         .map((schedule) => schedule.id)
     }

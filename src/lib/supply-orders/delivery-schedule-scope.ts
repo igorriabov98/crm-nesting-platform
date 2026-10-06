@@ -1,5 +1,6 @@
 export type SupplyOrderDeliveryScheduleScope = {
   mode: 'date'
+  schedule_ids?: string[]
   replace_delivery_date: string
 } | {
   mode: 'unscheduled'
@@ -20,8 +21,10 @@ export function deliveryScheduleScopeForDateSlice(dateKey: string): SupplyOrderD
 export function deliveryScheduleBelongsToScope(
   deliveryDate: string,
   scope: SupplyOrderDeliveryScheduleScope | undefined,
+  scheduleId?: string,
 ) {
   if (!scope) return true
   if (scope.mode === 'unscheduled') return false
+  if (scope.mode === 'date' && scope.schedule_ids && (!scheduleId || !scope.schedule_ids.includes(scheduleId))) return false
   return scope.replace_delivery_date !== null && deliveryDate === scope.replace_delivery_date
 }

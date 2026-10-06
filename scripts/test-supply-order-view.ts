@@ -716,7 +716,7 @@ assert.match(
 )
 assert.match(
   supplyOrdersAction,
-  /schedule\.status === 'planned'[\s\S]*deliveryScheduleBelongsToScope\(schedule\.delivery_date, normalizedScope\)/u,
+  /schedule\.status === 'planned'[\s\S]*deliveryScheduleBelongsToScope\(schedule\.delivery_date, normalizedScope, schedule\.id\)/u,
   'the server must delete only planned schedules inside the requested date scope',
 )
 
@@ -785,7 +785,7 @@ assert.match(
 )
 assert.match(
   summaryPageSource,
-  /draftDateSlice\?\.dateKey !== 'no_supply_date'[\s\S]*delivery_date: ''/u,
+  /dateSlice\?\.stockWithoutDate[\s\S]*\? '' : draft\.delivery_date/u,
   'a new request schedule must require the supply operator to choose its delivery date explicitly',
 )
 
@@ -812,19 +812,13 @@ const mergedDateGroups = groupSupplyOrderAggregatesBySupplyDate([
   ], { plannedMaterialDate: '2026-08-28', unscheduledQuantity: 1_000 }),
 ], 'date_asc')
 assert.equal(mergedDateGroups.length, 1, 'keep the same date group')
-assert.equal(mergedDateGroups[0].rows.length, 2, 'unplanned need must be a separate card, never added to real deliveries')
-assert.equal(mergedDateGroups[0].rows[1].kind, 'unscheduled')
-assert.equal(mergedDateGroups[0].rows[1].unscheduledQuantity, 1000)
-assert.deepEqual(
-  {
-    quantity: mergedDateGroups[0].rows[0].quantity,
-    planned: mergedDateGroups[0].rows[0].plannedQuantity,
-    delivered: mergedDateGroups[0].rows[0].deliveredQuantity,
-    unscheduled: mergedDateGroups[0].rows[0].unscheduledQuantity,
-  },
-  { quantity: 4_500, planned: 2_000, delivered: 2_500, unscheduled: 0 },
-  'same-date schedule parts must use accepted fact instead of the obsolete supplier promise',
-)
+assert.deepEqual(mergedDateGroups[0].rows.map(row => row.state), ['closed', 'ordered', 'redelivery', 'unscheduled'],
+  'received, ordered, confirmed shortage and fresh demand have separate rows')
+assert.equal(mergedDateGroups[0].rows.find(row => row.state === 'closed')?.deliveredQuantity, 2_500)
+assert.equal(mergedDateGroups[0].rows.find(row => row.state === 'ordered')?.plannedQuantity, 2_000)
+assert.equal(mergedDateGroups[0].rows.filter(row => row.kind === 'unscheduled')
+  .reduce((sum, row) => sum + row.unscheduledQuantity, 0), 1_000)
+assert.equal(mergedDateGroups[0].rows.find(row => row.state === 'redelivery')?.unscheduledQuantity, 500)
 
 const distributedReceiptAggregate = makeDateScheduleAggregate([
   makeDeliverySchedule({
@@ -861,24 +855,12 @@ distributedReceiptAggregate.factories[0].quantity = 7
 distributedReceiptAggregate.factories[0].requested_quantity = 7
 distributedReceiptAggregate.factories[0].items[0].quantity = 7
 assert.equal(groupSupplyOrderAggregatesBySupplyDate([distributedReceiptAggregate], 'date_asc').length, 1, 'an allocation child must not create a separate shipment date')
-const distributedReceiptSlice = groupSupplyOrderAggregatesBySupplyDate(
-  [distributedReceiptAggregate],
-  'date_asc',
-)[0].rows[0]
-assert.deepEqual(
-  {
-    quantity: distributedReceiptSlice.quantity,
-    planned: distributedReceiptSlice.plannedQuantity,
-    delivered: distributedReceiptSlice.deliveredQuantity,
-    excess: summarizeSupplyOrderQuantities(
-      distributedReceiptAggregate,
-      distributedReceiptAggregate.factories[0],
-      distributedReceiptSlice,
-    ).deliveryExcess,
-  },
-  { quantity: 7, planned: 1, delivered: 6, excess: 0 },
-  'receipt allocation children must preserve the six-unit fact without inflating dated supply to nine units',
-)
+const distributedReceiptSlices = groupSupplyOrderAggregatesBySupplyDate(
+  [distributedReceiptAggregate], 'date_asc',
+)[0].rows
+assert.deepEqual(distributedReceiptSlices.map(row => [row.state, row.quantity]), [['closed', 6], ['ordered', 1]],
+  'the physical parent counts six once; its allocation child does not create a second receipt')
+assert.equal(distributedReceiptSlices.reduce((sum, row) => sum + row.deliveredQuantity, 0), 6)
 
 // CIV-19: need 20, allocated 10 on the 7th, a physical 15 still expected on the 9th.
 const civ = makeDateScheduleAggregate([
@@ -942,6 +924,10 @@ assert.deepEqual(supplyOrderDateSliceItems(receivedCard).map((item) => [item.req
 assert.equal(stockCard.stockWithoutDate, true)
 assert.equal(stockCard.unscheduledQuantity, 5)
 assert.deepEqual(supplyOrderDateSliceItems(stockCard).map((item) => [item.request_id, item.quantity]), [['new-stock-request', 5]])
+assert.deepEqual(filterSupplyOrderDateSlices([receivedCard, stockCard], 'open', 'all').map(row => row.quantity), [5],
+  'the new stock request must not reopen the old fully accepted physical delivery')
+assert.deepEqual(filterSupplyOrderDateSlices([receivedCard, stockCard], 'closed', 'all').map(row => row.quantity), [30],
+  'the old physical delivery remains available as a closed history row')
 assert.deepEqual(summarizeSupplyOrderQuantities(stockAndMachine, stockAndMachine.factories[0]), {
   requestedQuantity: 35, stockQuantity: 5, demandQuantity: 30, deliveryQuantity: 30,
   allocatedQuantity: 25, physicalReceivedQuantity: 30, outstandingQuantity: 5,
@@ -990,6 +976,54 @@ assert.deepEqual(
   ['no_supply_date'],
   'an unscheduled material without production date must stay visible in the no-date group',
 )
+
+// Demand date and supplier date are distinct working groups; a late promise is
+// not a confirmed warehouse shortage.
+const promisedFifteen = makeDateScheduleAggregate([makeDeliverySchedule({
+  id: 'promised-15', delivery_date: '2026-10-12', quantity: 15, status: 'planned',
+  received_quantity: null, allocated_quantity: null, allocated_physical_quantity: null,
+  delivered_at: null,
+})], { plannedMaterialDate: '2026-10-10', unscheduledQuantity: 5 })
+promisedFifteen.factories[0].items[0].quantity = 20
+promisedFifteen.factories[0].quantity = promisedFifteen.quantity = 20
+assert.deepEqual(groupSupplyOrderAggregatesBySupplyDate([promisedFifteen], 'date_asc')
+  .map(group => [group.dateKey, group.rows.map(row => [row.state, row.quantity])]), [
+    ['2026-10-10', [['unscheduled', 5]]],
+    ['2026-10-12', [['ordered', 15]]],
+  ], 'the five unplaced sheets remain on the need date, while fifteen move to their supply date')
+assert.equal(groupSupplyOrderAggregatesBySupplyDate([promisedFifteen], 'date_asc')
+  .flatMap(group => group.rows).some(row => row.state === 'redelivery'), false,
+  'even an overdue, unreceived plan must not become confirmed redelivery')
+
+const partialTwelve = makeDateScheduleAggregate([makeDeliverySchedule({
+  id: 'accepted-12-of-15', delivery_date: '2026-10-12', quantity: 15,
+  received_quantity: 12, allocated_quantity: 12, allocated_physical_quantity: 12,
+})], { plannedMaterialDate: '2026-10-10', unscheduledQuantity: 3 })
+partialTwelve.factories[0].items[0].quantity = 15
+partialTwelve.factories[0].quantity = partialTwelve.quantity = 15
+const partialRows = groupSupplyOrderAggregatesBySupplyDate([partialTwelve], 'date_asc').flatMap(group => group.rows)
+assert.deepEqual(partialRows.map(row => [row.state, row.quantity]), [['closed', 12], ['redelivery', 3]])
+assert.deepEqual(filterSupplyOrderDateSlices(partialRows, 'open', 'all').map(row => row.quantity), [3])
+assert.deepEqual(filterSupplyOrderDateSlices(partialRows, 'closed', 'all').map(row => row.quantity), [12])
+assert.deepEqual(partialRows[1].origins?.map(origin => [origin.date, origin.supplierName]),
+  [['2026-10-12', 'Металл А']])
+
+const partialWithTwoOrdered = structuredClone(partialTwelve)
+partialWithTwoOrdered.factories[0].items[0].delivery_schedules.push(makeDeliverySchedule({
+  id: 'new-date-two', redelivery_of_schedule_id: 'accepted-12-of-15',
+  delivery_date: '2026-10-25', quantity: 2, status: 'planned',
+  supplier_id: 'supplier-b', supplier_name: 'Металл Б', received_quantity: null,
+  allocated_quantity: null, allocated_physical_quantity: null, delivered_at: null,
+}))
+partialWithTwoOrdered.factories[0].planned_schedule_quantity = partialWithTwoOrdered.planned_schedule_quantity = 2
+partialWithTwoOrdered.factories[0].unscheduled_quantity = partialWithTwoOrdered.unscheduled_quantity = 1
+const partialWithTwoGroups = groupSupplyOrderAggregatesBySupplyDate([partialWithTwoOrdered], 'date_asc')
+assert.deepEqual(partialWithTwoGroups.map(group => [group.dateKey, group.rows.map(row => [row.state, row.quantity])]), [
+  ['2026-10-12', [['closed', 12], ['redelivery', 1]]],
+  ['2026-10-25', [['ordered', 2]]],
+], 'only the scheduled part moves to the new supplier date')
+assert.deepEqual(partialWithTwoGroups[1].rows[0].origins?.map(origin => origin.date), ['2026-10-12'])
+assert.equal(partialWithTwoGroups[1].rows[0].supplierName, 'Металл Б')
 
 const aggregateBatchSchedule = makeAggregate()
 const aggregateBatchDelivery = makeDeliverySchedule({
@@ -1711,7 +1745,7 @@ function makeAggregate(): SupplyOrderAggregate {
         category: 'sheet_metal', item_name: 'Лист 8 мм',
         quantity: 8, unit: 'шт.', supplier_id: 'supplier-a', supplier_name: 'Металл А', weight_kg: 100,
         order_status: 'ordered', supply_delivery_date: '2026-07-18', planned_schedule_quantity: 8,
-        delivered_schedule_quantity: 0, unscheduled_quantity: 0, delivery_schedules: [],
+        delivered_schedule_quantity: 0, unscheduled_quantity: 0, delivery_schedules: [makeDeliverySchedule({ id: 'base-planned', delivery_date: '2026-07-18', quantity: 8, status: 'planned', received_quantity: null, allocated_quantity: null, allocated_physical_quantity: null, delivered_at: null })],
         long_stock_purchase_plan: null, position_revision: null,
       }],
     }],

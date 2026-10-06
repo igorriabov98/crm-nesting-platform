@@ -1,3 +1,4 @@
+import { requirePermission } from '@/lib/permissions/server'
 import { withPagePermission } from '@/lib/permissions/page-guard'
 import Link from 'next/link'
 import { ArrowLeft, ChartNoAxesColumnIncreasing, ClipboardList, History } from 'lucide-react'
@@ -122,13 +123,14 @@ async function SummaryView({
   activeFactoryId: string | null
   factoriesError: string | null
 }) {
+  const { userId } = await requirePermission('supply_orders', 'view')
   const suppliersPromise = getSuppliers({ active_only: true })
 
   if (factoriesError) {
     return <div role="alert" className="rounded-2xl border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive">{factoriesError}</div>
   }
 
-  const [{ data: aggregates, error }, { data: suppliers }] = await Promise.all([
+  const [{ data: aggregates, error }, { data: suppliers, error: supplierError }] = await Promise.all([
     getSupplyOrderAggregates(activeFactoryId),
     suppliersPromise,
   ])
@@ -143,6 +145,8 @@ async function SummaryView({
       factories={factories}
       activeFactoryId={activeFactoryId}
       suppliers={suppliers || []}
+      supplierError={supplierError}
+      userId={userId}
     />
   )
 }
