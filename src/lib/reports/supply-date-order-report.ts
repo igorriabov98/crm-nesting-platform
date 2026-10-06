@@ -63,9 +63,12 @@ export function buildSupplyDateOrderReport(
           ? 'Проволока'
           : MATERIAL_CATEGORY_LABELS[slice.aggregate.category],
         material: slice.aggregate.item_name,
-        characteristics: slice.aggregate.characteristics
-          .map((part) => `${part.label}: ${part.value}`)
-          .join('; '),
+        characteristics: [
+          ...slice.aggregate.characteristics.map((part) => `${part.label}: ${part.value}`),
+          ...(slice.state === 'redelivery' ? slice.ambiguousOrigin
+            ? ['Источник довоза требует уточнения']
+            : (slice.origins || []).map((origin) => `Довоз из поставки ${origin.date} · ${origin.supplierName || 'без поставщика'}`) : []),
+        ].join('; '),
         unit: slice.aggregate.unit,
         supplier: supplierNames.length > 0 ? supplierNames.join(', ') : 'Не назначен',
         machines: machineRoutes.length > 0
@@ -83,7 +86,7 @@ export function buildSupplyDateOrderReport(
         }]
       }
 
-      const purchase = makeRemainingLongStockPurchase({ ...factory, items: sliceItems }, slice.unscheduledQuantity)
+      const purchase = makeRemainingLongStockPurchase({ ...factory, items: sliceItems }, slice.unscheduledQuantity, slice.pieceLengthMm)
       if (purchase.components.length === 0) {
         return [{
           ...baseRow,
@@ -148,6 +151,7 @@ export function formatSupplyDateLabel(dateKey: string) {
 function makeRemainingLongStockPurchase(
   factory: SupplyOrderAggregate['factories'][number],
   remainingQuantity: number,
+  pieceLengthMm: number | null = null,
 ) {
   const plans = factory.items
     .map((item) => item.long_stock_purchase_plan)
@@ -182,7 +186,10 @@ function makeRemainingLongStockPurchase(
     }
   }
 
-  const remainingComponents = purchase.components
+  const matchingComponents = pieceLengthMm
+    ? purchase.components.filter((component) => component.length_mm === pieceLengthMm)
+    : purchase.components
+  const remainingComponents = matchingComponents
     .map((component) => ({
       ...component,
       piece_count: Math.max(
@@ -199,7 +206,7 @@ function makeRemainingLongStockPurchase(
     return { components: remainingComponents, issue: '' }
   }
 
-  const matchingLengths = purchase.components.filter((component) => (
+  const matchingLengths = matchingComponents.filter((component) => (
     Number.isInteger(remainingQuantity / component.length_mm)
     && remainingQuantity / component.length_mm > 0
   ))

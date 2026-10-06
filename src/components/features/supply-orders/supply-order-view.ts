@@ -1,3 +1,4 @@
+import { redeliveryOrigins, redeliveryChain, type RedeliveryOrigin } from '@/lib/supply-orders/redelivery'
 import { materialFulfillment } from '@/lib/supply-orders/material-fulfillment'
 import { displayMaterialCategory } from '@/lib/materials/display-category'
 import { addDays, endOfWeek, isWithinInterval, startOfWeek } from 'date-fns'
@@ -165,6 +166,13 @@ export type SupplyOrderDateSlice = {
   deliveredScheduleCount: number
   sourceQuantities?: Record<string, number>
   stockWithoutDate?: boolean
+  state?: 'unscheduled' | 'ordered' | 'redelivery' | 'closed' | 'review'
+  scheduleIds?: string[]
+  origins?: RedeliveryOrigin[]
+  ambiguousOrigin?: boolean
+  supplierId?: string | null
+  supplierName?: string | null
+  pieceLengthMm?: number | null
 }
 
 export function supplyOrderSourceKey(item: Pick<SupplyOrderAggregateSourceItem, 'table' | 'id'>) {
@@ -757,17 +765,19 @@ export function filterAndSortAggregates(aggregates: SupplyOrderAggregate[], filt
       return [projectSupplyOrderAggregate(aggregate, isReturnedSupplyOrderSource, 'review')].filter(Boolean) as SupplyOrderAggregate[]
     }
     if (filters.status === 'closed') {
-      if (!hasReturnedItems && !hasCancelledReturnedItems) {
-        return isSupplyOrderAggregateClosed(aggregate) ? [aggregate] : []
-      }
-      const cancelled = projectSupplyOrderAggregate(aggregate, isCancelledReturnedSupplyOrderSource, 'cancelled')
-      const regular = projectSupplyOrderAggregate(
-        aggregate,
+      if (!hasReturnedItems && !hasCancelledReturnedItems) return [aggregate]
+      return [
+        projectSupplyOrderAggregate(aggregate, isCancelledReturnedSupplyOrderSource, 'cancelled'),
+        projectSupplyOrderAggregate(aggregate,
+          (item) => !isReturnedSupplyOrderSource(item) && !isCancelledReturnedSupplyOrderSource(item), 'regular'),
+      ].filter(Boolean) as SupplyOrderAggregate[]
+    }
+    if (filters.status === 'open') {
+      if (!hasReturnedItems && !hasCancelledReturnedItems) return [aggregate]
+      const regular = projectSupplyOrderAggregate(aggregate,
         (item) => !isReturnedSupplyOrderSource(item) && !isCancelledReturnedSupplyOrderSource(item),
-        'regular',
-      )
-      return [cancelled, regular && isSupplyOrderAggregateClosed(regular) ? regular : null]
-        .filter(Boolean) as SupplyOrderAggregate[]
+        'regular')
+      return regular ? [regular] : []
     }
     if (filters.status === 'pending' || filters.status === 'ordered') {
       const matching = projectSupplyOrderAggregate(aggregate, item => {
@@ -790,7 +800,8 @@ export function filterAndSortAggregates(aggregates: SupplyOrderAggregate[], filt
   })
   const filtered = projected.filter((aggregate) => {
     if (filters.category !== 'all' && displayMaterialCategory(aggregate.category, null, aggregate.unit) !== filters.category) return false
-    if (filters.status === 'open' && isSupplyOrderAggregateClosed(aggregate)) return false
+    if ((filters.status === 'open' || filters.status === 'closed')
+      && filterSupplyOrderDateSlices(buildSupplyOrderDateSlices(aggregate), filters.status, 'all').length === 0) return false
     if (filters.status === 'scheduled' && aggregate.planned_schedule_quantity <= 0) return false
     if (filters.status === 'unscheduled' && !hasSupplyOrderRedelivery(aggregate)) return false
     if (filters.supplier !== 'all' && !aggregate.factories.some((factory) => (
@@ -889,7 +900,11 @@ export function filterSupplyOrderDateSlices(
   schedule: AggregateFiltersState['schedule'],
 ) {
   return rows.filter((row) => {
-    if (status === 'unscheduled' && row.kind !== 'unscheduled') return false
+    const closed = row.state === 'closed' || (!row.state && row.deliveredScheduleCount > 0 && row.plannedQuantity <= 0 && row.unscheduledQuantity <= 0)
+    if (status === 'open' && closed) return false
+    if (status === 'closed' && !closed) return false
+    if (status === 'scheduled' && row.state !== 'ordered') return false
+    if (status === 'unscheduled' && row.state !== 'redelivery') return false
     if (schedule === 'scheduled') return row.kind === 'delivery'
       && row.plannedQuantity + row.deliveredQuantity > 0.000001
     if (schedule === 'unscheduled') return row.kind === 'unscheduled'
@@ -898,11 +913,41 @@ export function filterSupplyOrderDateSlices(
   })
 }
 
+function unscheduledPurchaseParts(item: SupplyOrderAggregateSourceItem, quantity: number) {
+  const components = item.long_stock_purchase_plan?.components || []
+  if (components.length === 0) return [{ pieceLengthMm: null, quantity }]
+  const used = new Map<number, number>()
+  for (const schedule of item.delivery_schedules) {
+    if (schedule.status === 'cancelled') continue
+    const length = Number(schedule.planned_piece_length_mm || schedule.received_piece_length_mm || 0)
+    if (length <= 0) continue
+    const accepted = schedule.status === 'delivered' ? reservedSupplyQuantity(schedule) : Number(schedule.quantity || 0)
+    used.set(length, (used.get(length) || 0) + accepted)
+  }
+  let remainder = quantity
+  const parts: Array<{ pieceLengthMm: number | null; quantity: number }> = []
+  for (const component of components) {
+    if (remainder <= 0.000001) break
+    const length = component.length_mm
+    const available = Math.max(length * component.piece_count - (used.get(length) || 0), 0)
+    const partQuantity = Math.min(available, remainder)
+    if (partQuantity <= 0.000001) continue
+    parts.push({ pieceLengthMm: length, quantity: partQuantity })
+    remainder -= partQuantity
+    used.set(length, (used.get(length) || 0) + partQuantity)
+  }
+  if (remainder > 0.000001) parts.push({ pieceLengthMm: null, quantity: remainder })
+  return parts
+}
+
 function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {
   const slices = new Map<string, Omit<SupplyOrderDateSlice, 'id' | 'aggregate'>>()
 
-  const getSlice = (dateKey: string, kind: 'delivery' | 'unscheduled' = 'delivery', stockWithoutDate = false) => {
-    const key = `${dateKey}:${kind}:${stockWithoutDate}`
+  const getSlice = (dateKey: string, kind: 'delivery' | 'unscheduled' = 'delivery', stockWithoutDate = false,
+    state: SupplyOrderDateSlice['state'] = kind === 'unscheduled' ? 'unscheduled' : 'closed',
+    schedule?: SupplyOrderDeliverySchedule, origins: RedeliveryOrigin[] = [], pieceLengthMm: number | null = null) => {
+    const length = pieceLengthMm || schedule?.planned_piece_length_mm || null
+    const key = `${dateKey}:${kind}:${stockWithoutDate}:${state}:${schedule?.supplier_id || ''}:${length || ''}:${origins.map((o) => o.id).join(',')}`
     const existing = slices.get(key)
     if (existing) return existing
     const created = {
@@ -916,7 +961,10 @@ function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {
       plannedScheduleCount: 0,
       deliveredScheduleCount: 0,
       sourceQuantities: {} as Record<string, number>,
-      stockWithoutDate,
+      stockWithoutDate, state, scheduleIds: [] as string[], origins,
+      supplierId: schedule?.supplier_id || null, supplierName: schedule?.supplier_name || null,
+      pieceLengthMm: length,
+      ambiguousOrigin: state === 'redelivery' && origins.length > 1,
     }
     slices.set(key, created)
     return created
@@ -926,7 +974,8 @@ function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {
     if (factory.items.some((item) => (
       isReturnedSupplyOrderSource(item) || isCancelledReturnedSupplyOrderSource(item)
     ))) {
-      getSlice(factory.production_date || aggregate.planned_material_date || 'no_supply_date')
+      getSlice(factory.production_date || aggregate.planned_material_date || 'no_supply_date', 'delivery', false,
+        factory.items.every(isCancelledReturnedSupplyOrderSource) ? 'closed' : 'review')
     }
     const activeItems = factory.items.filter((item) => !isReturnedSupplyOrderSource(item) && !isCancelledReturnedSupplyOrderSource(item))
     const sourceCoverage = new Map(activeItems.map((item) => [supplyOrderSourceKey(item), {
@@ -946,19 +995,32 @@ function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {
             ? scheduleById.get(schedule.receipt_parent_schedule_id) || schedule
             : schedule
           const dateKey = receipt.delivery_date || factory.production_date || aggregate.planned_material_date || 'no_supply_date'
-          const slice = getSlice(dateKey)
+          const slice = getSlice(dateKey, 'delivery', false, 'closed', receipt, redeliveryChain(receipt, [...scheduleById.values()]))
           const key = supplyOrderSourceKey(item)
           slice.sourceQuantities![key] = (slice.sourceQuantities![key] || 0) + quantity
         }
       }
     }
+    const allSchedules = [...scheduleById.values()]
+    const originBudgets = new Map(redeliveryOrigins(allSchedules).map((origin) => [origin.id, origin.available]))
     const plannedSchedules = activeItems.flatMap((item) => item.delivery_schedules
       .filter((schedule) => schedule.status === 'planned')
       .map((schedule) => ({ owner: item, schedule })))
       .sort((left, right) => left.schedule.delivery_date.localeCompare(right.schedule.delivery_date)
         || left.schedule.id.localeCompare(right.schedule.id))
     const plannedBySourceLength = new Map<string, number>()
+    const plannedOrigins = new Map<string, RedeliveryOrigin[]>()
+    const ambiguousPlans = new Set<string>()
     for (const { owner, schedule } of plannedSchedules) {
+      const lineage = redeliveryChain(schedule, allSchedules)
+      const possibleOrigins = lineage.length === 0 && !schedule.redelivery_of_schedule_id
+        ? redeliveryOrigins(allSchedules, owner.delivery_schedules).filter((origin) => {
+          const source = scheduleById.get(origin.id)
+          return Boolean(source && (!source.delivered_at || schedule.created_at >= source.delivered_at)
+            && source.planned_piece_length_mm === schedule.planned_piece_length_mm)
+        }) : []
+      plannedOrigins.set(schedule.id, lineage.length > 0 ? lineage : possibleOrigins)
+      if (possibleOrigins.length > 1) ambiguousPlans.add(schedule.id)
       let remaining = Math.max(Number(schedule.quantity || 0), 0)
       const candidates = [owner, ...activeItems.filter((item) => item !== owner)]
       for (const item of candidates) {
@@ -983,7 +1045,9 @@ function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {
         plannedBySourceLength.set(lengthKey, (plannedBySourceLength.get(lengthKey) || 0) + quantity)
         remaining -= quantity
         const dateKey = schedule.delivery_date || factory.production_date || aggregate.planned_material_date || 'no_supply_date'
-        const slice = getSlice(dateKey)
+        const slice = getSlice(dateKey, 'delivery', false, 'ordered', schedule,
+          plannedOrigins.get(schedule.id))
+        if (ambiguousPlans.has(schedule.id)) slice.ambiguousOrigin = true
         const key = supplyOrderSourceKey(item)
         slice.sourceQuantities![key] = (slice.sourceQuantities![key] || 0) + quantity
         if (remaining <= 0.000001) break
@@ -994,7 +1058,10 @@ function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {
       for (const schedule of item.delivery_schedules) {
         if (schedule.status === 'cancelled' || (schedule.status === 'delivered' && !physicalIds.has(schedule.id))) continue
         const dateKey = schedule.delivery_date || factory.production_date || aggregate.planned_material_date || 'no_supply_date'
-        const slice = getSlice(dateKey)
+        const slice = getSlice(dateKey, 'delivery', false, schedule.status === 'planned' ? 'ordered' : 'closed',
+          schedule, plannedOrigins.get(schedule.id) || redeliveryChain(schedule, allSchedules))
+        if (ambiguousPlans.has(schedule.id)) slice.ambiguousOrigin = true
+        if (!slice.scheduleIds!.includes(schedule.id)) slice.scheduleIds!.push(schedule.id)
         const plannedQuantity = Math.max(Number(schedule.quantity || 0), 0)
         if (schedule.status === 'planned') {
           slice.quantity += plannedQuantity
@@ -1024,14 +1091,39 @@ function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {
       const coverage = sourceCoverage.get(supplyOrderSourceKey(item))!
       const quantity = Math.min(Math.max(item.quantity - coverage.delivered - coverage.planned, 0), remainingUnscheduled)
       if (quantity <= 0.000001) continue
-      const stockWithoutDate = (item.request_kind === 'stock' || !item.machine_id) && !item.planned_material_date
-      const dateKey = stockWithoutDate ? 'no_supply_date'
-        : item.planned_material_date || factory.production_date || aggregate.planned_material_date || 'no_supply_date'
-      const slice = getSlice(dateKey, 'unscheduled', stockWithoutDate)
-      slice.quantity += quantity
-      slice.unscheduledQuantity += quantity
-      const key = supplyOrderSourceKey(item)
-      slice.sourceQuantities![key] = (slice.sourceQuantities![key] || 0) + quantity
+      for (const part of unscheduledPurchaseParts(item, quantity)) {
+        const origins = redeliveryOrigins(allSchedules, item.delivery_schedules)
+          .filter((origin) => part.pieceLengthMm === null
+            || scheduleById.get(origin.id)?.planned_piece_length_mm === part.pieceLengthMm)
+          .map((origin) => ({ ...origin, available: originBudgets.get(origin.id) || 0 }))
+          .filter((origin) => origin.available > 0.000001)
+        const redeliveryQuantity = Math.min(part.quantity, origins.reduce((sum, origin) => sum + origin.available, 0))
+        if (redeliveryQuantity > 0.000001) {
+          const slice = getSlice(origins.length === 1 ? origins[0].date : 'no_supply_date', 'unscheduled', false, 'redelivery',
+            origins.length === 1 ? scheduleById.get(origins[0].id) : undefined, origins, part.pieceLengthMm)
+          slice.quantity += redeliveryQuantity
+          slice.unscheduledQuantity += redeliveryQuantity
+          const key = supplyOrderSourceKey(item)
+          slice.sourceQuantities![key] = (slice.sourceQuantities![key] || 0) + redeliveryQuantity
+          let budget = redeliveryQuantity
+          for (const origin of origins) {
+            const used = Math.min(budget, originBudgets.get(origin.id) || 0)
+            originBudgets.set(origin.id, (originBudgets.get(origin.id) || 0) - used)
+            budget -= used
+          }
+        }
+        const freshQuantity = part.quantity - redeliveryQuantity
+        if (freshQuantity > 0.000001) {
+          const stockWithoutDate = (item.request_kind === 'stock' || !item.machine_id) && !item.planned_material_date
+          const dateKey = stockWithoutDate ? 'no_supply_date'
+            : item.planned_material_date || factory.production_date || aggregate.planned_material_date || 'no_supply_date'
+          const slice = getSlice(dateKey, 'unscheduled', stockWithoutDate, 'unscheduled', undefined, [], part.pieceLengthMm)
+          slice.quantity += freshQuantity
+          slice.unscheduledQuantity += freshQuantity
+          const key = supplyOrderSourceKey(item)
+          slice.sourceQuantities![key] = (slice.sourceQuantities![key] || 0) + freshQuantity
+        }
+      }
       remainingUnscheduled -= quantity
     }
     if (remainingUnscheduled > 0.000001) {
@@ -1042,9 +1134,9 @@ function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {
     }
   }
 
-  return Array.from(slices.values()).map((slice) => ({
+  return Array.from(slices.entries()).map(([key, slice]) => ({
     ...slice,
-    id: `${aggregate.id}|supply-date:${slice.dateKey}${slice.kind === 'unscheduled' ? ':unscheduled' : ''}${slice.stockWithoutDate ? ':stock' : ''}`,
+    id: `${aggregate.id}|supply-date:${key}`,
     aggregate,
   }))
 }

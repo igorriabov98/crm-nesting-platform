@@ -213,7 +213,7 @@ assert.deepEqual(optionList.find((option) => option.category === 'sheet_metal')?
   ['Hardox', 'Ст3'].sort((left, right) => left.localeCompare(right, 'ru')))
 assert.deepEqual(optionList.find((option) => option.category === 'knives')?.steelTypes, [MISSING_STEEL_TYPE])
 assert.deepEqual(optionList.find((option) => option.category === 'circle')?.steelTypes, [MISSING_STEEL_TYPE])
-assert.equal(optionList.find((option) => option.category === 'pipe')?.count, 1, 'wire does not appear under pipes')
+assert.equal(optionList.find((option) => option.category === 'pipe')?.count, 2, 'two pipe bar lengths are separate; wire does not appear under pipes')
 const selectedWire = buildSupplyDateOrderReport(selectSupplyDateOrderAggregates(selectable, {
   categories: ['circle'], steelTypes: { circle: [MISSING_STEEL_TYPE] },
 }), reportDate)
