@@ -59,7 +59,7 @@ import type { SupplierWithRelations } from '@/lib/actions/suppliers'
 import { ReturnLongStockPositionButton } from './ReturnLongStockPositionButton'
 import { CancelReturnedSupplyPositionDialog } from '@/components/features/requests/CancelReturnedSupplyPositionDialog'
 import type { SupplyPositionTable } from '@/lib/supply-orders/position-revisions'
-import { SupplyQuantitySummary } from './SupplyQuantitySummary'
+import { SupplyOrderOverallSummary, SupplyQuantitySummary } from './SupplyQuantitySummary'
 import { SupplyDateOrderExportButton } from './SupplyDateOrderExportButton'
 import { SupplyOrderFactoryToggle } from './SupplyOrderFactoryToggle'
 import {
@@ -78,6 +78,7 @@ import {
   summarizeSupplyOrderQuantities,
   summarizeSupplyOrderRedeliveryMachineRoutes,
   summarizeSupplyOrderUnscheduledMachineRoutes,
+  supplyOrderDateSliceItems,
   type AggregateFiltersState,
   type SupplyOrderAggregateSort,
   type SupplyOrderAggregateStatusFilter,
@@ -129,6 +130,10 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
   }), [])
   const [filters, setFilters] = useState<AggregateFiltersState>(defaultFilters)
   const visibleAggregates = useMemo(() => filterAndSortAggregates(aggregates, filters), [aggregates, filters])
+  const otherMaterialsCount = useMemo(() => filterAndSortAggregates(aggregates, { ...defaultFilters, status: 'all' }).length,
+    [aggregates, defaultFilters])
+  const openMaterialsCount = useMemo(() => filterAndSortAggregates(aggregates, defaultFilters).length,
+    [aggregates, defaultFilters])
 
   const prioritizedAggregates = useMemo(() => {
     return partitionSupplyOrderAggregatesByRedelivery(visibleAggregates)
@@ -193,9 +198,11 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
         <div className="rounded-xl border border-[#E8ECF0] bg-white p-10 text-center text-[#6B7280]">
           {aggregates.length === 0
             ? 'Нет материалов для закупки или истории закрытых поставок по выбранному заводу.'
-            : 'По выбранным фильтрам материалы не найдены.'}
+            : filters.status === 'open' && openMaterialsCount === 0 && otherMaterialsCount > 0
+              ? `Незакрытых материалов нет. Остальных материалов: ${otherMaterialsCount}.`
+              : 'По выбранным фильтрам материалы не найдены.'}
           {aggregates.length > 0 && (
-            <div><Button type="button" variant="outline" className="mt-4" onClick={() => setFilters(defaultFilters)}>Сбросить фильтры</Button></div>
+            <div><Button type="button" variant="outline" className="mt-4" onClick={() => setFilters({ ...defaultFilters, status: 'all' })}>Показать все</Button></div>
           )}
         </div>
       ) : (
@@ -249,17 +256,37 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
               </div>
 
               <div className="space-y-3">
-                  {group.rows.map((slice) => (
-                    <MaterialOrderCard
-                      key={slice.id}
-                      aggregate={slice.aggregate}
-                      factory={slice.aggregate.factories[0]}
-                      suppliers={suppliers}
-                      isExpanded={expanded.has(slice.id)}
-                      onToggle={() => toggle(slice.id)}
-                      dateSlice={slice}
-                    />
-                  ))}
+                {(group.dateKey === 'no_supply_date' ? [
+                  { label: 'На склад · без срока', rows: group.rows.filter((slice) => slice.stockWithoutDate) },
+                  { label: 'Прочие потребности без даты', rows: group.rows.filter((slice) => !slice.stockWithoutDate) },
+                ] : [{ label: '', rows: group.rows }]).filter((section) => section.rows.length > 0).map((section) => <div key={section.label} className="space-y-3">
+                  {section.label && <h3 className="px-1 text-sm font-semibold text-amber-950">{section.label}</h3>}
+                  {section.rows.map((slice) => {
+                    const firstVisibleSlice = group.rows.find((row) => row.aggregate.id === slice.aggregate.id
+                      && (group.dateKey !== 'no_supply_date' || row.stockWithoutDate))
+                      || group.rows.find((row) => row.aggregate.id === slice.aggregate.id)
+                    const firstForMaterial = firstVisibleSlice?.id === slice.id
+                      && grouped.find((candidate) => candidate.rows.some((row) => row.aggregate.id === slice.aggregate.id))?.dateKey === group.dateKey
+                    const factory = slice.aggregate.factories[0]
+                    return <div key={slice.id} className="space-y-3">
+                      {firstForMaterial && factory && (
+                        <SupplyOrderOverallSummary
+                          summary={summarizeSupplyOrderQuantities(slice.aggregate, factory)}
+                          unit={slice.aggregate.unit}
+                          isBar={isSupplyOrderBarMaterial(slice.aggregate)}
+                        />
+                      )}
+                      <MaterialOrderCard
+                        aggregate={slice.aggregate}
+                        factory={factory}
+                        suppliers={suppliers}
+                        isExpanded={expanded.has(slice.id)}
+                        onToggle={() => toggle(slice.id)}
+                        dateSlice={slice}
+                      />
+                    </div>
+                  })}
+                </div>)}
               </div>
             </section>
           ))}
@@ -287,10 +314,35 @@ function MaterialOrderCard({
   dateSlice?: SupplyOrderDateSlice
 }) {
   const [deliveryOpen, setDeliveryOpen] = useState(false)
-  const activeFactoryItems = factory?.items.filter((item) => !isReturnedSupplyOrderSource(item)) ?? []
+  const activeFactoryItems = (dateSlice ? supplyOrderDateSliceItems(dateSlice) : factory?.items || [])
+    .filter((item) => !isReturnedSupplyOrderSource(item))
+  const editorFactory = factory && dateSlice?.kind === 'unscheduled'
+    ? {
+      ...factory,
+      items: activeFactoryItems,
+      quantity: dateSlice.unscheduledQuantity,
+      requested_quantity: dateSlice.unscheduledQuantity,
+      reserved_quantity: 0,
+      weight_kg: activeFactoryItems.every((item) => item.weight_kg !== null)
+        ? activeFactoryItems.reduce((sum, item) => sum + (item.weight_kg || 0), 0) : null,
+      item_count: activeFactoryItems.length,
+      machine_count: new Set(activeFactoryItems.map((item) => item.machine_id).filter(Boolean)).size,
+      pending_count: activeFactoryItems.filter((item) => item.order_status === 'pending').length,
+      ordered_count: activeFactoryItems.filter((item) => item.order_status === 'ordered').length,
+      delivered_count: activeFactoryItems.filter((item) => item.order_status === 'delivered').length,
+      suppliers: factory.suppliers.filter((supplier) => activeFactoryItems.some((item) => item.supplier_id === supplier.id)),
+      planned_schedule_quantity: 0,
+      delivered_schedule_quantity: 0,
+      unscheduled_quantity: dateSlice.unscheduledQuantity,
+      production_date: dateSlice.stockWithoutDate ? null : factory.production_date,
+      supply_delivery_date: dateSlice.stockWithoutDate ? null : factory.supply_delivery_date,
+      delivery_schedule_count: 0,
+      has_delivery_schedules: false,
+    }
+    : factory
   const routes = factory ? summarizeSupplyOrderMachineRoutes(activeFactoryItems) : []
   const unscheduledRoutes = factory
-    ? summarizeSupplyOrderUnscheduledMachineRoutes(activeFactoryItems, factory.unscheduled_quantity)
+    ? summarizeSupplyOrderUnscheduledMachineRoutes(activeFactoryItems, dateSlice?.unscheduledQuantity ?? factory.unscheduled_quantity)
     : []
   const redeliveryRoutes = attentionKind === 'redelivery' && factory
     ? summarizeSupplyOrderRedeliveryMachineRoutes(factory.items)
@@ -406,8 +458,11 @@ function MaterialOrderCard({
         </header>
 
         <SupplyQuantitySummary summary={quantitySummary} unit={aggregate.unit} dateSlice={dateSlice}
-          productionDate={factory?.production_date ?? aggregate.planned_material_date}
-          weight={displayWeight} itemCount={aggregate.item_count} isBar={isSupplyOrderBarMaterial(aggregate)} />
+          productionDate={dateSlice?.stockWithoutDate || (dateSlice && activeFactoryItems.length > 0
+            && activeFactoryItems.every((item) => (item.request_kind === 'stock' || !item.machine_id) && !item.planned_material_date))
+            ? null : factory?.production_date ?? aggregate.planned_material_date}
+          weight={displayWeight} itemCount={dateSlice ? activeFactoryItems.length : aggregate.item_count}
+          isBar={isSupplyOrderBarMaterial(aggregate)} showOverall={!dateSlice} />
       </div>
 
       <div className="border-t border-border lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
@@ -415,14 +470,14 @@ function MaterialOrderCard({
           <div className="flex items-center justify-between gap-3 xl:max-w-3xl">
             <h4 className="flex items-center gap-2 text-sm font-semibold text-foreground">
               <Cog className="h-4 w-4 text-primary" />
-              Заявки (машины)
+              Заявки по этому объёму
             </h4>
             <span className="text-xs text-muted-foreground">{routes.length}</span>
           </div>
 
           {dateSlice && (
             <p className="mt-1 text-xs leading-5 text-muted-foreground xl:max-w-3xl">
-              Потребности по машинам. Распределение объёма этой даты фиксируется при приёмке.
+              {isUnscheduledSlice ? 'Заявки с незапланированным остатком.' : 'Заявки, которым выделен объём этой поставки или назначен график.'}
             </p>
           )}
 
@@ -436,7 +491,8 @@ function MaterialOrderCard({
                   >
                     <span className="min-w-0">
                       <span className="block break-words font-medium text-primary">{route.machineName}</span>
-                      {route.plannedMaterialDate && (
+                        {!route.machineId && !route.plannedMaterialDate && <span className="mt-0.5 block text-xs leading-5 text-amber-800">На склад · срок не задан</span>}
+                        {route.plannedMaterialDate && (
                         <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
                           Мат.план производства: {formatDate(route.plannedMaterialDate)}
                         </span>
@@ -449,7 +505,7 @@ function MaterialOrderCard({
                     </span>
                     <span className="flex shrink-0 flex-col items-end gap-0.5 tabular-nums">
                       <span className="font-semibold text-foreground">
-                        {dateSlice && <span className="mr-1 text-xs font-normal text-muted-foreground">Всего по заявке</span>}
+                        {dateSlice && <span className="mr-1 text-xs font-normal text-muted-foreground">{route.machineId ? 'Потребность заявки машины' : 'Новая складская закупка'}</span>}
                         {formatAmount(route.quantity)} {aggregate.unit}
                       </span>
                       {attentionByRequest.get(route.requestId) && (
@@ -464,7 +520,7 @@ function MaterialOrderCard({
             </ul>
           ) : (
             <div className="mt-2 rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground xl:max-w-3xl">
-              Машины для этого материала не найдены.
+              Заявок, которым выделен этот объём, нет.
             </div>
           )}
 
@@ -477,7 +533,7 @@ function MaterialOrderCard({
               aria-controls={detailsId}
               onClick={onToggle}
             >
-              <span>{isExpanded ? 'Скрыть позиции заявок' : `Показать позиции заявок (${factory.item_count})`}</span>
+              <span>{isExpanded ? 'Скрыть позиции заявок' : `Показать позиции заявок (${dateSlice ? activeFactoryItems.length : factory.item_count})`}</span>
               <ChevronDown className={`h-4 w-4 transition-transform motion-reduce:transition-none ${isExpanded ? 'rotate-180' : ''}`} />
             </Button>
           )}
@@ -527,17 +583,18 @@ function MaterialOrderCard({
         )}
       </div>
 
-      {isExpanded && factory && <MachineItems id={detailsId} factory={factory} />}
+      {isExpanded && factory && <MachineItems id={detailsId} factory={{ ...factory, items: activeFactoryItems }} />}
 
       {factory && (
         <div id={deliveryId} hidden={!deliveryOpen} className="space-y-3 border-t border-border bg-muted/15 p-3 sm:p-4">
           <FactoryDeliveryEditor
             aggregate={aggregate}
-            factory={factory}
+            factory={editorFactory!}
             suppliers={suppliers}
             dateSlice={plannedOnlyDateSlice}
             appendUnscheduled={attentionKind === 'redelivery' || isUnscheduledSlice}
             allowFinance={!isUnscheduledSlice}
+            mutationItems={isUnscheduledSlice ? activeFactoryItems.map((item) => ({ table: item.table, id: item.id })) : undefined}
           />
           {hasMixedPlannedAndUnscheduled && (
             <FactoryDeliveryEditor
@@ -764,7 +821,7 @@ function FactoryDeliveryEditorForm({
     : dateSlice
   const [scheduleDrafts, setScheduleDrafts] = useState<ScheduleDraft[]>(() => {
     const drafts = buildInitialSupplyOrderScheduleDrafts(factory, todayIsoDate(), draftDateSlice)
-    if (!compact || draftDateSlice?.dateKey !== 'no_supply_date') return drafts
+    if ((!compact || draftDateSlice?.dateKey !== 'no_supply_date') && !dateSlice?.stockWithoutDate) return drafts
     return drafts.map((draft) => ({ ...draft, delivery_date: '' }))
   })
   const [financeOpen, setFinanceOpen] = useState(false)

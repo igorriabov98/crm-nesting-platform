@@ -27,6 +27,7 @@ import {
   summarizeSupplyOrderRedeliveryMachineRoutes,
   summarizeSupplyOrderRequestAttention,
   summarizeSupplyOrderUnscheduledMachineRoutes,
+  supplyOrderDateSliceItems,
   sortSupplyOrderItems,
   type OrderFiltersState,
 } from '@/components/features/supply-orders/supply-order-view'
@@ -398,6 +399,12 @@ assert.deepEqual(filterAndSortAggregates([aggregate, closedAggregate], {
 assert.deepEqual(filterAndSortAggregates([aggregate, closedAggregate], {
   query: '', supplier: 'all', category: 'all', status: 'all', sort: 'date_asc',
 }).map((row) => row.id), ['aggregate', 'closed'], 'the all view must preserve open and closed deliveries')
+assert.equal(filterAndSortAggregates([closedAggregate], {
+  query: '', supplier: 'all', category: 'all', status: 'open', sort: 'date_asc',
+}).length, 0, 'closed-only data leaves the default open filter empty')
+assert.equal(filterAndSortAggregates([closedAggregate], {
+  query: '', supplier: 'all', category: 'all', status: 'all', sort: 'date_asc',
+}).length, 1, 'switching a closed-only view to all reveals the existing material')
 assert.equal(filterAndSortAggregates([aggregate], {
   query: 'машина а', supplier: 'all', category: 'all', status: 'all', sort: 'date_asc',
 }).length, 1, 'aggregate search must include nested machine names')
@@ -893,6 +900,88 @@ const childSummary = summarizeSupplyOrderQuantities(distributedReceiptAggregate,
 assert.equal(childSummary.physicalReceivedQuantity, 6)
 assert.equal(childSummary.allocatedQuantity, 6)
 assert.equal(childSummary.outstandingQuantity, 1)
+
+// One physical receipt of 30 sheets serves only the old machine request (25
+// purchased + 5 already reserved). A later undated stock request needs five new sheets.
+const stockAndMachine = makeAggregate()
+const machineSource = makeAggregateSourceItem({
+  id: 'machine-25', request_id: 'old-machine-request', request_kind: 'machine',
+  machine_id: 'machine-20', machine_name: 'ТЕС.КОМ-20-2026',
+  planned_material_date: '2026-10-01', requested_quantity: 30, reserved_quantity: 5,
+  quantity: 25, unscheduled_quantity: 0, delivered_schedule_quantity: 25,
+  order_status: 'delivered', delivery_schedules: [makeDeliverySchedule({
+    id: 'physical-30', delivery_date: '2026-10-01', quantity: 30,
+    received_quantity: 30, allocated_quantity: 25, allocated_physical_quantity: 25,
+    excess_quantity: 5,
+  })],
+})
+const stockSource = makeAggregateSourceItem({
+  id: 'stock-5', request_id: 'new-stock-request', request_kind: 'stock',
+  machine_id: '', machine_name: 'На склад · ууауа', planned_material_date: null,
+  requested_quantity: 5, reserved_quantity: 0, quantity: 5,
+  unscheduled_quantity: 5, delivery_schedules: [],
+})
+Object.assign(stockAndMachine, {
+  id: 'sheet-30-25-5', planned_material_date: '2026-10-01', quantity: 30,
+  requested_quantity: 35, reserved_quantity: 5, delivered_schedule_quantity: 25,
+  planned_schedule_quantity: 0, unscheduled_quantity: 5, item_count: 2,
+})
+Object.assign(stockAndMachine.factories[0], {
+  quantity: 30, requested_quantity: 35, reserved_quantity: 5,
+  delivered_schedule_quantity: 25, planned_schedule_quantity: 0,
+  unscheduled_quantity: 5, item_count: 2, production_date: '2026-10-01',
+  items: [machineSource, stockSource],
+})
+const splitGroups = groupSupplyOrderAggregatesBySupplyDate([stockAndMachine], 'date_asc')
+assert.deepEqual(splitGroups.map((group) => group.dateKey), ['2026-10-01', 'no_supply_date'])
+const receivedCard = splitGroups[0].rows[0]
+const stockCard = splitGroups[1].rows[0]
+assert.equal(receivedCard.deliveredQuantity, 30)
+assert.equal(receivedCard.sourceQuantities?.['request_sheet:machine-25'], 25)
+assert.deepEqual(supplyOrderDateSliceItems(receivedCard).map((item) => [item.request_id, item.quantity]), [['old-machine-request', 25]])
+assert.equal(stockCard.stockWithoutDate, true)
+assert.equal(stockCard.unscheduledQuantity, 5)
+assert.deepEqual(supplyOrderDateSliceItems(stockCard).map((item) => [item.request_id, item.quantity]), [['new-stock-request', 5]])
+assert.deepEqual(summarizeSupplyOrderQuantities(stockAndMachine, stockAndMachine.factories[0]), {
+  requestedQuantity: 35, stockQuantity: 5, demandQuantity: 30, deliveryQuantity: 30,
+  allocatedQuantity: 25, physicalReceivedQuantity: 30, outstandingQuantity: 5,
+  plannedQuantity: 0, remainingToOrder: 5, deliveryExcess: 0,
+})
+
+const scheduledStock = structuredClone(stockAndMachine)
+scheduledStock.factories[0].items[1].delivery_schedules = [makeDeliverySchedule({
+  id: 'stock-future', delivery_date: '2026-10-04', quantity: 5, status: 'planned',
+  received_quantity: null, allocated_quantity: null, allocated_physical_quantity: null,
+})]
+scheduledStock.factories[0].planned_schedule_quantity = scheduledStock.planned_schedule_quantity = 5
+scheduledStock.factories[0].unscheduled_quantity = scheduledStock.unscheduled_quantity = 0
+const scheduledGroups = groupSupplyOrderAggregatesBySupplyDate([scheduledStock], 'date_asc')
+assert.deepEqual(scheduledGroups.map((group) => group.dateKey), ['2026-10-01', '2026-10-04'])
+assert.deepEqual(supplyOrderDateSliceItems(scheduledGroups[1].rows[0]).map((item) => [item.request_kind, item.planned_material_date, item.quantity]), [['stock', null, 5]])
+
+const datedStock = structuredClone(stockAndMachine)
+datedStock.factories[0].items[1].planned_material_date = '2026-10-01'
+const datedGroups = groupSupplyOrderAggregatesBySupplyDate([datedStock], 'date_asc')
+assert.equal(datedGroups.length, 1)
+assert.deepEqual(datedGroups[0].rows.map((row) => [row.kind, row.quantity]), [['delivery', 30], ['unscheduled', 5]])
+
+const sharedReceipt = structuredClone(stockAndMachine)
+sharedReceipt.factories[0].items[0].quantity = 20
+sharedReceipt.factories[0].items[0].delivery_schedules[0].allocated_quantity = 20
+sharedReceipt.factories[0].items[0].delivery_schedules[0].allocated_physical_quantity = 20
+sharedReceipt.factories[0].items[1].delivery_schedules = [makeDeliverySchedule({
+  id: 'stock-allocation', receipt_parent_schedule_id: 'physical-30',
+  delivery_date: '2026-10-02', quantity: 5, received_quantity: 0,
+  allocated_quantity: 5, allocated_physical_quantity: 5,
+})]
+sharedReceipt.factories[0].quantity = sharedReceipt.quantity = 25
+sharedReceipt.factories[0].delivered_schedule_quantity = sharedReceipt.delivered_schedule_quantity = 25
+sharedReceipt.factories[0].unscheduled_quantity = sharedReceipt.unscheduled_quantity = 0
+const sharedGroups = groupSupplyOrderAggregatesBySupplyDate([sharedReceipt], 'date_asc')
+assert.equal(sharedGroups.length, 1)
+assert.equal(sharedGroups[0].rows[0].deliveredQuantity, 30)
+assert.deepEqual(supplyOrderDateSliceItems(sharedGroups[0].rows[0]).map((item) => [item.request_id, item.quantity]),
+  [['old-machine-request', 20], ['new-stock-request', 5]])
 
 assert.deepEqual(
   groupSupplyOrderAggregatesBySupplyDate([
