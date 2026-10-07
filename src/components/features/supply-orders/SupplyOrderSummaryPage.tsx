@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { createContext, useContext, useEffect, useMemo, useState, useTransition } from 'react'
 import { useSupplySummaryPreferences } from './summary-preferences'
 import { CompactSupplyOrderHeader, CompactSupplyOrderRow } from './CompactSupplyOrderRow'
+import { redeliveryOriginLabel, redeliveryOriginOptionLabel } from './redelivery-origin-label'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import {
@@ -259,7 +260,10 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
       />}
 
       {view === 'list' && <div className="flex flex-wrap items-center gap-2" aria-label="Раздел итогов">
-        {([['unscheduled', 'Без графика'], ['ordered', 'Заказано'], ['redelivery', 'Нужно довезти'], ['all', 'Все']] as const).map(([key, label]) => <Button key={key} size="sm" variant={section === key ? 'default' : 'outline'} aria-pressed={section === key} onClick={() => setPreferences({ ...preferences, section: key })}>{label} <span className="tabular-nums">{matchingRows.flatMap(group => group.rows).filter(row => key === 'all' || row.state === key).length}</span></Button>)}
+        {([['unscheduled', 'Без графика'], ['ordered', 'Заказано'], ['redelivery', 'Нужно довезти'], ['all', 'Все']] as const).map(([key, label]) => {
+          const count = matchingRows.flatMap(group => group.rows).filter(row => key === 'all' || row.state === key).length
+          return <Button key={key} size="sm" variant={section === key ? 'default' : 'outline'} className={key === 'redelivery' && count > 0 ? 'border-destructive bg-destructive text-destructive-foreground hover:bg-destructive/90 hover:text-destructive-foreground focus-visible:ring-destructive' : undefined} aria-pressed={section === key} onClick={() => setPreferences({ ...preferences, section: key })}>{label} <span className="tabular-nums">{count}</span></Button>
+        })}
         {section === 'all' && <SummaryFilterSelect label="Состояние" value={allStatus} display={{ all: 'Все состояния', open: 'Незакрытые', closed: 'Закрытые' }[allStatus]} items={[['all', 'Все состояния'], ['open', 'Незакрытые'], ['closed', 'Закрытые']]} onValueChange={(value) => setPreferences({ ...preferences, allStatus: value as typeof allStatus })} />}
       </div>}
 
@@ -1225,7 +1229,7 @@ function FactoryDeliveryEditorForm({
                     {dateSlice.ambiguousOrigin ? 'Источник требует уточнения — выберите исходную поставку' : 'Довоз из поставки'}
                     <select className="min-h-10 w-full rounded-md border bg-white px-2 text-sm" value={draft.redelivery_of_schedule_id || ''} disabled={isPending} onChange={(event) => updateDraft(index, { redelivery_of_schedule_id: event.target.value })}>
                       <option value="">Выберите подтверждённую поставку</option>
-                      {dateSlice.origins?.map(origin => <option key={origin.id} value={origin.id}>{formatDate(origin.date)} · {origin.supplierName || 'Без поставщика'} · доступно {formatAmount(origin.available)} {aggregate.unit} · {origin.id.slice(0, 8)}</option>)}
+                      {dateSlice.origins?.map((origin, originIndex) => <option key={origin.id} value={origin.id}>{(dateSlice.origins?.length || 0) > 1 ? `Источник ${originIndex + 1} · ` : ''}{redeliveryOriginOptionLabel(origin, aggregate.unit)}</option>)}
                     </select>
                   </label>}
                   <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569]">
@@ -1451,6 +1455,44 @@ function formatItemScheduleTimeline(item: SupplyOrderAggregateSourceItem, dateSl
 }
 
 function MachineItems({ factory, id, dateSlice }: { factory: SupplyOrderAggregateFactory; id: string; dateSlice?: SupplyOrderDateSlice }) {
+  if (dateSlice?.state === 'redelivery') {
+    return <div id={id} className="mt-3 space-y-3 border-t border-border/60 pt-3">
+      <div className="space-y-2" aria-label="Исходные поставки с недопоставкой">
+        {(dateSlice.origins || []).map((origin) => <div key={origin.id} className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2.5 text-sm text-amber-950">
+          <p className="font-semibold">Недопоставка из подтверждённой поставки</p>
+          <p className="mt-1 leading-6">{redeliveryOriginLabel(origin, dateSlice.aggregate.unit)}.</p>
+          <p className="text-xs leading-5">Осталось назначить в новый график: <strong className="tabular-nums">{formatAmount(origin.available)} {dateSlice.aggregate.unit}</strong></p>
+        </div>)}
+        {dateSlice.ambiguousOrigin && <p className="text-xs font-medium text-amber-900">У довоза несколько исходных поставок. Выберите нужную поставку в графике ниже.</p>}
+      </div>
+      <ul className="grid gap-2">
+        {factory.items.map((item) => {
+          const plan = item.long_stock_purchase_plan
+          const returnedToTechnologist = isReturnedSupplyOrderSource(item)
+          const cancelledReturn = isCancelledReturnedSupplyOrderSource(item)
+          return <li key={`${item.table}:${item.id}`} className="min-w-0 rounded-lg border border-border/70 bg-background p-3 sm:p-4">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <Link href={item.machine_id ? `${ROUTES.SALES_PLAN}/${item.machine_id}` : `${ROUTES.SUPPLY_ORDERS}/stock/${item.request_id}`} className="text-sm font-semibold text-primary hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{item.machine_name}</Link>
+                <p className="mt-0.5 text-xs text-muted-foreground">{item.planned_material_date ? `Мат.план производства: ${formatDate(item.planned_material_date)}` : 'Срок потребности не задан'}</p>
+              </div>
+              <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-950">Нужен довоз</Badge>
+            </div>
+            <dl className="mt-3 grid gap-3 border-t border-border/60 pt-3 text-xs sm:grid-cols-2">
+              <div><dt className="text-muted-foreground">К довозу по этой заявке</dt><dd className="mt-1 font-semibold tabular-nums text-foreground">{formatAmount(item.quantity)} {item.unit}</dd></div>
+              <div><dt className="text-muted-foreground">Новый график</dt><dd className="mt-1 font-medium text-amber-900">Ещё не назначен</dd></div>
+            </dl>
+            {plan && <div className="mt-3 rounded-lg bg-muted/50 p-2 text-xs"><span className="font-medium text-muted-foreground">К закупке по карте: </span><PurchasePlanSummary plans={[plan]} compact /></div>}
+            <div className="mt-3 flex flex-wrap gap-2 border-t border-border/60 pt-3">
+              <Link href={`${ROUTES.SUPPLY_REQUEST}/${item.request_id}`} className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-border px-3 text-xs font-medium text-primary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><ExternalLink className="h-3.5 w-3.5" />Открыть заявку</Link>
+              {!returnedToTechnologist && !cancelledReturn && <ReturnLongStockPositionButton requestItemTable={item.table} requestItemId={item.id} itemName={item.item_name} categoryLabel={MATERIAL_CATEGORY_LABELS[displayMaterialCategory(item.category, null, item.unit)!]} planNumber={plan?.plan_number} versionNumber={plan?.version_number} />}
+              {item.can_cancel_return && <CancelReturnedSupplyPositionDialog table={item.table as SupplyPositionTable} itemId={item.id} compact />}
+            </div>
+          </li>
+        })}
+      </ul>
+    </div>
+  }
   return (
     <div id={id} className="mt-2 border-t border-border/60 pt-3">
       <div className="hidden grid-cols-[minmax(0,1.3fr)_80px_110px_minmax(0,1fr)_minmax(0,1fr)_minmax(160px,1.2fr)] gap-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground xl:grid">
