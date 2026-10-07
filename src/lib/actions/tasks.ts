@@ -46,6 +46,7 @@ export type TaskFilters = {
 
 export type TaskWithRelations = Task & {
   machine: { id: string; name: string; factory_id: string | null; is_archived?: boolean | null } | null
+  supply_review_case?: { factory_id: string; request_id: string | null } | null
   product_project: { id: string; title: string; status: ProductProject['status'] } | null
   assigned_user: { id: string; full_name: string } | null
   approval_version?: { request_id: string } | null
@@ -448,6 +449,7 @@ export async function getTasks(filters: TaskFilters = {}) {
     .select(`
       *,
       machine:machines(id, name, factory_id, is_archived),
+      supply_review_case:supply_schedule_review_cases!tasks_supply_schedule_review_case_id_fkey(factory_id, request_id),
       product_project:product_projects(id, title, status),
       approval_version:technologist_request_approval_versions!tasks_technologist_request_approval_id_fkey(request_id),
       approval_machine(id, name, factory_id, is_archived),
@@ -487,6 +489,7 @@ export async function getMyTasks() {
     .select(`
       *,
       machine:machines(id, name, factory_id, is_archived),
+      supply_review_case:supply_schedule_review_cases!tasks_supply_schedule_review_case_id_fkey(factory_id, request_id),
       product_project:product_projects(id, title, status),
       approval_version:technologist_request_approval_versions!tasks_technologist_request_approval_id_fkey(request_id),
       approval_machine(id, name, factory_id, is_archived),

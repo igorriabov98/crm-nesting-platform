@@ -19,11 +19,9 @@ type Props = {
   itemName: string
   preview: MaterialDeliveryAllocationPreview
   values: Record<string, string>
-  reconciliationReason?: string
   disabled: boolean
   returnFocus: HTMLElement | null
   onValueChange: (key: string, value: string) => void
-  onReconciliationReasonChange?: (value: string) => void
   onClose: () => void
   onConfirm: () => void
 }
@@ -33,11 +31,9 @@ export function MaterialReceivingAllocationDialog({
   itemName,
   preview,
   values,
-  reconciliationReason = '',
   disabled,
   returnFocus,
   onValueChange,
-  onReconciliationReasonChange = () => undefined,
   onClose,
   onConfirm,
 }: Props) {
@@ -79,20 +75,7 @@ export function MaterialReceivingAllocationDialog({
     .reduce((sum, row) => sum + row.value, 0) : 0
   const machinePhysical = allocatedPhysical - stockPhysical
   const machinePieces = allocatedPieces - stockPieces
-  const futureImpact = isBar ? { reduction: 0, protected: 0 } : rows.reduce((totals, row) => {
-    if (!row.is_eligible || row.value <= 0) return totals
-    const overlap = Math.min(row.logical, row.future_planned_quantity)
-    const reduction = Math.min(overlap, row.future_reducible_quantity)
-    return {
-      reduction: totals.reduction + reduction,
-      protected: totals.protected + Math.max(overlap - reduction, 0),
-    }
-  }, { reduction: 0, protected: 0 })
-  const touchesFutureSchedule = futureImpact.reduction + futureImpact.protected > 0.000001
-  const normalizedReason = reconciliationReason.trim()
-  const reasonIsValid = !touchesFutureSchedule
-    || (normalizedReason.length >= 3 && normalizedReason.length <= 2000)
-  const canConfirm = allocationCanConfirm && reasonIsValid
+  const canConfirm = allocationCanConfirm
   const hasLengthMismatch = isBar
     && preview.planned_piece_length_mm !== null
     && preview.piece_length_mm !== null
@@ -164,18 +147,6 @@ export function MaterialReceivingAllocationDialog({
               ? `${formatAmount(freePieces + stockPieces)} шт / ${formatAmount(freeQuantity + stockPhysical)} ${preview.unit}`
               : `${formatAmount(freeQuantity + stockPhysical)} ${preview.unit}`}
           />
-          {!isBar && (
-            <Summary
-              label="Уменьшится будущий график"
-              value={`${formatAmount(futureImpact.reduction)} ${preview.unit}`}
-            />
-          )}
-          {!isBar && (
-            <Summary
-              label="Защищено в начатом рейсе"
-              value={`${formatAmount(futureImpact.protected)} ${preview.unit}`}
-            />
-          )}
         </div>
 
         <div className="min-h-0 overflow-y-auto overscroll-contain px-3 py-3 sm:px-6">
@@ -250,8 +221,8 @@ export function MaterialReceivingAllocationDialog({
                           {formatDate(schedule.delivery_date)} · {schedule.supplier_name || 'Без поставщика'}
                           {schedule.trip_status && ` · ${tripStatusLabel(schedule.trip_status)}`}
                           {schedule.protected_quantity > 0
-                            ? ` · защищено ${formatAmount(schedule.protected_quantity)} ${preview.unit}`
-                            : ` · можно уменьшить до ${formatAmount(schedule.reducible_quantity)} ${preview.unit}`}
+                            ? ` · в начатом рейсе ${formatAmount(schedule.protected_quantity)} ${preview.unit}`
+                            : ` · запланировано ${formatAmount(schedule.quantity)} ${preview.unit}`}
                         </div>
                       ))}
                     </div>
@@ -260,7 +231,7 @@ export function MaterialReceivingAllocationDialog({
 
                 <div>
                   <label className="text-xs font-medium text-muted-foreground" htmlFor={`receipt-allocation-${row.id}`}>
-                    {!row.machine_id ? 'В свободный остаток' : isBar ? 'Хлыстов для машины' : 'Бронь под машину'}
+                    {!row.machine_id ? 'На свободный склад по этой заявке' : isBar ? 'Хлыстов для машины' : 'Бронь под машину'}
                   </label>
                   <input
                     id={`receipt-allocation-${row.id}`}
@@ -299,30 +270,6 @@ export function MaterialReceivingAllocationDialog({
             </div>
           </div>
 
-          {touchesFutureSchedule && (
-            <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
-              <label htmlFor="receipt-reconciliation-reason" className="text-sm font-semibold text-amber-950">
-                Причина изменения будущего графика
-              </label>
-              <textarea
-                id="receipt-reconciliation-reason"
-                value={reconciliationReason}
-                disabled={disabled}
-                minLength={3}
-                maxLength={2000}
-                rows={3}
-                aria-invalid={!reasonIsValid}
-                aria-describedby="receipt-reconciliation-reason-help"
-                onChange={(event) => onReconciliationReasonChange(event.target.value)}
-                className="mt-1 w-full resize-y rounded-md border border-amber-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-amber-400/30 disabled:opacity-60"
-                placeholder="Почему текущий приход бронируется вместо будущей поставки"
-              />
-              <p id="receipt-reconciliation-reason-help" className="mt-1 text-xs text-amber-900">
-                Обязательно от 3 до 2000 символов. Финансовые документы и договорённости с поставщиком CRM не изменяет.
-              </p>
-            </div>
-          )}
-
           <div aria-live="polite" aria-atomic="true" className="mt-2 min-h-5 text-sm text-destructive">
             {invalidRows
               ? isBar
@@ -332,8 +279,6 @@ export function MaterialReceivingAllocationDialog({
                 ? 'Распределено больше материала, чем фактически принято.'
                 : isBar && selectedRows.length === 0
                   ? 'Распределите материал хотя бы на одну машину.'
-                  : !reasonIsValid
-                    ? 'Укажите причину изменения будущего графика (от 3 до 2000 символов).'
                   : ''}
           </div>
         </div>

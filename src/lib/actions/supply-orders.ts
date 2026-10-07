@@ -2142,6 +2142,57 @@ export async function getSupplyOrderFactories(): Promise<{
   }
 }
 
+export type PendingSupplyScheduleReviewCase = {
+  id: string
+  factory_id: string
+  request_id: string | null
+  request_item_table: string
+  source_schedule_id: string
+  excess_quantity: number
+  unit: string
+  created_at: string
+}
+
+export async function getPendingSupplyScheduleReviewCases(factoryId?: string | null): Promise<{
+  data: PendingSupplyScheduleReviewCase[] | null
+  error: string | null
+}> {
+  try {
+    const { db } = await requireAccess()
+    let query = db.from('supply_schedule_review_cases')
+      .select('id, factory_id, request_id, request_item_table, source_schedule_id, excess_quantity, unit, created_at')
+      .eq('status', 'pending')
+      .is('assigned_to', null)
+      .order('created_at', { ascending: false })
+      .range(0, 49)
+    if (factoryId) query = query.eq('factory_id', factoryId)
+    const { data, error } = await query
+    if (error) throw new Error(error.message || 'Не удалось загрузить случаи для проверки графика')
+    return { data: (data || []) as PendingSupplyScheduleReviewCase[], error: null }
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить случаи для проверки графика' }
+  }
+}
+
+export async function assignSupplyScheduleReviewCase(caseId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { db, userId } = await requireAccess('manage')
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(caseId)) {
+      throw new Error('Некорректный случай для проверки')
+    }
+    const { error } = await db.rpc('fn_assign_supply_schedule_review_case_v1', {
+      p_case_id: caseId,
+      p_actor: userId,
+    })
+    if (error) throw new Error(error.message || 'Не удалось назначить задачу снабжению')
+    revalidatePath(ROUTES.SUPPLY_ORDERS)
+    revalidatePath(ROUTES.TASKS)
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Не удалось назначить задачу снабжению' }
+  }
+}
+
 export async function getSupplyOrderRequestFactoryId(requestId: string): Promise<{
   data: string | null
   error: string | null
@@ -3840,18 +3891,6 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
     if (preview.mode === 'whole_bar' && allocations.length === 0) {
       throw new Error('Не найдено открытых потребностей для распределения поставки')
     }
-    const reconciliationQuantity = allocations.reduce((sum, allocation) => {
-      const row = preview.allocations.find((candidate) => (
-        candidate.table === allocation.table && candidate.id === allocation.id
-      ))
-      return sum + Math.min(allocation.quantity, row?.future_planned_quantity || 0)
-    }, 0)
-    const reconciliationReason = input.reconciliation_reason?.trim() || ''
-    if (reconciliationQuantity > 0.000001
-      && (reconciliationReason.length < 3 || reconciliationReason.length > 2000)) {
-      throw new Error('Укажите причину изменения будущего графика (от 3 до 2000 символов)')
-    }
-
     const affectedItems = groupItemsByTable([
       { table: resolved.sourceItem.table, id: resolved.sourceItem.id },
       ...allocations
@@ -3930,7 +3969,7 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
           }),
           p_performed_by: userId,
           ...(preview.mode === 'quantity'
-            ? { p_reconciliation_reason: reconciliationReason || null }
+            ? { p_reconciliation_reason: null }
             : {}),
         })
       : await receivingRpcDb.rpc(preview.mode === 'whole_bar'
@@ -3943,7 +3982,7 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
           p_received_piece_length_mm: preview.piece_length_mm,
           p_received_piece_count: preview.piece_count,
           ...(preview.mode === 'quantity'
-            ? { p_reconciliation_reason: reconciliationReason || null }
+            ? { p_reconciliation_reason: null }
             : {}),
         })
 

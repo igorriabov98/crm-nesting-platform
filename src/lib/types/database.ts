@@ -4773,6 +4773,7 @@ export type Database = {
           product_version_id: string | null
           consumable_request_id: string | null
           supply_order_schedule_id: string | null
+          supply_schedule_review_case_id: string | null
           detailing_transfer_id: string | null
           inventory_transfer_id: string | null
           long_stock_cutting_plan_id: string | null
@@ -4804,6 +4805,7 @@ export type Database = {
           product_version_id?: string | null
           consumable_request_id?: string | null
           supply_order_schedule_id?: string | null
+          supply_schedule_review_case_id?: string | null
           detailing_transfer_id?: string | null
           inventory_transfer_id?: string | null
           long_stock_cutting_plan_id?: string | null
@@ -4835,6 +4837,7 @@ export type Database = {
           product_version_id?: string | null
           consumable_request_id?: string | null
           supply_order_schedule_id?: string | null
+          supply_schedule_review_case_id?: string | null
           detailing_transfer_id?: string | null
           inventory_transfer_id?: string | null
           long_stock_cutting_plan_id?: string | null

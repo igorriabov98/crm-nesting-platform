@@ -36,6 +36,10 @@ const manualQuantityReconciliationMigration = await readFile(
   new URL('../supabase/migrations/20260910160000_manual_quantity_receipt_reconciliation.sql', import.meta.url),
   'utf8',
 )
+const receiptKeepsFutureScheduleMigration = await readFile(
+  new URL('../supabase/migrations/20261007170000_receipt_keeps_future_supply_schedule.sql', import.meta.url),
+  'utf8',
+)
 const matrixCutoverMigration = await readFile(
   new URL('../supabase/migrations/20260916090000_department_rls_matrix_cutover.sql', import.meta.url),
   'utf8',
@@ -180,9 +184,9 @@ assert.match(
   'shortages and whole bars must confirm through the shared allocation dialog',
 )
 assert.match(
-  manualQuantityReconciliationMigration,
-  /fn_reconcile_quantity_receipt_schedules_v1[\s\S]*delivery_date DESC, schedule\.created_at DESC, schedule\.id DESC/,
-  'future schedules must be reduced from the latest row first',
+  receiptKeepsFutureScheduleMigration,
+  /v_post_surplus := GREATEST\(v_future_planned - v_post_remaining, 0\)[\s\S]*v_new_surplus := LEAST/,
+  'only newly excess future supply must create a review case',
 )
 assert.match(
   manualQuantityReconciliationMigration,
@@ -190,9 +194,14 @@ assert.match(
   'ordinary material must use a dedicated atomic receipt and reconciliation RPC',
 )
 assert.match(
-  manualQuantityReconciliationMigration,
-  /trip\.status IN \('in_transit', 'completed'\)[\s\S]*supply_schedule_reconciliation_review/,
-  'started trips must remain protected and create a supply review task',
+  receiptKeepsFutureScheduleMigration,
+  /CREATE OR REPLACE FUNCTION public\.fn_reconcile_quantity_receipt_schedules_v1[\s\S]*INSERT INTO public\.supply_schedule_review_cases/,
+  'receipt reconciliation must store a supply review case without editing future schedules',
+)
+assert.doesNotMatch(
+  receiptKeepsFutureScheduleMigration,
+  /UPDATE public\.supply_order_delivery_schedules|UPDATE public\.machine_outsourcing_transport_orders/,
+  'receiving must not change future schedules or transport',
 )
 assert.match(
   receivingAllocationDialog,

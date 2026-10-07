@@ -33,13 +33,13 @@ test('receipt confirmation remains protected by server-side preview rebuild', ()
   assert.match(receiveSource, /fn_receive_supply_order_schedule_v3/u)
 })
 
-test('ordinary receipt shows future coverage, protected trips, and reason validation', () => {
+test('ordinary receipt shows future coverage without changing the schedule', () => {
   assert.match(source, /Будущий график/u)
-  assert.match(source, /Защищено в начатом рейсе/u)
-  assert.match(source, /Причина изменения будущего графика/u)
-  assert.match(source, /можно уменьшить до/u)
-  assert.match(source, /minLength=\{3\}/u)
-  assert.match(source, /maxLength=\{2000\}/u)
+  assert.match(source, /в начатом рейсе/u)
+  assert.match(source, /На свободный склад по этой заявке/u)
+  assert.doesNotMatch(source, /Причина изменения будущего графика/u)
+  assert.doesNotMatch(source, /Уменьшится будущий график/u)
+  assert.doesNotMatch(source, /можно уменьшить до/u)
 })
 
 test('receiving queue contains only real supplier schedules', () => {

@@ -7,10 +7,12 @@ declare
   v_actor uuid := gen_random_uuid();
   v_assignee uuid := gen_random_uuid();
   v_department uuid := gen_random_uuid();
+  v_supply_department uuid := gen_random_uuid();
   v_factory uuid;
   v_supplier uuid := gen_random_uuid();
   v_material uuid := gen_random_uuid();
   v_free_material uuid := gen_random_uuid();
+  v_stock_material uuid := gen_random_uuid();
   v_source_machine uuid := gen_random_uuid();
   v_cancel_owner_machine uuid := gen_random_uuid();
   v_cancel_machine uuid := gen_random_uuid();
@@ -23,22 +25,28 @@ declare
   v_partial_request uuid := gen_random_uuid();
   v_protected_request uuid := gen_random_uuid();
   v_free_request uuid := gen_random_uuid();
+  v_stock_request uuid := gen_random_uuid();
   v_source_item uuid := gen_random_uuid();
   v_cancel_owner_item uuid := gen_random_uuid();
   v_cancel_item uuid := gen_random_uuid();
   v_partial_item uuid := gen_random_uuid();
   v_protected_item uuid := gen_random_uuid();
   v_free_item uuid := gen_random_uuid();
+  v_stock_item uuid := gen_random_uuid();
   v_source_schedule uuid := gen_random_uuid();
   v_cancel_early_schedule uuid := gen_random_uuid();
   v_cancel_late_schedule uuid := gen_random_uuid();
   v_partial_schedule uuid := gen_random_uuid();
   v_protected_schedule uuid := gen_random_uuid();
   v_free_schedule uuid := gen_random_uuid();
+  v_stock_current_schedule uuid := gen_random_uuid();
+  v_stock_future_schedule uuid := gen_random_uuid();
   v_cancel_trip uuid := gen_random_uuid();
   v_protected_trip uuid := gen_random_uuid();
   v_result jsonb;
   v_error text;
+  v_case_id uuid;
+  v_assigned_task_id uuid;
 begin
   if to_regprocedure('public.fn_receive_supply_order_schedule_v3(uuid,uuid,numeric,jsonb,numeric,numeric,text)') is null
     or to_regprocedure('public.fn_receive_supply_order_schedule_batch_v2(jsonb,uuid,text)') is null then
@@ -50,6 +58,11 @@ begin
     or not has_function_privilege('authenticated', 'public.fn_receive_supply_order_schedule_batch_v2(jsonb,uuid,text)', 'EXECUTE') then
     raise exception 'Права RPC ручной приёмки не соответствуют matrix cutover';
   end if;
+  if not has_table_privilege('authenticated', 'public.supply_schedule_review_cases', 'SELECT')
+    or has_table_privilege('authenticated', 'public.supply_schedule_review_cases', 'INSERT')
+    or has_table_privilege('anon', 'public.supply_schedule_review_cases', 'SELECT') then
+    raise exception 'Права чтения случаев проверки снабжением настроены неверно';
+  end if;
 
   select id into v_factory from public.factories order by created_at nulls last limit 1;
   if v_factory is null then raise exception 'Для теста не найден завод'; end if;
@@ -59,17 +72,25 @@ begin
     (v_actor, 'manual-quantity-receipt-' || v_actor || '@example.test', 'Оператор ручной приёмки', 'sales_manager', v_factory, true),
     (v_assignee, 'manual-quantity-assignee-' || v_assignee || '@example.test', 'Ответственный снабжения', 'supply_manager', v_factory, true);
   insert into public.departments(id, name, factory_id, is_active, created_by)
-  values (v_department, 'Manual receipt ' || v_actor, v_factory, true, v_actor);
+  values
+    (v_department, 'Manual receipt ' || v_actor, v_factory, true, v_actor),
+    (v_supply_department, 'Supply receipt review ' || v_assignee, v_factory, true, v_actor);
   insert into public.department_members(user_id, department_id, is_department_head, created_by)
-  values (v_actor, v_department, false, v_actor);
+  values
+    (v_actor, v_department, false, v_actor),
+    (v_assignee, v_supply_department, true, v_actor);
   insert into public.department_access_permissions(department_id, subject_scope, resource_key, can_view, can_manage, updated_by)
-  values (v_department, 'member', 'inventory_receiving', true, true, v_actor);
+  values
+    (v_department, 'member', 'inventory_receiving', true, true, v_actor),
+    (v_department, 'member', 'technologist_requests', true, true, v_actor),
+    (v_supply_department, 'head', 'supply_orders', true, true, v_actor);
   perform set_config('request.jwt.claim.sub', v_actor::text, true);
   insert into public.suppliers(id, name) values (v_supplier, 'Поставщик ручной приёмки');
   insert into public.supplier_material_categories(supplier_id,category) values(v_supplier,'paint');
   insert into public.materials(id, name, category, default_supplier_id, created_by) values
     (v_material, 'Краска ручного распределения', 'paint', v_supplier, v_actor),
-    (v_free_material, 'Краска свободного прихода', 'paint', v_supplier, v_actor);
+    (v_free_material, 'Краска свободного прихода', 'paint', v_supplier, v_actor),
+    (v_stock_material, 'Краска складской заявки 3 плюс 2', 'paint', v_supplier, v_actor);
 
   insert into public.machines(id, factory_id, name, created_by, planned_material_date) values
     (v_source_machine, v_factory, 'Источник текущего прихода', v_actor, date '2026-09-10'),
@@ -146,7 +167,17 @@ begin
   end if;
 
   begin
-    perform public.fn_receive_supply_order_schedule_v3(
+    -- A missing supply owner cannot block the physical receipt. Roll back the
+    -- fixture after asserting that the review remains durable and unassigned.
+    alter table public.departments disable trigger organization_validate_department;
+    alter table public.users disable trigger organization_guard_user_status;
+    update public.departments
+    set is_active = false
+    where lower(btrim(name)) in ('снабжение', 'отдел снабжения');
+    update public.users
+    set is_active = false
+    where role in ('procurement_head', 'supply_manager');
+    select public.fn_receive_supply_order_schedule_v3(
       v_source_schedule,
       v_actor,
       9,
@@ -158,50 +189,25 @@ begin
       null,
       null,
       null
-    );
-    raise exception 'Пересечение с будущим графиком принято без причины';
+    ) into v_result;
+    if (select status from public.supply_order_delivery_schedules where id = v_source_schedule) <> 'delivered'
+      or (select count(*) from public.supply_schedule_review_cases
+          where source_schedule_id = v_source_schedule and assigned_to is null) <> 3
+      or exists (select 1 from public.tasks
+          where supply_schedule_review_case_id in (
+            select id from public.supply_schedule_review_cases where source_schedule_id = v_source_schedule
+          ) and task_type = 'supply_schedule_reconciliation_review') then
+      raise exception 'Приёмка без ответственного не сохранила неназначенную проверку';
+    end if;
+    raise exception 'ROLLBACK_MISSING_SUPPLY_OWNER';
   exception when others then
     v_error := sqlerrm;
-    if v_error not like '%причин%' then raise; end if;
+    if v_error <> 'ROLLBACK_MISSING_SUPPLY_OWNER' then raise; end if;
   end;
   if (select status from public.supply_order_delivery_schedules where id = v_source_schedule) <> 'planned'
     or (select quantity from public.supply_order_delivery_schedules where id = v_cancel_late_schedule) <> 3
     or exists (select 1 from public.inventory where factory_id = v_factory and material_id = v_material) then
-    raise exception 'Отклонённая приёмка без причины оставила частичные изменения';
-  end if;
-
-  begin
-    -- Reproduce a legacy missing-owner state; the enclosing subtransaction rolls back.
-    alter table public.departments disable trigger organization_validate_department;
-    alter table public.users disable trigger organization_guard_user_status;
-    update public.departments
-    set is_active = false
-    where lower(btrim(name)) in ('снабжение', 'отдел снабжения');
-    update public.users
-    set is_active = false
-    where role in ('procurement_head', 'supply_manager');
-    perform public.fn_receive_supply_order_schedule_v3(
-      v_source_schedule,
-      v_actor,
-      9,
-      jsonb_build_array(
-        jsonb_build_object('table', 'request_paint', 'id', v_cancel_item, 'quantity', 3, 'physical_quantity', 3, 'piece_count', null),
-        jsonb_build_object('table', 'request_paint', 'id', v_partial_item, 'quantity', 2, 'physical_quantity', 2, 'piece_count', null),
-        jsonb_build_object('table', 'request_paint', 'id', v_protected_item, 'quantity', 4, 'physical_quantity', 4, 'piece_count', null)
-      ),
-      null,
-      null,
-      'Проверка обязательного ответственного'
-    );
-    raise exception 'Изменение графика принято без активного ответственного';
-  exception when others then
-    v_error := sqlerrm;
-    if v_error not like '%активный руководитель отдела снабжения%' then raise; end if;
-  end;
-  if (select status from public.supply_order_delivery_schedules where id = v_source_schedule) <> 'planned'
-    or (select quantity from public.supply_order_delivery_schedules where id = v_cancel_late_schedule) <> 3
-    or exists (select 1 from public.inventory where factory_id = v_factory and material_id = v_material) then
-    raise exception 'Отклонённая приёмка без ответственного оставила частичные изменения';
+    raise exception 'Проверочная приёмка без ответственного не откатилась';
   end if;
 
   select public.fn_receive_supply_order_schedule_v3(
@@ -215,12 +221,13 @@ begin
     ),
     null,
     null,
-    'Текущий приход направлен на будущие машины'
+    null
   ) into v_result;
 
-  if (v_result#>>'{reconciliation,reduced_quantity}')::numeric <> 5
-    or (v_result#>>'{reconciliation,protected_quantity}')::numeric <> 4 then
-    raise exception 'Неверный итог пересчёта будущего графика: %', v_result;
+  if (v_result#>>'{reconciliation,reduced_quantity}')::numeric <> 0
+    or (v_result#>>'{reconciliation,review_quantity}')::numeric <> 9
+    or (v_result#>>'{reconciliation,review_case_count}')::integer <> 3 then
+    raise exception 'Неверный итог проверки будущего графика: %', v_result;
   end if;
   if (select status from public.supply_order_delivery_schedules where id = v_source_schedule) <> 'delivered'
     or (select allocated_quantity from public.supply_order_delivery_schedules where id = v_source_schedule) <> 0
@@ -228,16 +235,17 @@ begin
     raise exception 'Исходный факт прихода записан неверно';
   end if;
   if (select quantity from public.supply_order_delivery_schedules where id = v_cancel_early_schedule) <> 2
-    or (select status from public.supply_order_delivery_schedules where id = v_cancel_late_schedule) <> 'cancelled'
-    or (select quantity from public.supply_order_delivery_schedules where id = v_partial_schedule) <> 3 then
-    raise exception 'Будущие строки уменьшены не с самой поздней или не в нужном объёме';
+    or (select status from public.supply_order_delivery_schedules where id = v_cancel_late_schedule) <> 'planned'
+    or (select quantity from public.supply_order_delivery_schedules where id = v_cancel_late_schedule) <> 3
+    or (select quantity from public.supply_order_delivery_schedules where id = v_partial_schedule) <> 5 then
+    raise exception 'Приёмка изменила будущие строки графика';
   end if;
-  if (select status from public.machine_outsourcing_transport_orders where id = v_cancel_trip) <> 'cancelled'
+  if (select status from public.machine_outsourcing_transport_orders where id = v_cancel_trip) <> 'needed'
     or not exists (
       select 1 from public.transport_trip_need_links
-      where transport_order_id = v_cancel_trip and need_id = v_cancel_late_schedule and released_at is not null
+      where transport_order_id = v_cancel_trip and need_id = v_cancel_late_schedule and released_at is null
     ) then
-    raise exception 'Пустой будущий рейс не освобождён и не отменён';
+    raise exception 'Приёмка изменила будущий рейс';
   end if;
   if (select quantity from public.supply_order_delivery_schedules where id = v_protected_schedule) <> 4
     or (select status from public.supply_order_delivery_schedules where id = v_protected_schedule) <> 'planned'
@@ -247,25 +255,62 @@ begin
     ) then
     raise exception 'Поставка начатого рейса была изменена';
   end if;
-  if (select count(*) from public.supply_order_delivery_schedule_changes
-      where schedule_id in (v_cancel_early_schedule, v_cancel_late_schedule, v_partial_schedule)) <> 2 then
-    raise exception 'История частичного уменьшения и отмены записана неверно';
+  if exists (select 1 from public.supply_order_delivery_schedule_changes
+      where schedule_id in (v_cancel_early_schedule, v_cancel_late_schedule, v_partial_schedule)) then
+    raise exception 'Приёмка записала изменение будущего графика';
+  end if;
+  if (select count(*) from public.supply_schedule_review_cases
+      where source_schedule_id = v_source_schedule and assigned_to is not null) <> 3 then
+    raise exception 'Не сохранены три независимых случая проверки графика';
+  end if;
+  select id into v_case_id from public.supply_schedule_review_cases
+  where source_schedule_id = v_source_schedule order by id limit 1;
+  begin
+    perform public.fn_assign_supply_schedule_review_case_v1(v_case_id, v_actor);
+    raise exception 'Оператор приёмки смог назначить задачу снабжению';
+  exception when others then
+    v_error := sqlerrm;
+    if v_error not like '%Недостаточно прав%' then raise; end if;
+  end;
+  if (select count(*) from public.tasks
+      where supply_schedule_review_case_id in (
+        select id from public.supply_schedule_review_cases where source_schedule_id = v_source_schedule
+      ) and task_type = 'supply_schedule_reconciliation_review') <> 3 then
+    raise exception 'Повторная попытка назначения создала дубликат задачи';
   end if;
   if (select count(*) from public.tasks
-      where supply_order_schedule_id = v_source_schedule
+      where supply_schedule_review_case_id in (
+        select id from public.supply_schedule_review_cases where source_schedule_id = v_source_schedule
+      )
         and task_type = 'supply_schedule_reconciliation_review'
-        and status = 'pending') <> 1 then
-    raise exception 'Должна быть создана ровно одна задача руководителю снабжения';
+        and status = 'pending') <> 3 then
+    raise exception 'Должна быть создана отдельная задача для каждого случая';
   end if;
   if not exists (
     select 1 from public.tasks
-    where supply_order_schedule_id = v_source_schedule
-      and description like '%Текущий приход направлен на будущие машины%'
-      and description like '%Поставщик ручной приёмки%'
-      and description like '%Неизменённый потенциальный излишек%'
+    where supply_schedule_review_case_id in (
+      select id from public.supply_schedule_review_cases where source_schedule_id = v_source_schedule
+    )
+      and description like '%График и договорённости с поставщиком не изменялись%'
   ) then
-    raise exception 'В задаче отсутствуют причина, поставщик или защищённый объём';
+    raise exception 'Задача не объясняет, что график остался прежним';
   end if;
+  begin
+    delete from public.tasks where supply_schedule_review_case_id = v_case_id;
+    perform set_config('request.jwt.claim.sub', v_assignee::text, true);
+    select public.fn_assign_supply_schedule_review_case_v1(v_case_id, v_assignee)
+      into v_assigned_task_id;
+    if v_assigned_task_id is null
+      or public.fn_assign_supply_schedule_review_case_v1(v_case_id, v_assignee) <> v_assigned_task_id
+      or (select count(*) from public.tasks where supply_schedule_review_case_id = v_case_id) <> 1 then
+      raise exception 'Повторное назначение случая создало дубликат задачи';
+    end if;
+    raise exception 'ROLLBACK_REASSIGNMENT_CHECK';
+  exception when others then
+    v_error := sqlerrm;
+    if v_error <> 'ROLLBACK_REASSIGNMENT_CHECK' then raise; end if;
+  end;
+  perform set_config('request.jwt.claim.sub', v_actor::text, true);
 
   -- An explicit empty allocation means the full quantity is free stock. A
   -- missing array remains a rejected, unconfirmed operation.
@@ -295,6 +340,47 @@ begin
       and total_quantity = 5 and reserved_quantity = 0
   ) then
     raise exception 'Свободный склад после нулевого распределения рассчитан неверно';
+  end if;
+
+  insert into public.technologist_requests(
+    id, request_kind, machine_id, factory_id, title, needed_by, created_by, status
+  ) values (v_stock_request, 'stock', null, v_factory, 'На склад: 5 кг', null, v_actor, 'draft');
+  insert into public.request_paint(
+    id, request_id, paint_type, ral_code, finish, weight_kg, waste_percent,
+    order_status, ordered_at, material_id, supplier_id, remainder_kg
+  ) values (
+    v_stock_item, v_stock_request, 'stock paint', 'STOCK-3-2', 'матовый', 5, 0,
+    'ordered', now(), v_stock_material, v_supplier, 5
+  );
+  perform set_config('app.financial_approval_request', v_stock_request::text, true);
+  update public.technologist_requests set status = 'submitted_to_supply' where id = v_stock_request;
+  perform set_config('app.financial_approval_request', '', true);
+  insert into public.supply_order_delivery_schedules(
+    id, request_item_table, request_item_id, delivery_date, quantity, unit,
+    supplier_id, created_by, updated_by
+  ) values
+    (v_stock_current_schedule, 'request_paint', v_stock_item, date '2026-10-07', 3, 'кг', v_supplier, v_actor, v_actor),
+    (v_stock_future_schedule, 'request_paint', v_stock_item, date '2026-10-15', 2, 'кг', v_supplier, v_actor, v_actor);
+  select public.fn_receive_supply_order_schedule_v3(
+    v_stock_current_schedule, v_actor, 3,
+    jsonb_build_array(jsonb_build_object(
+      'table', 'request_paint', 'id', v_stock_item, 'quantity', 3,
+      'physical_quantity', 3, 'piece_count', null
+    )), null, null, 'Параметр старого клиента не меняет график'
+  ) into v_result;
+  if (v_result#>>'{reconciliation,review_quantity}')::numeric <> 0
+    or (select status from public.supply_order_delivery_schedules where id = v_stock_future_schedule) <> 'planned'
+    or (select quantity from public.supply_order_delivery_schedules where id = v_stock_future_schedule) <> 2
+    or exists (select 1 from public.supply_schedule_review_cases
+      where source_schedule_id = v_stock_current_schedule)
+    or exists (select 1 from public.tasks
+      where supply_schedule_review_case_id in (
+        select id from public.supply_schedule_review_cases where source_schedule_id = v_stock_current_schedule
+      ) and task_type = 'supply_schedule_reconciliation_review')
+    or not exists (select 1 from public.inventory
+      where factory_id = v_factory and material_id = v_stock_material
+        and total_quantity = 3 and available_quantity = 3 and reserved_quantity = 0) then
+    raise exception 'Складская заявка 5 = 3 принято + 2 запланировано обработана неверно: %', v_result;
   end if;
 
   begin
