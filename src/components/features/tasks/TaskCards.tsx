@@ -233,9 +233,17 @@ function getTaskTarget(task: TaskWithRelations) {
       kind: task.task_type === 'technologist_request_revision' ? 'Доработка' : 'Согласование',
     }
   }
-  if (task.task_type === 'supply_schedule_reconciliation_review' && task.machine?.factory_id) {
+  if (task.task_type === 'supply_schedule_reconciliation_review'
+    && (task.supply_review_case?.factory_id || task.machine?.factory_id)) {
+    if (task.supply_review_case?.request_id) {
+      return {
+        href: `${ROUTES.SUPPLY_ORDERS}?view=details&factory=${task.supply_review_case.factory_id}&request=${task.supply_review_case.request_id}`,
+        label: 'Заявка на склад в заказах снабжения',
+        kind: 'Снабжение',
+      }
+    }
     return {
-      href: `${ROUTES.SUPPLY_ORDERS}?view=summary&factory=${task.machine.factory_id}`,
+      href: `${ROUTES.SUPPLY_ORDERS}?view=summary&factory=${task.supply_review_case?.factory_id || task.machine?.factory_id}`,
       label: 'Сводка заказов снабжения',
       kind: 'Снабжение',
     }

@@ -32,10 +32,12 @@ import { MATERIAL_CATEGORIES, MATERIAL_CATEGORY_LABELS, ORDER_STATUS_LABELS } fr
 import { displayMaterialCategory } from '@/lib/materials/display-category'
 import { ROUTES } from '@/lib/constants/routes'
 import {
+  assignSupplyScheduleReviewCase,
   clearAggregateDeliverySchedule,
   getSupplySchedulePayments,
   saveAggregateDeliverySchedule,
   type MaterialReceivingFactory,
+  type PendingSupplyScheduleReviewCase,
   type SupplyFinancePaymentInput,
   type SupplySchedulePayment,
   type SupplyOrderAggregate,
@@ -95,6 +97,9 @@ type SupplyOrderSummaryPageProps = {
   activeFactoryId: string | null
   suppliers: SupplierWithRelations[]
   supplierError?: string | null
+  pendingReviewCases: PendingSupplyScheduleReviewCase[]
+  reviewCasesError?: string | null
+  canAssignReviewCases: boolean
   userId: string
 }
 
@@ -123,7 +128,54 @@ type FinanceDraft = {
 
 const SupplierLoadErrorContext = createContext<string | null>(null)
 
-export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId, suppliers, supplierError = null, userId }: SupplyOrderSummaryPageProps) {
+function PendingSupplyReviewBanner({
+  cases,
+  error,
+  canAssign,
+}: {
+  cases: PendingSupplyScheduleReviewCase[]
+  error: string | null
+  canAssign: boolean
+}) {
+  const router = useRouter()
+  const [pendingId, setPendingId] = useState<string | null>(null)
+  const [isPending, startTransition] = useTransition()
+  if (error) return <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">Не удалось загрузить проверки графика: {error}</div>
+  if (cases.length === 0) return null
+
+  const materialNames: Record<string, string> = {
+    request_sheet_metal: 'Листовой металл',
+    request_round_tube: 'Круг и труба',
+    request_components: 'Комплектующие',
+    request_paint: 'Краска',
+    request_mesh: 'Сетка',
+    request_chain_cord: 'Цепь и шнур',
+    request_pipe: 'Труба и проволока',
+  }
+  return <section className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" aria-label="Проверка будущего графика">
+    <p className="font-semibold">После приёмки требуется проверка графика снабжением · {cases.length}</p>
+    <p className="mt-1 text-xs">Поставки не изменены. Для этих случаев пока не назначена задача ответственному.</p>
+    <ul className="mt-2 divide-y divide-amber-200">
+      {cases.map((reviewCase) => <li key={reviewCase.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+        <span>{materialNames[reviewCase.request_item_table] || 'Материал'} · {reviewCase.request_id ? 'На склад' : 'Заявка машины'} · проверить {Number(reviewCase.excess_quantity).toLocaleString('ru-RU')} {reviewCase.unit}</span>
+        {canAssign && <Button type="button" size="sm" variant="outline" disabled={isPending && pendingId === reviewCase.id}
+          onClick={() => {
+            setPendingId(reviewCase.id)
+            startTransition(async () => {
+              const result = await assignSupplyScheduleReviewCase(reviewCase.id)
+              if (result.success) {
+                toast.success('Задача снабжению назначена')
+                router.refresh()
+              } else toast.error(result.error || 'Не удалось назначить задачу')
+              setPendingId(null)
+            })
+          }}>Назначить задачу</Button>}
+      </li>)}
+    </ul>
+  </section>
+}
+
+export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId, suppliers, supplierError = null, pendingReviewCases, reviewCasesError = null, canAssignReviewCases, userId }: SupplyOrderSummaryPageProps) {
   const defaultFilters = useMemo<AggregateFiltersState>(() => ({
     query: '',
     supplier: 'all',
@@ -184,6 +236,7 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
     <SupplierLoadErrorContext.Provider value={supplierError}>
     <div className="space-y-5">
       {supplierError && <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">Не удалось загрузить поставщиков: {supplierError}. Обновите страницу для повторной загрузки.</div>}
+      <PendingSupplyReviewBanner cases={pendingReviewCases} error={reviewCasesError} canAssign={canAssignReviewCases} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-base font-semibold">Итоги по дню</h2>
         <div className="inline-flex gap-1 rounded-lg border p-1" aria-label="Вид итогов по дню">
