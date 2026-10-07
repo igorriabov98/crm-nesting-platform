@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { CompactSupplyOrderHeader, CompactSupplyOrderRow } from './CompactSupplyOrderRow'
+import { redeliveryOriginLabel, redeliveryOriginOptionLabel } from './redelivery-origin-label'
 import type { SupplyOrderDateSlice } from './supply-order-view'
 
 const row = {
@@ -48,4 +49,13 @@ test('combined row keeps each original requirement date and does not invent miss
   assert.match(html, /Срок потребности не задан.*3.*шт/)
   assert.match(html, /Вес позиции:.*Не рассчитан/)
   assert.doesNotMatch(html, /0 кг/)
+})
+
+test('redelivery identifies the original order, warehouse receipt and shortage without exposing an id', () => {
+  const origin = { id: '814c98a4-c1bd-438b-a6ba-d5ad939efc40', date: '2026-10-14',
+    supplierId: 'supplier', supplierName: 'АВ метал груп', planned: 3, received: 2, available: 1 }
+  assert.equal(redeliveryOriginLabel(origin, 'шт'),
+    'Поставка 14.10.2026 · АВ метал груп: заказано 3 шт, склад подтвердил 2 шт, недопоставка 1 шт')
+  assert.match(redeliveryOriginOptionLabel(origin, 'шт'), /заказано 3, принято 2, осталось довезти 1 шт$/)
+  assert.doesNotMatch(redeliveryOriginOptionLabel(origin, 'шт'), /814c98a4|undefined/)
 })
