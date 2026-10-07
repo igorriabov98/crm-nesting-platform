@@ -3,7 +3,7 @@
 import { supplierSupportsCategory } from '@/lib/suppliers/directory'
 
 import Link from 'next/link'
-import { createContext, useContext, useMemo, useState, useTransition } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, useTransition } from 'react'
 import { useSupplySummaryPreferences } from './summary-preferences'
 import { CompactSupplyOrderHeader, CompactSupplyOrderRow } from './CompactSupplyOrderRow'
 import { useRouter } from 'next/navigation'
@@ -32,9 +32,12 @@ import { MATERIAL_CATEGORIES, MATERIAL_CATEGORY_LABELS, ORDER_STATUS_LABELS } fr
 import { displayMaterialCategory } from '@/lib/materials/display-category'
 import { ROUTES } from '@/lib/constants/routes'
 import {
+  clearAggregateDeliverySchedule,
+  getSupplySchedulePayments,
   saveAggregateDeliverySchedule,
   type MaterialReceivingFactory,
   type SupplyFinancePaymentInput,
+  type SupplySchedulePayment,
   type SupplyOrderAggregate,
   type SupplyOrderAggregateFactory,
   type SupplyOrderAggregateScheduleInput,
@@ -73,10 +76,7 @@ import {
   partitionSupplyOrderAggregatesByRedelivery,
   projectSupplyOrderDateSliceFactory,
   summarizeSupplyOrderItemSchedules,
-  summarizeSupplyOrderMachineRoutes,
   summarizeSupplyOrderQuantities,
-  summarizeSupplyOrderRedeliveryMachineRoutes,
-  summarizeSupplyOrderUnscheduledMachineRoutes,
   supplyOrderDateSliceItems,
   type AggregateFiltersState,
   type SupplyOrderAggregateSort,
@@ -117,12 +117,13 @@ type FinanceDraft = {
   amount: string
   currency: 'UAH' | 'EUR'
   plannedDate: string
+  transferFromExpenseId?: string
+  itemKeys?: string[]
 }
 
 const SupplierLoadErrorContext = createContext<string | null>(null)
 
 export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId, suppliers, supplierError = null, userId }: SupplyOrderSummaryPageProps) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const defaultFilters = useMemo<AggregateFiltersState>(() => ({
     query: '',
     supplier: 'all',
@@ -178,14 +179,6 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
     onReset={() => setPreferences({ ...preferences, allStatus: 'all', filters: defaultFilters })}
   />
 
-  const toggle = (id: string) => {
-    setExpanded((current) => {
-      const next = new Set(current)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
 
   return (
     <SupplierLoadErrorContext.Provider value={supplierError}>
@@ -302,13 +295,11 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
                     return <div key={slice.id} className={view === 'list' ? '' : 'space-y-3'}>
                       {view === 'list' ? <CompactSupplyOrderRow slice={slice}>
                         <MaterialOrderCard aggregate={slice.aggregate} factory={factory} suppliers={suppliers}
-                          isExpanded={expanded.has(slice.id)} onToggle={() => toggle(slice.id)} dateSlice={slice} compact />
+                          dateSlice={slice} compact />
                       </CompactSupplyOrderRow> : <MaterialOrderCard
                         aggregate={slice.aggregate}
                         factory={factory}
                         suppliers={suppliers}
-                        isExpanded={expanded.has(slice.id)}
-                        onToggle={() => toggle(slice.id)}
                         dateSlice={slice}
                       />}
                     </div>
@@ -328,8 +319,6 @@ function MaterialOrderCard({
   aggregate,
   factory,
   suppliers,
-  isExpanded,
-  onToggle,
   attentionKind = 'standard',
   dateSlice,
   compact = false,
@@ -338,8 +327,6 @@ function MaterialOrderCard({
   aggregate: SupplyOrderAggregate
   factory?: SupplyOrderAggregateFactory
   suppliers: SupplierWithRelations[]
-  isExpanded: boolean
-  onToggle: () => void
   attentionKind?: 'standard' | 'redelivery'
   dateSlice?: SupplyOrderDateSlice
 }) {
@@ -348,20 +335,6 @@ function MaterialOrderCard({
     .filter((item) => !isReturnedSupplyOrderSource(item))
   const displayFactory = factory && dateSlice ? projectSupplyOrderDateSliceFactory(dateSlice, factory) : factory
   const editorFactory = dateSlice?.kind === 'unscheduled' ? displayFactory : factory
-  const routes = factory ? summarizeSupplyOrderMachineRoutes(activeFactoryItems) : []
-  const unscheduledRoutes = factory
-    ? summarizeSupplyOrderUnscheduledMachineRoutes(activeFactoryItems, dateSlice?.unscheduledQuantity ?? factory.unscheduled_quantity)
-    : []
-  const isRedelivery = attentionKind === 'redelivery' || dateSlice?.state === 'redelivery'
-  const redeliveryRoutes = isRedelivery && factory
-    ? summarizeSupplyOrderRedeliveryMachineRoutes(activeFactoryItems)
-    : []
-  const attentionRoutes = unscheduledRoutes
-  const attentionByRequest = new Map(attentionRoutes.map((route) => [route.requestId, route]))
-  const redeliveryDatesByRequest = new Map(redeliveryRoutes.map((route) => [
-    route.requestId,
-    dateSlice?.origins?.map(origin => origin.date) || route.originalDeliveryDates,
-  ]))
   const cardId = dateSlice?.id || aggregate.id
   const detailsId = `machine-details-${cardId}`
   const deliveryId = `delivery-details-${cardId}`
@@ -490,7 +463,7 @@ function MaterialOrderCard({
               <Cog className="h-4 w-4 text-primary" />
               Заявки по этому объёму
             </h4>
-            <span className="text-xs text-muted-foreground">{routes.length}</span>
+            <span className="text-xs text-muted-foreground">{activeFactoryItems.length}</span>
           </div>
 
           {dateSlice && (
@@ -499,63 +472,7 @@ function MaterialOrderCard({
             </p>
           )}
 
-          {!isExpanded && (routes.length > 0 ? (
-            <ul className="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border">
-              {routes.map((route) => (
-                <li key={route.requestId}>
-                  <Link
-                    href={route.machineId ? `${ROUTES.SALES_PLAN}/${route.machineId}` : `${ROUTES.SUPPLY_ORDERS}/stock/${route.requestId}`}
-                    className="flex min-h-12 items-center justify-between gap-3 px-3 py-2 text-sm transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none"
-                  >
-                    <span className="min-w-0">
-                      <span className="block break-words font-medium text-primary">{route.machineName}</span>
-                        {!route.machineId && !route.plannedMaterialDate && <span className="mt-0.5 block text-xs leading-5 text-amber-800">На склад · срок не задан</span>}
-                        {route.plannedMaterialDate && (
-                        <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-                          Мат.план производства: {formatDate(route.plannedMaterialDate)}
-                        </span>
-                      )}
-                      {(isRedelivery || dateSlice?.origins?.length) && redeliveryDatesByRequest.get(route.requestId) && (
-                        <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-                          Изначально ожидалось: {redeliveryDatesByRequest.get(route.requestId)!.map(formatDate).join(', ')}
-                        </span>
-                      )}
-                    </span>
-                    <span className="flex shrink-0 flex-col items-end gap-0.5 tabular-nums">
-                      <span className="font-semibold text-foreground">
-                        {dateSlice && <span className="mr-1 text-xs font-normal text-muted-foreground">{route.machineId ? 'Потребность заявки машины' : 'Новая складская закупка'}</span>}
-                        {formatAmount(route.quantity)} {aggregate.unit}
-                      </span>
-                      {attentionByRequest.get(route.requestId) && (
-                        <span className="text-xs font-medium text-amber-700">
-                          {isRedelivery ? 'Довезти' : 'Без графика'} {formatAmount(attentionByRequest.get(route.requestId)!.quantity)} {aggregate.unit}
-                        </span>
-                      )}
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="mt-2 rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
-              Заявок, которым выделен этот объём, нет.
-            </div>
-          ))}
-
-          {factory && (
-            <Button
-              type="button"
-              variant="ghost"
-              className="mt-2 min-h-11 w-full justify-between rounded-lg px-3 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-              aria-expanded={isExpanded}
-              aria-controls={detailsId}
-              onClick={onToggle}
-            >
-              <span>{isExpanded ? 'Скрыть позиции заявок' : `Показать позиции заявок (${dateSlice ? activeFactoryItems.length : factory.item_count})`}</span>
-              <ChevronDown className={`h-4 w-4 transition-transform motion-reduce:transition-none ${isExpanded ? 'rotate-180' : ''}`} />
-            </Button>
-          )}
-          {isExpanded && factory && <MachineItems id={detailsId} factory={displayFactory || factory} dateSlice={dateSlice} />}
+          {factory && <MachineItems id={detailsId} factory={displayFactory || factory} dateSlice={dateSlice} />}
         </section>
 
       </div>
@@ -618,7 +535,7 @@ function MaterialOrderCard({
             dateSlice={plannedOnlyDateSlice}
             appendUnscheduled={attentionKind === 'redelivery' || isUnscheduledSlice}
             paymentItemKeys={activeFactoryItems.map((item) => `${item.table}:${item.id}`)}
-            mutationItems={isUnscheduledSlice ? activeFactoryItems.map((item) => ({ table: item.table, id: item.id })) : undefined}
+            mutationItems={activeFactoryItems.map((item) => ({ table: item.table, id: item.id }))}
           />
           {hasMixedPlannedAndUnscheduled && (
             <FactoryDeliveryEditor
@@ -629,6 +546,7 @@ function MaterialOrderCard({
               dateSlice={dateSlice}
               appendUnscheduled
               paymentItemKeys={activeFactoryItems.map((item) => `${item.table}:${item.id}`)}
+              mutationItems={activeFactoryItems.map((item) => ({ table: item.table, id: item.id }))}
             />
           )}</>}
         </div>
@@ -860,6 +778,63 @@ function FactoryDeliveryEditorForm({
   })
   const [paymentModes, setPaymentModes] = useState<Record<string, boolean>>({})
   const [financeDrafts, setFinanceDrafts] = useState<Record<string, FinanceDraft>>({})
+  const [existingPayments, setExistingPayments] = useState<SupplySchedulePayment[]>([])
+  const [paymentCheck, setPaymentCheck] = useState<{ loading: boolean; error: string | null }>(() => ({
+    loading: Boolean(dateSlice?.scheduleIds?.length), error: null,
+  }))
+  const scheduleIdsKey = (dateSlice?.scheduleIds || []).join(',')
+  useEffect(() => {
+    const scheduleIds = scheduleIdsKey ? scheduleIdsKey.split(',') : []
+    if (scheduleIds.length === 0) return
+    let cancelled = false
+    getSupplySchedulePayments(scheduleIds).then((result) => {
+      if (cancelled) return
+      if (!result.success) {
+        setPaymentCheck({ loading: false, error: result.error })
+        return
+      }
+      if (result.data.requiresFinancePermission) {
+        setPaymentCheck({ loading: false, error: 'У этой даты есть платёж. Для изменения графика нужны права на финансы' })
+        return
+      }
+      const payments = result.data.payments
+      if (payments.some((payment) => !['planned', 'overdue'].includes(payment.status)
+        || Number(payment.paid_amount) > 0)) {
+        setPaymentCheck({ loading: false, error: 'Оплаченный или частично оплаченный платёж нельзя перенести вместе с графиком' })
+        return
+      }
+      const matchedDrafts = new Set<string>()
+      const nextModes: Record<string, boolean> = {}
+      const nextDrafts: Record<string, FinanceDraft> = {}
+      for (const payment of payments) {
+        const draft = scheduleDrafts.find((row) => row.delivery_date === payment.delivery_date
+          && row.supplier_id === payment.supplier_id && !matchedDrafts.has(row.id))
+        if (!draft || payment.linked_date_count > 1) {
+          setPaymentCheck({ loading: false, error: 'Платёж связан с несколькими строками. Уточните распределение в финансах перед изменением графика' })
+          return
+        }
+        matchedDrafts.add(draft.id)
+        nextModes[draft.id] = true
+        nextDrafts[draft.id] = {
+          amount: String(payment.amount), currency: payment.currency,
+          plannedDate: payment.planned_date, transferFromExpenseId: payment.id,
+          itemKeys: payment.item_keys,
+        }
+      }
+      setExistingPayments(payments)
+      setPaymentModes(nextModes)
+      setFinanceDrafts(nextDrafts)
+      setPaymentCheck({ loading: false, error: null })
+    }).catch((error) => {
+      if (!cancelled) {
+        console.error('[supply-orders] payment check failed', error)
+        setPaymentCheck({ loading: false, error: 'Не удалось проверить платежи графика. Обновите страницу' })
+      }
+    })
+    return () => { cancelled = true }
+    // The editor remounts when the date slice or its schedule version changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scheduleIdsKey])
   const itemKeys = useMemo(
     () => (mutationItems || activeItems.map((item) => ({ table: item.table, id: item.id })))
       .filter((item) => activeItems.some((active) => active.table === item.table && active.id === item.id)),
@@ -897,14 +872,24 @@ function FactoryDeliveryEditorForm({
   )
   const financePayments: SupplyFinancePaymentInput[] = scheduleDrafts.filter((draft) => paymentModes[draft.id]).map((draft) => ({
     supplierId: draft.supplier_id,
-    plannedDate: financeDrafts[draft.id]?.plannedDate || draft.delivery_date,
+    plannedDate: financeDrafts[draft.id]?.plannedDate || (financeDrafts[draft.id]?.transferFromExpenseId ? '' : draft.delivery_date),
     deliveryDate: draft.delivery_date,
-    amount: parseQuantity(financeDrafts[draft.id]?.amount || ''),
+    amount: Math.round(parseQuantity(financeDrafts[draft.id]?.amount || '') * 100) / 100,
     currency: financeDrafts[draft.id]?.currency || 'EUR',
-    itemKeys: paymentItemKeys || activeItems.map((item) => `${item.table}:${item.id}`),
+    itemKeys: financeDrafts[draft.id]?.itemKeys || paymentItemKeys || activeItems.map((item) => `${item.table}:${item.id}`),
+    transferFromExpenseId: financeDrafts[draft.id]?.transferFromExpenseId || null,
   }))
+  const transferredTotals = new Map(existingPayments.map((payment) => [payment.id, {
+    expected: Number(payment.amount),
+    entered: financePayments.filter((entry) => entry.transferFromExpenseId === payment.id)
+      .reduce((sum, entry) => sum + entry.amount, 0),
+  }]))
+  const transferMismatch = [...transferredTotals.values()].some(({ expected, entered }) => Math.abs(expected - entered) > 0.009)
   const financeInvalid = financePayments.some((payment) => !payment.supplierId || !payment.plannedDate
     || !Number.isFinite(payment.amount) || payment.amount <= 0 || payment.itemKeys.length === 0)
+    || scheduleDrafts.some((draft) => paymentModes[draft.id]
+      && !/^\d+(?:[.,]\d{1,2})?$/.test(financeDrafts[draft.id]?.amount || ''))
+    || transferMismatch
   const longStockPlans = activeItems
     .map((item) => item.long_stock_purchase_plan)
     .filter((plan): plan is LongStockPurchasePlan => plan !== null)
@@ -959,7 +944,29 @@ function FactoryDeliveryEditorForm({
     })
   }
 
+  const clearScheduledDate = () => {
+    if (!dateSlice || dateSlice.plannedScheduleCount === 0 || !scheduleScope) return
+    if (!window.confirm(`Удалить график на ${formatDate(dateSlice.dateKey)}? Непринятое количество вернётся в «Без графика».`)) return
+    startTransition(async () => {
+      try {
+        const result = await clearAggregateDeliverySchedule(itemKeys, scheduleScope)
+        if (!result.success) {
+          toast.error(result.error || 'Не удалось удалить дату поставки')
+          return
+        }
+        toast.success('Дата удалена. Непринятое количество вернулось в «Без графика»')
+        router.refresh()
+      } catch (error) {
+        console.error('[supply-orders] schedule date removal failed', error)
+        toast.error('Не удалось удалить дату. Проверьте соединение и повторите попытку')
+      }
+    })
+  }
+
   const updateDraft = (index: number, patch: Partial<ScheduleDraft>) => {
+    setFinanceDrafts((current) => Object.fromEntries(Object.entries(current).map(([id, draft]) => [id,
+      draft.transferFromExpenseId ? { ...draft, plannedDate: '' } : draft,
+    ])))
     setScheduleDrafts((current) => current.map((draft, draftIndex) => (
       draftIndex === index
         ? recalculateBarDraft({ ...draft, ...patch }, isBarMaterial)
@@ -968,10 +975,19 @@ function FactoryDeliveryEditorForm({
   }
 
   const addDraft = () => {
+    const newId = `new:${Date.now()}:${scheduleDrafts.length}`
+    if (existingPayments.length === 1) {
+      const payment = existingPayments[0]
+      setPaymentModes((current) => ({ ...current, [newId]: true }))
+      setFinanceDrafts((current) => ({ ...current, [newId]: {
+        amount: '', currency: payment.currency, plannedDate: '', transferFromExpenseId: payment.id,
+        itemKeys: payment.item_keys,
+      } }))
+    }
     setScheduleDrafts((current) => [
       ...current,
       {
-        id: `new:${Date.now()}:${current.length}`,
+        id: newId,
         delivery_date: dateSlice?.state === 'redelivery' || dateSlice?.stockWithoutDate ? '' : scheduleScope?.replace_delivery_date || (compact ? '' : factory.supply_delivery_date || factory.production_date || todayIsoDate()),
         quantity: '',
         supplier_id: current[0]?.supplier_id || '',
@@ -986,7 +1002,7 @@ function FactoryDeliveryEditorForm({
     setScheduleDrafts((current) => current.filter((_, draftIndex) => draftIndex !== index))
   }
 
-  const scheduleInvalid = Boolean(supplierError) || financeInvalid || ((dateSlice?.state === 'redelivery' || dateSlice?.ambiguousOrigin) && scheduleDrafts.some(draft => !draft.redelivery_of_schedule_id)) || scheduleDrafts.length === 0 ||
+  const scheduleInvalid = Boolean(supplierError) || paymentCheck.loading || Boolean(paymentCheck.error) || financeInvalid || ((dateSlice?.state === 'redelivery' || dateSlice?.ambiguousOrigin) && scheduleDrafts.some(draft => !draft.redelivery_of_schedule_id)) || scheduleDrafts.length === 0 ||
     scheduleDrafts.some((draft) => !draft.delivery_date || parseQuantity(draft.quantity) <= 0) ||
     scheduleDrafts.some((draft) => !draft.supplier_id) ||
     (isBarMaterial && scheduleDrafts.some((draft) => (
@@ -1203,8 +1219,18 @@ function FactoryDeliveryEditorForm({
                   </label>
                   {allowFinance && <label className="grid min-w-0 gap-1 text-xs font-medium text-muted-foreground">
                     Платёж
-                    <select value={paymentModes[draft.id] ? 'payment' : 'none'} disabled={isPending}
-                      onChange={(event) => setPaymentModes((current) => ({ ...current, [draft.id]: event.target.value === 'payment' }))}
+                    <select value={paymentModes[draft.id] ? 'payment' : 'none'} disabled={isPending || paymentCheck.loading}
+                      onChange={(event) => {
+                        const enabled = event.target.value === 'payment'
+                        setPaymentModes((current) => ({ ...current, [draft.id]: enabled }))
+                        if (enabled && existingPayments.length === 1 && !financeDrafts[draft.id]?.transferFromExpenseId) {
+                          const payment = existingPayments[0]
+                          setFinanceDrafts((current) => ({ ...current, [draft.id]: {
+                            amount: current[draft.id]?.amount || '', currency: payment.currency,
+                            plannedDate: '', transferFromExpenseId: payment.id, itemKeys: payment.item_keys,
+                          } }))
+                        }
+                      }}
                       className="h-9 min-w-0 rounded-md border border-input bg-background px-2 text-sm text-foreground">
                       <option value="none">Без платежа</option>
                       <option value="payment">С платежом</option>
@@ -1215,26 +1241,43 @@ function FactoryDeliveryEditorForm({
                     variant="ghost"
                     size="icon-sm"
                     className="justify-self-start md:justify-self-end"
-                    disabled={isPending || scheduleDrafts.length <= 1}
+                    disabled={isPending}
                     onClick={() => removeDraft(index)}
                     aria-label="Удалить дату поставки"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                   {allowFinance && paymentModes[draft.id] && <div className="grid gap-2 border-t border-border pt-3 sm:col-span-2 sm:grid-cols-3 lg:col-span-full xl:col-span-full">
+                    {existingPayments.length > 0 && <label className="grid gap-1 text-xs font-medium text-muted-foreground sm:col-span-3">Перенос платежа
+                      <select value={financeDrafts[draft.id]?.transferFromExpenseId || ''} disabled={isPending}
+                        onChange={(event) => {
+                          const payment = existingPayments.find((entry) => entry.id === event.target.value)
+                          setFinanceDrafts((current) => ({ ...current, [draft.id]: {
+                            amount: current[draft.id]?.amount || '',
+                            currency: payment?.currency || current[draft.id]?.currency || 'EUR',
+                            plannedDate: '', transferFromExpenseId: payment?.id,
+                            itemKeys: payment?.item_keys,
+                          } }))
+                        }} className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground">
+                        <option value="">Выберите прежний платёж</option>
+                        {existingPayments.map((payment) => <option key={payment.id} value={payment.id}>
+                          {formatAmount(payment.amount)} {payment.currency} · {formatDate(payment.planned_date)}
+                        </option>)}
+                      </select>
+                    </label>}
                     <label className="grid gap-1 text-xs font-medium text-muted-foreground">Сумма платежа
                       <input inputMode="decimal" value={financeDrafts[draft.id]?.amount || ''} disabled={isPending}
-                        onChange={(event) => setFinanceDrafts((current) => ({ ...current, [draft.id]: { amount: event.target.value, currency: current[draft.id]?.currency || 'EUR', plannedDate: current[draft.id]?.plannedDate || '' } }))}
+                        onChange={(event) => setFinanceDrafts((current) => ({ ...current, [draft.id]: { ...current[draft.id], amount: event.target.value, currency: current[draft.id]?.currency || 'EUR', plannedDate: current[draft.id]?.plannedDate || '' } }))}
                         className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground" />
                     </label>
                     <label className="grid gap-1 text-xs font-medium text-muted-foreground">Валюта
                       <select value={financeDrafts[draft.id]?.currency || 'EUR'} disabled={isPending}
-                        onChange={(event) => setFinanceDrafts((current) => ({ ...current, [draft.id]: { amount: current[draft.id]?.amount || '', currency: event.target.value as 'UAH' | 'EUR', plannedDate: current[draft.id]?.plannedDate || '' } }))}
+                        onChange={(event) => setFinanceDrafts((current) => ({ ...current, [draft.id]: { ...current[draft.id], amount: current[draft.id]?.amount || '', currency: event.target.value as 'UAH' | 'EUR', plannedDate: current[draft.id]?.plannedDate || '' } }))}
                         className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground"><option value="EUR">EUR</option><option value="UAH">UAH</option></select>
                     </label>
                     <label className="grid gap-1 text-xs font-medium text-muted-foreground">Плановая дата оплаты
-                      <input type="date" value={financeDrafts[draft.id]?.plannedDate || draft.delivery_date} disabled={isPending}
-                        onChange={(event) => setFinanceDrafts((current) => ({ ...current, [draft.id]: { amount: current[draft.id]?.amount || '', currency: current[draft.id]?.currency || 'EUR', plannedDate: event.target.value } }))}
+                      <input type="date" value={financeDrafts[draft.id]?.plannedDate || (financeDrafts[draft.id]?.transferFromExpenseId ? '' : draft.delivery_date)} disabled={isPending}
+                        onChange={(event) => setFinanceDrafts((current) => ({ ...current, [draft.id]: { ...current[draft.id], amount: current[draft.id]?.amount || '', currency: current[draft.id]?.currency || 'EUR', plannedDate: event.target.value } }))}
                         className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground" />
                     </label>
                   </div>}
@@ -1255,12 +1298,29 @@ function FactoryDeliveryEditorForm({
               Выберите поставщика для каждой даты поступления.
             </div>
           )}
+          {paymentCheck.loading && <p className="mt-2 text-xs text-muted-foreground">Проверяем связанные платежи…</p>}
+          {paymentCheck.error && <p role="alert" className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{paymentCheck.error}</p>}
+          {existingPayments.length > 0 && <div className="mt-2 rounded-md border border-border bg-card px-3 py-2 text-xs">
+            <p className="font-medium">Перенос существующего платежа</p>
+            {existingPayments.map((payment) => {
+              const totals = transferredTotals.get(payment.id)
+              return <p key={payment.id} className={totals && Math.abs(totals.expected - totals.entered) > 0.009 ? 'text-amber-800' : 'text-muted-foreground'}>
+                Было {formatAmount(payment.amount)} {payment.currency} · распределено {formatAmount(totals?.entered || 0)} {payment.currency}. Укажите суммы и даты оплаты для новых строк.
+              </p>
+            })}
+          </div>}
 
           <div className="mt-3 flex flex-wrap gap-2">
             <Button type="button" size="sm" disabled={isPending || scheduleInvalid} onClick={saveSchedule}>
               {financePayments.length > 0 ? 'Сохранить график и платежи' : 'Сохранить график и отметить заказано'}
             </Button>
+            {dateSlice && dateSlice.plannedScheduleCount > 0 && !appendUnscheduled && <Button type="button" variant="outline" size="sm"
+              disabled={isPending || paymentCheck.loading || Boolean(paymentCheck.error) || existingPayments.length > 0}
+              onClick={clearScheduledDate}>
+              Удалить дату из графика
+            </Button>}
           </div>
+          {dateSlice && existingPayments.length > 0 && <p className="mt-2 text-xs text-amber-800">Удаление даты недоступно: к ней привязан платёж. Для переноса разделите график и распределите сумму платежа по новым датам.</p>}
         </div>
       )}
       {!isClosed && !requiresRecalculation && dateSlice && dateSlice.plannedScheduleCount === 0 && dateSlice.unscheduledQuantity === 0 && (
@@ -1356,9 +1416,11 @@ function MachineItems({ factory, id, dateSlice }: { factory: SupplyOrderAggregat
           return (
             <div key={`${item.table}:${item.id}`} className="grid min-w-0 grid-cols-[minmax(0,1.3fr)_80px_110px_minmax(0,1fr)_minmax(0,1fr)_minmax(160px,1.2fr)] items-center gap-3 rounded-lg border border-border/60 bg-background px-3 py-2.5 text-sm">
               <Link href={item.machine_id ? `${ROUTES.SALES_PLAN}/${item.machine_id}` : `${ROUTES.SUPPLY_ORDERS}/stock/${item.request_id}`} className="font-medium text-primary hover:underline">
-                {item.machine_name}<span className="mt-1 block text-xs font-normal text-muted-foreground">{item.planned_material_date ? `Мат.план ${formatDate(item.planned_material_date)}` : 'Срок потребности не задан'}</span>
+                {item.machine_name}<span className="mt-1 block text-xs font-normal text-muted-foreground">{item.planned_material_date ? `Мат.план производства: ${formatDate(item.planned_material_date)}` : 'Срок потребности не задан'}</span>
               </Link>
-              <span className="tabular-nums text-foreground">{formatAmount(item.quantity)} {item.unit}</span>
+              <span className="tabular-nums text-foreground">{formatAmount(item.quantity)} {item.unit}
+                {dateSlice?.state === 'redelivery' && item.quantity > 0 && <span className="block text-xs font-medium text-amber-800">Довоз: {formatAmount(item.quantity)} {item.unit}</span>}
+              </span>
               {cancelledReturn ? (
                 <Badge variant="outline" className="w-fit border-slate-300 bg-slate-100 text-slate-800">Отменено</Badge>
               ) : returnedToTechnologist ? (
@@ -1407,7 +1469,7 @@ function MachineItems({ factory, id, dateSlice }: { factory: SupplyOrderAggregat
           return (
             <article key={`${item.table}:${item.id}`} className="rounded-xl border border-border/70 bg-background p-3">
               <div className="flex items-start justify-between gap-3">
-                <Link href={item.machine_id ? `${ROUTES.SALES_PLAN}/${item.machine_id}` : `${ROUTES.SUPPLY_ORDERS}/stock/${item.request_id}`} className="font-semibold text-primary hover:underline">{item.machine_name}<span className="mt-1 block text-xs font-normal text-muted-foreground">{item.planned_material_date ? `Мат.план ${formatDate(item.planned_material_date)}` : 'Срок потребности не задан'}</span></Link>
+                <Link href={item.machine_id ? `${ROUTES.SALES_PLAN}/${item.machine_id}` : `${ROUTES.SUPPLY_ORDERS}/stock/${item.request_id}`} className="font-semibold text-primary hover:underline">{item.machine_name}<span className="mt-1 block text-xs font-normal text-muted-foreground">{item.planned_material_date ? `Мат.план производства: ${formatDate(item.planned_material_date)}` : 'Срок потребности не задан'}</span></Link>
                 {cancelledReturn ? (
                   <Badge variant="outline" className="border-slate-300 bg-slate-100 text-slate-800">Отменено</Badge>
                 ) : returnedToTechnologist ? (
@@ -1417,7 +1479,7 @@ function MachineItems({ factory, id, dateSlice }: { factory: SupplyOrderAggregat
                 )}
               </div>
               <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-3">
-                <div><dt className="text-muted-foreground">Количество</dt><dd className="mt-1 font-semibold tabular-nums text-foreground">{formatAmount(item.quantity)} {item.unit}</dd></div>
+                <div><dt className="text-muted-foreground">Количество</dt><dd className="mt-1 font-semibold tabular-nums text-foreground">{formatAmount(item.quantity)} {item.unit}{dateSlice?.state === 'redelivery' && item.quantity > 0 && <span className="block text-amber-800">Довоз: {formatAmount(item.quantity)} {item.unit}</span>}</dd></div>
                 <div><dt className="text-muted-foreground">График</dt><dd className="mt-1 text-foreground">{formatAmount(item.planned_schedule_quantity)} план / {formatAmount(item.delivered_schedule_quantity)} факт</dd></div>
                 <div><dt className="text-muted-foreground">Поставки</dt><dd className="mt-1 text-foreground">{formatItemScheduleTimeline(item, dateSlice)}</dd></div>
               </dl>

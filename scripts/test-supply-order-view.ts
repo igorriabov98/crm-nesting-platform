@@ -99,8 +99,8 @@ assert.match(
 )
 assert.match(
   supplyOrdersAction,
-  /fn_replace_supply_order_delivery_schedules_v2/u,
-  'schedule replacement must be atomic so an invalid long-stock graph rolls back completely',
+  /fn_replace_supply_order_delivery_schedules_with_finance_v2/u,
+  'schedule and payment replacement must be atomic so an invalid graph rolls back completely',
 )
 assert.match(
   supplyOrdersAction,
@@ -703,9 +703,11 @@ assert.match(
 )
 assert.match(
   summaryPageSource,
-  /Мат\.план производства: \{formatDate\(route\.plannedMaterialDate\)\}/u,
-  'each machine row must show the original production material-plan date',
+  /Мат\.план производства: \$\{formatDate\(item\.planned_material_date\)\}/u,
+  'each request position must show the original production material-plan date',
 )
+assert.doesNotMatch(summaryPageSource, /Показать позиции заявок/u,
+  'request positions must be visible without a second disclosure')
 assert.match(
   summaryPageSource,
   /receivedDates\.length > 0[\s\S]*Фактически принято/u,

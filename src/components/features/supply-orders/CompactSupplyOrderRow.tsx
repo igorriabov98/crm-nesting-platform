@@ -6,11 +6,11 @@ import { supplyOrderDateSliceItems, type SupplyOrderDateSlice } from './supply-o
 
 const amount = (value: number) => value.toLocaleString('ru-RU', { maximumFractionDigits: 3 })
 const date = (value: string) => new Date(`${value.slice(0, 10)}T12:00:00`).toLocaleDateString('ru-RU')
-const columns = 'lg:grid-cols-[minmax(0,2fr)_minmax(105px,1fr)_minmax(140px,1.25fr)_minmax(145px,1fr)_20px]'
+const columns = 'lg:grid-cols-[minmax(0,1.8fr)_minmax(100px,.85fr)_minmax(145px,1.2fr)_minmax(90px,.7fr)_minmax(155px,1fr)_20px]'
 
 export function CompactSupplyOrderHeader() {
   return <div className={`hidden grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-border bg-muted/35 px-3 py-2 text-xs font-semibold text-muted-foreground lg:grid ${columns}`}>
-    <span>Материал и характеристики</span><span>Поставщик</span><span>Заявка и дата Мат.плана</span><span>Количества и состояние</span><span />
+    <span>Материал и характеристики</span><span>Поставщик</span><span>Заявка и дата Мат.плана</span><span>Вес позиции</span><span>Количества и состояние</span><span />
   </div>
 }
 
@@ -33,6 +33,9 @@ export function CompactSupplyOrderRow({ slice, children }: { slice: SupplyOrderD
   const overdue = ordered && slice.dateKey !== 'no_supply_date' && slice.dateKey < today
   const characteristics = slice.aggregate.characteristics.filter(part => part.value !== slice.aggregate.item_name)
   const matPlanDates = supplyOrderMatPlanDates(slice)
+  const weight = items.length > 0 && items.every((item) => item.weight_kg !== null && Number.isFinite(item.weight_kg))
+    ? items.reduce((sum, item) => sum + Number(item.weight_kg), 0)
+    : null
   return <details className="group border-b border-border bg-card last:border-b-0 open:bg-muted/10">
     <summary className={`grid min-h-16 cursor-pointer list-none grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 px-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${columns} [&::-webkit-details-marker]:hidden`}>
       <span className="min-w-0"><strong className="block text-sm leading-5">{slice.aggregate.item_name}</strong>
@@ -42,6 +45,7 @@ export function CompactSupplyOrderRow({ slice, children }: { slice: SupplyOrderD
         {slice.ambiguousOrigin && <span className="block text-amber-800">Источник требует уточнения</span>}</span>
       <span className="col-start-1 min-w-0 text-xs leading-5 lg:col-auto"><span className="font-medium text-muted-foreground lg:hidden">Заявка и Мат.план: </span>{names.slice(0, 2).join(', ') || 'Свободный остаток'}{names.length > 2 ? ` и ещё ${names.length - 2}` : ''}
         {matPlanDates.map(([key, quantity]) => <span key={key} className="block text-muted-foreground">{key === 'no_date' ? 'Срок потребности не задан' : `Мат.план ${date(key)}`} · {amount(quantity)} {slice.aggregate.unit}</span>)}</span>
+      <span className="col-start-1 min-w-0 text-xs leading-5 tabular-nums lg:col-auto"><span className="font-medium text-muted-foreground lg:hidden">Вес позиции: </span>{weight === null ? 'Не рассчитан' : `${amount(weight)} кг`}</span>
       <span className="col-start-2 row-start-1 min-w-0 text-right text-xs leading-5 tabular-nums lg:col-auto lg:row-auto lg:text-left">
         <span className="block"><span className="text-muted-foreground">{slice.state === 'redelivery' ? 'Нужно довезти' : 'Нужно заказать'}: </span><strong>{amount(slice.unscheduledQuantity)} {slice.aggregate.unit}</strong></span>
         <span className="block"><span className="text-muted-foreground">Заказано: </span><strong>{amount(slice.plannedQuantity)} {slice.aggregate.unit}</strong></span>

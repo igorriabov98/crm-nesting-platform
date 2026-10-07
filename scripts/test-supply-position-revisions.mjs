@@ -51,6 +51,19 @@ if (scheduleFinanceResult.status !== 0) {
 assert.equal(scheduleFinanceResult.status, 0, 'Atomic schedule and finance SQL assertions failed')
 console.log('[supply-schedule-finance] all assertions passed')
 
+const schedulePaymentDatesResult = spawnSync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-d', databaseName], {
+  cwd: root,
+  encoding: 'utf8',
+  env: postgresEnv,
+  input: readFileSync(path.join(root, 'supabase', 'tests', 'supply_schedule_payment_dates_test.sql'), 'utf8'),
+})
+if (schedulePaymentDatesResult.status !== 0) {
+  process.stderr.write(schedulePaymentDatesResult.stdout || '')
+  process.stderr.write(schedulePaymentDatesResult.stderr || '')
+}
+assert.equal(schedulePaymentDatesResult.status, 0, 'Supply schedule payment date assertions failed')
+console.log('[supply-schedule-payment-dates] all assertions passed')
+
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: root, env: process.env, encoding: 'utf8', stdio: 'inherit' })
   assert.equal(result.status, 0, `${path.basename(command)} exited with status ${result.status}`)
