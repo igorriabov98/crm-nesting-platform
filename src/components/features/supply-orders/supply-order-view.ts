@@ -193,6 +193,49 @@ export function supplyOrderDateSliceItems(slice: SupplyOrderDateSlice): SupplyOr
   })
 }
 
+/** Display totals for one dated supply row. Keep the original factory for mutations. */
+export function projectSupplyOrderDateSliceFactory(
+  slice: SupplyOrderDateSlice,
+  factory: SupplyOrderAggregateFactory,
+): SupplyOrderAggregateFactory {
+  const scheduleIds = new Set(slice.scheduleIds || [])
+  const items = supplyOrderDateSliceItems(slice).map((item) => {
+    const schedules = item.delivery_schedules.filter((schedule) => scheduleIds.has(schedule.id))
+    return {
+      ...item,
+      delivery_schedules: schedules,
+      planned_schedule_quantity: slice.state === 'ordered' ? item.quantity : 0,
+      delivered_schedule_quantity: slice.state === 'closed' ? item.quantity : 0,
+      unscheduled_quantity: slice.kind === 'unscheduled' ? item.quantity : 0,
+    }
+  })
+  const dates = [...new Set(items.map((item) => item.planned_material_date).filter((value): value is string => Boolean(value)))].sort()
+  const supplierIds = new Set(items.map((item) => item.supplier_id))
+  return {
+    ...factory,
+    items,
+    quantity: slice.quantity,
+    requested_quantity: items.reduce((sum, item) => sum + (item.requested_quantity ?? item.quantity), 0),
+    reserved_quantity: items.reduce((sum, item) => sum + (item.reserved_quantity ?? 0), 0),
+    weight_kg: items.length > 0 && items.every((item) => item.weight_kg !== null)
+      ? items.reduce((sum, item) => sum + (item.weight_kg || 0), 0) : null,
+    item_count: items.length,
+    machine_count: new Set(items.map((item) => item.machine_id).filter(Boolean)).size,
+    pending_count: items.filter((item) => item.order_status === 'pending').length,
+    ordered_count: items.filter((item) => item.order_status === 'ordered').length,
+    delivered_count: items.filter((item) => item.order_status === 'delivered').length,
+    planned_schedule_quantity: slice.plannedQuantity,
+    delivered_schedule_quantity: slice.deliveredQuantity,
+    unscheduled_quantity: slice.unscheduledQuantity,
+    delivery_schedule_count: scheduleIds.size,
+    has_delivery_schedules: scheduleIds.size > 0,
+    production_date: dates.length === 1 ? dates[0] : null,
+    supply_delivery_date: slice.dateKey === 'no_supply_date' ? null : slice.dateKey,
+    has_mixed_supply_delivery_dates: false,
+    suppliers: factory.suppliers.filter((supplier) => supplierIds.has(supplier.id)),
+  }
+}
+
 export type SupplyOrderQuantitySummary = {
   demandQuantity: number
   requestedQuantity: number
@@ -239,7 +282,8 @@ export function summarizeSupplyOrderQuantities(
 
 /** A parent's physical receipt already includes its allocation child rows. */
 function physicalReceiptSchedules(schedules: SupplyOrderDeliverySchedule[]) {
-  const delivered = schedules.filter((row) => row.status === 'delivered')
+  const delivered = [...new Map(schedules.filter((row) => row.status === 'delivered')
+    .map((row) => [row.id, row])).values()]
   const ids = new Set(delivered.map((row) => row.id))
   return delivered.filter((row) => !row.receipt_parent_schedule_id || !ids.has(row.receipt_parent_schedule_id))
 }

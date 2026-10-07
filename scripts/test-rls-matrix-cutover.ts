@@ -251,6 +251,7 @@ assert.deepEqual(
     '20260929180000_production_plan_versions.sql',
     '20261005120000_stock_request_returning_visibility.sql',
     '20261006160000_supply_summary_redelivery.sql',
+    '20261007120000_atomic_supply_schedule_finance.sql',
 
   ],
   'После cutover разрешены только проверенные follow-up миграции',

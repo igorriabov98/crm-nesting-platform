@@ -38,6 +38,19 @@ assert.equal(result.status, 0, 'Supply position revision SQL assertions failed')
 process.stdout.write(result.stdout || '')
 console.log('[supply-position-revisions] all assertions passed')
 
+const scheduleFinanceResult = spawnSync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-d', databaseName], {
+  cwd: root,
+  encoding: 'utf8',
+  env: postgresEnv,
+  input: readFileSync(path.join(root, 'supabase', 'tests', 'atomic_supply_schedule_finance_test.sql'), 'utf8'),
+})
+if (scheduleFinanceResult.status !== 0) {
+  process.stderr.write(scheduleFinanceResult.stdout || '')
+  process.stderr.write(scheduleFinanceResult.stderr || '')
+}
+assert.equal(scheduleFinanceResult.status, 0, 'Atomic schedule and finance SQL assertions failed')
+console.log('[supply-schedule-finance] all assertions passed')
+
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: root, env: process.env, encoding: 'utf8', stdio: 'inherit' })
   assert.equal(result.status, 0, `${path.basename(command)} exited with status ${result.status}`)

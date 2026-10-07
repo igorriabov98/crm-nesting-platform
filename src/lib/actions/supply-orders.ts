@@ -9,7 +9,7 @@ import {
   projectAggregateVirtualReceivingQuantities,
 } from '@/lib/supply-orders/receiving-quantity.mjs'
 import { linkRedeliveryRows, resolveLegacyRedeliverySchedules } from '@/lib/supply-orders/redelivery'
-import { requirePermission } from '@/lib/permissions/server'
+import { requireAnyPermission, requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import type { MaterialCategory, OrderItemStatus } from '@/lib/types'
@@ -81,6 +81,7 @@ type RpcDb = LooseDb & {
 export type SupplyFinancePaymentInput = {
   supplierId: string
   plannedDate: string
+  deliveryDate?: string
   amount: number
   currency: 'UAH' | 'EUR'
   itemKeys: string[]
@@ -4256,12 +4257,16 @@ async function replacePlannedDeliverySchedules(
   rows: Record<string, unknown>[],
   items: SupplyOrderAggregateInputItem[],
   expected: ReceivingScheduleRow[],
+  payments: Record<string, unknown>[] = [],
 ) {
-  const { error } = await db.rpc('fn_replace_supply_order_delivery_schedules_v2', {
+  const { error } = await db.rpc(payments.length > 0
+    ? 'fn_replace_supply_order_delivery_schedules_with_finance_v1'
+    : 'fn_replace_supply_order_delivery_schedules_v2', {
     p_delete_ids: scheduleIds,
     p_rows: rows,
     p_items: items.map(item => ({ table: item.table, id: item.id })),
     p_expected: expected.map(row => ({ id: row.id, status: row.status, updated_at: row.updated_at })),
+    ...(payments.length > 0 ? { p_payments: payments } : {}),
   })
   if (error) throw new Error(error.message || 'Не удалось сохранить график поставки')
 }
@@ -4403,15 +4408,28 @@ export async function saveAggregateDeliverySchedule(
   items: { table: string; id: string }[],
   schedules: SupplyOrderAggregateScheduleInput[],
   scope?: SupplyOrderDeliveryScheduleScope,
+  payments: SupplyFinancePaymentInput[] = [],
 ) {
   try {
+    if (!Array.isArray(items) || !Array.isArray(schedules) || !Array.isArray(payments)) {
+      throw new Error('Некорректный состав графика или платежей')
+    }
     const { db, userId } = await requireAccess('manage')
+    if (payments.length > 0) await requireAnyPermission([
+      { resourceKey: 'supply_finance', operation: 'manage' },
+      { resourceKey: 'finance_calendar', operation: 'manage' },
+    ])
     const groupedItems = groupItemsByTable(items)
     if (groupedItems.size === 0) throw new Error('Нет позиций для графика поставки')
+    const requestedKeys = new Set(items.map((item) => `${item.table}:${item.id}`))
+    if (requestedKeys.size !== items.length) throw new Error('Позиции графика повторяются')
 
     const normalizedSchedules = normalizeScheduleInputs(schedules)
     const selectedItems = await loadSelectedOrderItems(db, groupedItems)
-    if (selectedItems.length === 0) throw new Error('Позиции закупки не найдены')
+    if (selectedItems.length !== requestedKeys.size
+      || selectedItems.some((item) => !requestedKeys.has(itemKey(item)))) {
+      throw new Error('Состав позиций закупки изменился. Обновите страницу')
+    }
     assertSingleAggregateScheduleSelection(selectedItems)
     const openItems = selectedItems.filter((item) => (
       item.order_status !== 'delivered' && item.order_status !== 'cancelled'
@@ -4568,9 +4586,13 @@ export async function saveAggregateDeliverySchedule(
       ]
       plannedScheduleIds = allPlannedScheduleIds
     } else if (normalizedScope?.mode === 'unscheduled') {
+      const capacities = makeCapacities(selectedItems, allocations)
+      if (capacities.every((capacity) => capacity.remaining <= 0.000001)) {
+        throw new Error('Незапланированного остатка больше нет. Обновите страницу')
+      }
       insertRows = distributeScheduleRows(
         resolvedSchedules,
-        makeCapacities(selectedItems, allocations),
+        capacities,
         userId,
         !isBarSchedule,
       )
@@ -4586,13 +4608,63 @@ export async function saveAggregateDeliverySchedule(
     }
 
     insertRows = linkRedeliveryRows(insertRows, redeliveryContext, plannedScheduleIds)
-    await replacePlannedDeliverySchedules(db, plannedScheduleIds, insertRows, selectedItems, storedSchedules)
-
-
+    const selectedKeys = new Set(selectedItems.map(itemKey))
+    const groupedPayments = new Map<string, SupplyFinancePaymentInput>()
+    for (const payment of payments) {
+      if (!payment || typeof payment !== 'object') throw new Error('Некорректные реквизиты платежа')
+      if (!payment.supplierId || !payment.deliveryDate || !resolvedSchedules.some((schedule) => (
+        schedule.supplier_id === payment.supplierId && schedule.delivery_date === payment.deliveryDate
+      ))) {
+        throw new Error('Платёж должен относиться к дате и поставщику сохраняемого графика')
+      }
+      if (!Array.isArray(payment.itemKeys) || payment.itemKeys.some((key) => !selectedKeys.has(key))) {
+        throw new Error('Платёж относится к другой позиции материала')
+      }
+      const requestedKeys = new Set(payment.itemKeys)
+      const keys = [...new Set(insertRows.filter((row) => (
+        row.supplier_id === payment.supplierId && row.delivery_date === payment.deliveryDate
+      )).map((row) => `${row.request_item_table}:${row.request_item_id}`)
+        .filter((key) => requestedKeys.has(key)))].sort()
+      if (keys.length === 0) throw new Error('Для платежа не найдена позиция в сохраняемой поставке')
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(payment.plannedDate)) throw new Error('Укажите дату оплаты')
+      if (!Number.isFinite(payment.amount) || payment.amount <= 0) throw new Error('Сумма платежа должна быть больше 0')
+      if (payment.currency !== 'UAH' && payment.currency !== 'EUR') throw new Error('Некорректная валюта платежа')
+      const key = `${payment.supplierId}:${payment.plannedDate}:${keys.join('|')}`
+      const previous = groupedPayments.get(key)
+      if (previous && previous.currency !== payment.currency) throw new Error('Для одинаковых платежей выбрана разная валюта')
+      groupedPayments.set(key, { ...payment, itemKeys: keys, amount: payment.amount + (previous?.amount || 0) })
+    }
+    const preparedPayments: Record<string, unknown>[] = []
+    for (const [sourceKey, payment] of groupedPayments) {
+      const { amountUah, exchangeRate } = await convertPaymentToUah(payment.amount, payment.currency)
+      preparedPayments.push({
+        source_key: sourceKey,
+        supplier_id: payment.supplierId,
+        planned_date: payment.plannedDate,
+        amount: payment.amount,
+        amount_uah: amountUah,
+        exchange_rate: exchangeRate,
+        currency: payment.currency,
+        item_keys: payment.itemKeys,
+      })
+    }
     const machineIds = await getAffectedMachineIds(db, groupedItems)
-    revalidateSupplyOrderPaths(machineIds)
+    await replacePlannedDeliverySchedules(db, plannedScheduleIds, insertRows, selectedItems, storedSchedules, preparedPayments)
+    try {
+      revalidateSupplyOrderPaths(machineIds)
+    } catch (error) {
+      console.error('[supply-orders] schedule saved but cache revalidation failed', { error })
+      return { success: true, warning: 'График сохранён, но обновить страницу автоматически не удалось. Перезагрузите страницу' }
+    }
     return { success: true }
   } catch (error) {
+    console.error('[supply-orders] saveAggregateDeliverySchedule failed', {
+      itemCount: Array.isArray(items) ? items.length : null,
+      scheduleCount: Array.isArray(schedules) ? schedules.length : null,
+      paymentCount: Array.isArray(payments) ? payments.length : null,
+      scopeMode: scope?.mode ?? 'all',
+      error,
+    })
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось сохранить график поставки' }
   }
 }

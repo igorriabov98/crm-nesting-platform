@@ -21,6 +21,7 @@ import {
   isSupplyOrderFactoryClosed,
   isSupplyOrderRedeliveryItem,
   partitionSupplyOrderAggregatesByRedelivery,
+  projectSupplyOrderDateSliceFactory,
   summarizeSupplyOrderMachineRoutes,
   summarizeSupplyOrderItemSchedules,
   summarizeSupplyOrderQuantities,
@@ -31,6 +32,7 @@ import {
   sortSupplyOrderItems,
   type OrderFiltersState,
 } from '@/components/features/supply-orders/supply-order-view'
+import { supplyOrderMatPlanDates } from '@/components/features/supply-orders/CompactSupplyOrderRow'
 import { getRequestItemSelect, withRequestSteelType } from '@/lib/supply-orders/pipe-steel-grade'
 import { formatSupplyOrderCharacteristicValue } from '@/lib/supply-orders/characteristic-labels'
 import {
@@ -686,7 +688,7 @@ assert.match(
 )
 assert.match(
   summaryPageSource,
-  /saveAggregateDeliverySchedule\(itemKeys, schedules, scheduleScope\)/u,
+  /saveAggregateDeliverySchedule\(itemKeys, schedules, scheduleScope, financePayments\)/u,
   'the client must pass the date scope to the server mutation',
 )
 assert.match(
@@ -732,7 +734,7 @@ assert.match(
 )
 assert.match(
   summaryPageSource,
-  /hasMixedPlannedAndUnscheduled[\s\S]*appendUnscheduled[\s\S]*allowFinance=\{false\}/u,
+  /hasMixedPlannedAndUnscheduled[\s\S]*appendUnscheduled[\s\S]*paymentItemKeys=\{activeFactoryItems/u,
   'a mixed date card must expose a separate append-only editor for its unscheduled remainder',
 )
 
@@ -882,6 +884,12 @@ const childSummary = summarizeSupplyOrderQuantities(distributedReceiptAggregate,
 assert.equal(childSummary.physicalReceivedQuantity, 6)
 assert.equal(childSummary.allocatedQuantity, 6)
 assert.equal(childSummary.outstandingQuantity, 1)
+const duplicatePhysicalSchedule = structuredClone(distributedReceiptAggregate.factories[0])
+duplicatePhysicalSchedule.items[0].delivery_schedules.push(
+  structuredClone(duplicatePhysicalSchedule.items[0].delivery_schedules[0]),
+)
+assert.equal(summarizeSupplyOrderQuantities(distributedReceiptAggregate, duplicatePhysicalSchedule).physicalReceivedQuantity, 6,
+  'the same physical receipt must not count twice when reused by source rows')
 
 // One physical receipt of 30 sheets serves only the old machine request (25
 // purchased + 5 already reserved). A later undated stock request needs five new sheets.
@@ -944,6 +952,23 @@ scheduledStock.factories[0].unscheduled_quantity = scheduledStock.unscheduled_qu
 const scheduledGroups = groupSupplyOrderAggregatesBySupplyDate([scheduledStock], 'date_asc')
 assert.deepEqual(scheduledGroups.map((group) => group.dateKey), ['2026-10-01', '2026-10-04'])
 assert.deepEqual(supplyOrderDateSliceItems(scheduledGroups[1].rows[0]).map((item) => [item.request_kind, item.planned_material_date, item.quantity]), [['stock', null, 5]])
+const scheduledStockRow = scheduledGroups[1].rows[0]
+const scheduledStockDisplay = projectSupplyOrderDateSliceFactory(scheduledStockRow, scheduledStock.factories[0])
+assert.deepEqual([
+  scheduledStockDisplay.quantity, scheduledStockDisplay.planned_schedule_quantity,
+  scheduledStockDisplay.delivered_schedule_quantity, scheduledStockDisplay.delivery_schedule_count,
+  scheduledStockDisplay.machine_count,
+], [5, 5, 0, 1, 0], 'the new stock row must not inherit the old 30/25 receipt')
+assert.deepEqual(scheduledStockDisplay.items.map(item => [item.request_id, item.quantity,
+  item.delivery_schedules.map(schedule => schedule.id)]), [['new-stock-request', 5, ['stock-future']]])
+assert.deepEqual(supplyOrderMatPlanDates(scheduledStockRow), [['no_date', 5]])
+
+const combinedMatPlanDates = structuredClone(scheduledStockRow)
+combinedMatPlanDates.aggregate.factories[0].items[0].planned_material_date = '2026-10-01'
+combinedMatPlanDates.aggregate.factories[0].items[1].planned_material_date = '2026-10-03'
+combinedMatPlanDates.sourceQuantities = { 'request_sheet:machine-25': 2, 'request_sheet:stock-5': 3 }
+assert.deepEqual(supplyOrderMatPlanDates(combinedMatPlanDates), [['2026-10-01', 2], ['2026-10-03', 3]],
+  'each combined source keeps its original material-plan date and quantity')
 
 const datedStock = structuredClone(stockAndMachine)
 datedStock.factories[0].items[1].planned_material_date = '2026-10-01'

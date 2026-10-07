@@ -13,17 +13,13 @@ function render(slice: Partial<SupplyOrderDateSlice>, totals = summary) {
     dateSlice={slice as SupplyOrderDateSlice} productionDate="2026-10-07" weight={null} itemCount={1} />)
 }
 
-test('a date shows its shipment amount, with overall demand separately', () => {
+test('a date shows only its shipment amount', () => {
   const received = render({ kind: 'delivery', quantity: 10, deliveredQuantity: 10, plannedQuantity: 0, deliveredScheduleCount: 1 })
   assert.match(received, /Принято по этой поставке<\/p><p[^>]*>10 шт<\/p>/)
   const future = render({ kind: 'delivery', quantity: 15, plannedQuantity: 15, plannedScheduleCount: 1 })
   assert.match(future, /Ожидается по этой поставке<\/p><p[^>]*>15 шт<\/p>/)
   for (const html of [received, future]) {
-    assert.match(html, /По всем поставкам этой потребности/)
-    assert.match(html, /Потребность в закупке<\/dt><dd[^>]*>20 шт/)
-    assert.match(html, /Осталось получить для заявок<\/dt><dd[^>]*>10 шт/)
-    assert.match(html, /Запланировано сверх потребности<\/dt><dd[^>]*>5 шт/)
-    assert.match(html, /Ещё не заказано<\/dt><dd[^>]*>0 шт/)
+    assert.doesNotMatch(html, /По всем поставкам этой потребности|Общая потребность|Ещё не заказано/)
   }
 })
 test('an unscheduled remainder is a separate requirement on the production date', () => {
@@ -40,7 +36,7 @@ test('split cards show only local totals and the receipt distinguishes allocated
       physicalReceivedQuantity: 30, outstandingQuantity: 5, plannedQuantity: 0, remainingToOrder: 5, deliveryExcess: 0 }}
     unit="шт" dateSlice={{ kind: 'delivery', quantity: 30, deliveredQuantity: 30, plannedQuantity: 0,
       deliveredScheduleCount: 1, sourceQuantities: { 'request_sheet:machine': 25 } } as unknown as SupplyOrderDateSlice}
-    productionDate="2026-10-01" weight={null} itemCount={1} showOverall={false} />)
+    productionDate="2026-10-01" weight={null} itemCount={1} />)
   assert.match(html, /Заявкам выделено 25 шт · свободный остаток 5 шт/)
   assert.doesNotMatch(html, /По всем поставкам этой потребности|Общая потребность/)
 })
