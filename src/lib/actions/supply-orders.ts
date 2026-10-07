@@ -85,6 +85,39 @@ export type SupplyFinancePaymentInput = {
   amount: number
   currency: 'UAH' | 'EUR'
   itemKeys: string[]
+  transferFromExpenseId?: string | null
+}
+
+export type SupplySchedulePayment = {
+  id: string
+  amount: number
+  currency: 'UAH' | 'EUR'
+  planned_date: string
+  supplier_id: string
+  delivery_date: string
+  status: string
+  paid_amount: number
+  linked_date_count: number
+  item_keys: string[]
+}
+
+export async function getSupplySchedulePayments(scheduleIds: string[]) {
+  try {
+    const { db } = await requireAccess('manage')
+    if (!Array.isArray(scheduleIds) || scheduleIds.some((id) => !/^[0-9a-f-]{36}$/i.test(id))) {
+      throw new Error('Некорректные строки графика')
+    }
+    const { data, error } = await db.rpc('fn_get_supply_schedule_payments_v1', { p_schedule_ids: scheduleIds })
+    if (error) throw new Error(error.message || 'Не удалось проверить платежи графика')
+    const result = data as { payments?: SupplySchedulePayment[]; requires_finance_permission?: boolean } | null
+    return { success: true as const, data: {
+      payments: result?.payments || [],
+      requiresFinancePermission: result?.requires_finance_permission === true,
+    } }
+  } catch (error) {
+    console.error('[supply-orders] getSupplySchedulePayments failed', { scheduleCount: scheduleIds?.length, error })
+    return { success: false as const, error: error instanceof Error ? error.message : 'Не удалось проверить платежи графика' }
+  }
 }
 
 export type SupplyOrderPlacementInput = {
@@ -4128,11 +4161,10 @@ function assertSingleAggregateScheduleSelection(items: SupplyOrderAggregateInput
   if (items.length <= 1) return
   const aggregateKeys = new Set(items.map((item) => [
     factoryKey(item.factory_id),
-    plannedDateKey(item.planned_material_date),
     getAggregateIdentityKey(item.table, item.raw, item),
   ].join('|')))
   if (aggregateKeys.size !== 1) {
-    throw new Error('Общий график можно изменить только для одного материала, завода и Мат.плана')
+    throw new Error('Общий график можно изменить только для одного материала и завода')
   }
 }
 
@@ -4259,14 +4291,12 @@ async function replacePlannedDeliverySchedules(
   expected: ReceivingScheduleRow[],
   payments: Record<string, unknown>[] = [],
 ) {
-  const { error } = await db.rpc(payments.length > 0
-    ? 'fn_replace_supply_order_delivery_schedules_with_finance_v1'
-    : 'fn_replace_supply_order_delivery_schedules_v2', {
+  const { error } = await db.rpc('fn_replace_supply_order_delivery_schedules_with_finance_v2', {
     p_delete_ids: scheduleIds,
     p_rows: rows,
     p_items: items.map(item => ({ table: item.table, id: item.id })),
     p_expected: expected.map(row => ({ id: row.id, status: row.status, updated_at: row.updated_at })),
-    ...(payments.length > 0 ? { p_payments: payments } : {}),
+    p_payments: payments,
   })
   if (error) throw new Error(error.message || 'Не удалось сохранить график поставки')
 }
@@ -4609,7 +4639,10 @@ export async function saveAggregateDeliverySchedule(
 
     insertRows = linkRedeliveryRows(insertRows, redeliveryContext, plannedScheduleIds)
     const selectedKeys = new Set(selectedItems.map(itemKey))
-    const groupedPayments = new Map<string, SupplyFinancePaymentInput>()
+    const groupedPayments = new Map<string, {
+      payment: SupplyFinancePaymentInput
+      deliveryAllocations: Map<string, number>
+    }>()
     for (const payment of payments) {
       if (!payment || typeof payment !== 'object') throw new Error('Некорректные реквизиты платежа')
       if (!payment.supplierId || !payment.deliveryDate || !resolvedSchedules.some((schedule) => (
@@ -4625,17 +4658,30 @@ export async function saveAggregateDeliverySchedule(
         row.supplier_id === payment.supplierId && row.delivery_date === payment.deliveryDate
       )).map((row) => `${row.request_item_table}:${row.request_item_id}`)
         .filter((key) => requestedKeys.has(key)))].sort()
-      if (keys.length === 0) throw new Error('Для платежа не найдена позиция в сохраняемой поставке')
+      if (keys.length !== requestedKeys.size) {
+        throw new Error('Часть позиций платежа отсутствует в сохраняемой поставке. Обновите страницу')
+      }
       if (!/^\d{4}-\d{2}-\d{2}$/.test(payment.plannedDate)) throw new Error('Укажите дату оплаты')
       if (!Number.isFinite(payment.amount) || payment.amount <= 0) throw new Error('Сумма платежа должна быть больше 0')
+      if (Math.abs(payment.amount * 100 - Math.round(payment.amount * 100)) > 0.000001) {
+        throw new Error('Сумма платежа должна быть указана с точностью до копеек')
+      }
       if (payment.currency !== 'UAH' && payment.currency !== 'EUR') throw new Error('Некорректная валюта платежа')
-      const key = `${payment.supplierId}:${payment.plannedDate}:${keys.join('|')}`
+      const key = `${payment.supplierId}:${payment.plannedDate}:${keys.join('|')}#delivery:${payment.deliveryDate}`
       const previous = groupedPayments.get(key)
-      if (previous && previous.currency !== payment.currency) throw new Error('Для одинаковых платежей выбрана разная валюта')
-      groupedPayments.set(key, { ...payment, itemKeys: keys, amount: payment.amount + (previous?.amount || 0) })
+      if (previous && (previous.payment.currency !== payment.currency
+        || previous.payment.transferFromExpenseId !== payment.transferFromExpenseId)) {
+        throw new Error('Платежи с разной валютой или источником переноса нельзя объединить')
+      }
+      const deliveryAllocations = previous?.deliveryAllocations || new Map<string, number>()
+      deliveryAllocations.set(payment.deliveryDate, Math.round(((deliveryAllocations.get(payment.deliveryDate) || 0) + payment.amount) * 100) / 100)
+      groupedPayments.set(key, {
+        payment: { ...payment, itemKeys: keys, amount: Math.round((payment.amount + (previous?.payment.amount || 0)) * 100) / 100 },
+        deliveryAllocations,
+      })
     }
     const preparedPayments: Record<string, unknown>[] = []
-    for (const [sourceKey, payment] of groupedPayments) {
+    for (const [sourceKey, { payment, deliveryAllocations }] of groupedPayments) {
       const { amountUah, exchangeRate } = await convertPaymentToUah(payment.amount, payment.currency)
       preparedPayments.push({
         source_key: sourceKey,
@@ -4646,6 +4692,9 @@ export async function saveAggregateDeliverySchedule(
         exchange_rate: exchangeRate,
         currency: payment.currency,
         item_keys: payment.itemKeys,
+        transfer_from_expense_id: payment.transferFromExpenseId || null,
+        delivery_allocations: [...deliveryAllocations].sort(([left], [right]) => left.localeCompare(right))
+          .map(([deliveryDate, amount]) => ({ delivery_date: deliveryDate, amount })),
       })
     }
     const machineIds = await getAffectedMachineIds(db, groupedItems)
@@ -4728,6 +4777,11 @@ export async function clearAggregateDeliverySchedule(
     revalidateSupplyOrderPaths(machineIds)
     return { success: true }
   } catch (error) {
+    console.error('[supply-orders] clearAggregateDeliverySchedule failed', {
+      itemCount: Array.isArray(items) ? items.length : null,
+      scopeMode: scope?.mode ?? 'all',
+      error,
+    })
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось сбросить график поставки' }
   }
 }

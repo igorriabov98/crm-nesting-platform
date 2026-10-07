@@ -109,7 +109,7 @@ begin
       jsonb_set(jsonb_set(payment,'{0,amount}','101'::jsonb),'{0,amount_uah}','101'::jsonb));
     raise exception 'conflicting payment accepted';
   exception when others then
-    if sqlerrm <> 'Платёж уже существует с другими реквизитами. Измените его в финансах' then raise; end if;
+    if sqlerrm <> 'У даты есть платёж. Измените график вместе с платежом' then raise; end if;
   end;
   if (select id from public.supply_order_delivery_schedules where request_item_id=item) <> schedule
     or (select count(*) from public.finance_expenses e where e.source_key=v_source_key) <> 1 then
