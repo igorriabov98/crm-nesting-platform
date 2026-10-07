@@ -262,7 +262,7 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
       {view === 'list' && <div className="flex flex-wrap items-center gap-2" aria-label="Раздел итогов">
         {([['unscheduled', 'Без графика'], ['ordered', 'Заказано'], ['redelivery', 'Нужно довезти'], ['all', 'Все']] as const).map(([key, label]) => {
           const count = matchingRows.flatMap(group => group.rows).filter(row => key === 'all' || row.state === key).length
-          return <Button key={key} size="sm" variant={section === key ? 'default' : 'outline'} className={key === 'redelivery' && count > 0 ? 'border-destructive bg-destructive text-destructive-foreground hover:bg-destructive/90 hover:text-destructive-foreground focus-visible:ring-destructive' : undefined} aria-pressed={section === key} onClick={() => setPreferences({ ...preferences, section: key })}>{label} <span className="tabular-nums">{count}</span></Button>
+          return <Button key={key} size="sm" variant={section === key ? 'default' : 'outline'} className={key === 'redelivery' && count > 0 ? 'border-destructive bg-destructive text-white hover:bg-destructive/90 hover:text-white focus-visible:ring-destructive' : undefined} aria-pressed={section === key} onClick={() => setPreferences({ ...preferences, section: key })}>{label} <span className="tabular-nums">{count}</span></Button>
         })}
         {section === 'all' && <SummaryFilterSelect label="Состояние" value={allStatus} display={{ all: 'Все состояния', open: 'Незакрытые', closed: 'Закрытые' }[allStatus]} items={[['all', 'Все состояния'], ['open', 'Незакрытые'], ['closed', 'Закрытые']]} onValueChange={(value) => setPreferences({ ...preferences, allStatus: value as typeof allStatus })} />}
       </div>}
