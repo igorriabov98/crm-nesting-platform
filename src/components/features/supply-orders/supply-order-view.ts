@@ -165,6 +165,7 @@ export type SupplyOrderDateSlice = {
   plannedScheduleCount: number
   deliveredScheduleCount: number
   sourceQuantities?: Record<string, number>
+  scheduleSourceKeys?: string[]
   stockWithoutDate?: boolean
   state?: 'unscheduled' | 'ordered' | 'redelivery' | 'closed' | 'review'
   scheduleIds?: string[]
@@ -191,6 +192,12 @@ export function supplyOrderDateSliceItems(slice: SupplyOrderDateSlice): SupplyOr
       unscheduled_quantity: slice.kind === 'unscheduled' ? quantity : 0,
     }] : []
   })
+}
+
+export function supplyOrderDateSliceScheduleSources(slice: SupplyOrderDateSlice): SupplyOrderAggregateSourceItem[] {
+  const sourceKeys = new Set(slice.scheduleSourceKeys || [])
+  return slice.aggregate.factories.flatMap((factory) => factory.items)
+    .filter((item) => sourceKeys.has(supplyOrderSourceKey(item)))
 }
 
 /** Display totals for one dated supply row. Keep the original factory for mutations. */
@@ -1005,6 +1012,7 @@ function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {
       plannedScheduleCount: 0,
       deliveredScheduleCount: 0,
       sourceQuantities: {} as Record<string, number>,
+      scheduleSourceKeys: [] as string[],
       stockWithoutDate, state, scheduleIds: [] as string[], origins,
       supplierId: schedule?.supplier_id || null, supplierName: schedule?.supplier_name || null,
       pieceLengthMm: length,
@@ -1104,6 +1112,10 @@ function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {
         const dateKey = schedule.delivery_date || factory.production_date || aggregate.planned_material_date || 'no_supply_date'
         const slice = getSlice(dateKey, 'delivery', false, schedule.status === 'planned' ? 'ordered' : 'closed',
           schedule, plannedOrigins.get(schedule.id) || redeliveryChain(schedule, allSchedules))
+        if (schedule.status === 'delivered') {
+          const sourceKey = supplyOrderSourceKey(item)
+          if (!slice.scheduleSourceKeys!.includes(sourceKey)) slice.scheduleSourceKeys!.push(sourceKey)
+        }
         if (ambiguousPlans.has(schedule.id)) slice.ambiguousOrigin = true
         if (!slice.scheduleIds!.includes(schedule.id)) slice.scheduleIds!.push(schedule.id)
         const plannedQuantity = Math.max(Number(schedule.quantity || 0), 0)
