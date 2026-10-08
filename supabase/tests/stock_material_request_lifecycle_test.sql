@@ -118,6 +118,43 @@ BEGIN
     RAISE EXCEPTION 'Снабжение не видит одобренную заявку';
   END IF;
 
+  -- Submitted stock demand is visible with supply_orders/view even when the
+  -- supply employee has no factory. Write access remains factory-scoped.
+  UPDATE public.users SET factory_id = NULL WHERE id = v_supply;
+  IF NOT private.stock_request_visible(v_request) THEN
+    RAISE EXCEPTION 'Сотрудник снабжения без завода не видит переданную складскую заявку';
+  END IF;
+  IF private.crm_has_factory_permission('supply_orders', 'manage', v_factory) THEN
+    RAISE EXCEPTION 'Право просмотра расширило управление чужим заводом';
+  END IF;
+  UPDATE public.department_access_permissions SET can_view = false, can_manage = false
+  WHERE department_id = v_supply_department AND subject_scope = 'member' AND resource_key = 'supply_orders';
+  IF private.stock_request_visible(v_request) THEN
+    RAISE EXCEPTION 'Складская заявка видна без права просмотра заказов снабжения';
+  END IF;
+  UPDATE public.department_access_permissions SET can_view = true, can_manage = true
+  WHERE department_id = v_supply_department AND subject_scope = 'member' AND resource_key = 'supply_orders';
+  IF NOT private.stock_request_visible(v_request) THEN
+    RAISE EXCEPTION 'Сотрудник снабжения не видит складскую заявку после возврата права';
+  END IF;
+  INSERT INTO public.department_access_permissions(
+    department_id, subject_scope, resource_key, can_view, can_manage
+  ) VALUES (v_supply_department, 'head', 'supply_orders', true, false);
+  UPDATE public.department_members SET is_department_head = true
+  WHERE user_id = v_supply AND department_id = v_supply_department;
+  IF NOT private.stock_request_visible(v_request) THEN
+    RAISE EXCEPTION 'Начальник снабжения без завода не видит складскую заявку';
+  END IF;
+  IF private.stock_request_row_visible(v_request, 'stock', v_factory, v_author, 'draft') THEN
+    RAISE EXCEPTION 'Снабжение увидело черновик складской заявки';
+  END IF;
+  IF private.stock_request_row_visible(v_request, 'stock', v_factory, v_author, 'pending_financial_approval') THEN
+    RAISE EXCEPTION 'Снабжение увидело складскую заявку до финансового согласования';
+  END IF;
+  UPDATE public.department_members SET is_department_head = false
+  WHERE user_id = v_supply AND department_id = v_supply_department;
+  UPDATE public.users SET factory_id = v_factory WHERE id = v_supply;
+
   PERFORM set_config('request.jwt.claim.sub', v_author::text, true);
   INSERT INTO public.machines(id,factory_id,name,created_by)
   VALUES (v_machine,v_factory,'Машина смешанной приёмки',v_author);
@@ -148,7 +185,30 @@ BEGIN
     OR (SELECT status FROM public.technologist_requests WHERE id = v_request) <> 'completed' THEN
     RAISE EXCEPTION 'Смешанная приёмка неверно распределила свободный остаток: %', v_result;
   END IF;
+  UPDATE public.users SET factory_id = NULL WHERE id = v_supply;
+  PERFORM set_config('test.stock_supply_actor', v_supply::text, true);
+  PERFORM set_config('test.stock_supply_request', v_request::text, true);
+  PERFORM set_config('test.stock_supply_item', v_stock_item::text, true);
 END;
 $$;
+
+-- The local full-schema fixture does not include Supabase platform grants.
+GRANT SELECT ON public.technologist_requests, public.request_paint TO authenticated;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', current_setting('test.stock_supply_actor'), true);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.technologist_requests
+    WHERE id = current_setting('test.stock_supply_request')::uuid
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.request_paint
+    WHERE id = current_setting('test.stock_supply_item')::uuid
+  ) THEN
+    RAISE EXCEPTION 'RLS скрыла складскую заявку или позицию от снабжения';
+  END IF;
+END;
+$$;
+RESET ROLE;
 
 ROLLBACK;

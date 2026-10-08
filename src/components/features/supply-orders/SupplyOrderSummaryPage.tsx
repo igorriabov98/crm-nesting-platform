@@ -81,6 +81,7 @@ import {
   summarizeSupplyOrderItemSchedules,
   summarizeSupplyOrderQuantities,
   supplyOrderDateSliceItems,
+  supplyOrderDateSliceScheduleSources,
   type AggregateFiltersState,
   type SupplyOrderAggregateSort,
   type SupplyOrderAggregateStatusFilter,
@@ -390,6 +391,10 @@ function MaterialOrderCard({
   const [deliveryOpen, setDeliveryOpen] = useState(compact)
   const activeFactoryItems = (dateSlice ? supplyOrderDateSliceItems(dateSlice) : factory?.items || [])
     .filter((item) => !isReturnedSupplyOrderSource(item))
+  const procurementSources = dateSlice?.state === 'closed'
+    ? supplyOrderDateSliceScheduleSources(dateSlice).filter((source) =>
+      !activeFactoryItems.some((item) => item.table === source.table && item.id === source.id))
+    : []
   const displayFactory = factory && dateSlice ? projectSupplyOrderDateSliceFactory(dateSlice, factory) : factory
   const editorFactory = dateSlice?.kind === 'unscheduled' ? displayFactory : factory
   const cardId = dateSlice?.id || aggregate.id
@@ -520,16 +525,31 @@ function MaterialOrderCard({
               <Cog className="h-4 w-4 text-primary" />
               Заявки по этому объёму
             </h4>
-            <span className="text-xs text-muted-foreground">{activeFactoryItems.length}</span>
+            <span className="text-xs text-muted-foreground">{activeFactoryItems.length + procurementSources.length}</span>
           </div>
 
           {dateSlice && (
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              {isUnscheduledSlice ? 'Заявки с незапланированным остатком.' : 'Заявки, которым выделен объём этой поставки или назначен график.'}
+              {isUnscheduledSlice ? 'Заявки с незапланированным остатком.' : 'Заявки, которым выделен объём этой поставки или по которым оформлен график.'}
             </p>
           )}
 
-          {factory && <MachineItems id={detailsId} factory={displayFactory || factory} dateSlice={dateSlice} />}
+          {procurementSources.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {procurementSources.map((source) => (
+                <div key={`${source.table}:${source.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-background px-3 py-2.5 text-sm">
+                  <div className="min-w-0">
+                    <span className="block text-xs text-muted-foreground">{source.request_kind === 'stock' ? 'Складская заявка' : 'Заявка'} · источник графика поставки</span>
+                    <span className="block break-words font-medium text-foreground">{source.machine_name}</span>
+                  </div>
+                  <Link href={`${ROUTES.SUPPLY_REQUEST}/${source.request_id}`} className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-border px-2 text-xs font-medium text-primary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    <ExternalLink className="h-3.5 w-3.5" /> Открыть заявку
+                  </Link>
+                </div>
+              ))}
+            </div>
+          )}
+          {factory && activeFactoryItems.length > 0 && <MachineItems id={detailsId} factory={displayFactory || factory} dateSlice={dateSlice} />}
         </section>
 
       </div>

@@ -29,6 +29,7 @@ import {
   summarizeSupplyOrderRequestAttention,
   summarizeSupplyOrderUnscheduledMachineRoutes,
   supplyOrderDateSliceItems,
+  supplyOrderDateSliceScheduleSources,
   sortSupplyOrderItems,
   type OrderFiltersState,
 } from '@/components/features/supply-orders/supply-order-view'
@@ -964,6 +965,24 @@ assert.deepEqual([
 assert.deepEqual(scheduledStockDisplay.items.map(item => [item.request_id, item.quantity,
   item.delivery_schedules.map(schedule => schedule.id)]), [['new-stock-request', 5, ['stock-future']]])
 assert.deepEqual(supplyOrderMatPlanDates(scheduledStockRow), [['no_date', 5]])
+
+const freeStockReceipt = structuredClone(scheduledStock)
+freeStockReceipt.factories[0].items[1].delivery_schedules[0] = makeDeliverySchedule({
+  id: 'stock-received-free', delivery_date: '2026-10-15', quantity: 2,
+  status: 'delivered', received_quantity: 2, allocated_quantity: 0,
+  allocated_physical_quantity: 0, excess_quantity: 2,
+})
+freeStockReceipt.factories[0].planned_schedule_quantity = freeStockReceipt.planned_schedule_quantity = 0
+freeStockReceipt.factories[0].delivered_schedule_quantity = freeStockReceipt.delivered_schedule_quantity = 0
+freeStockReceipt.factories[0].unscheduled_quantity = freeStockReceipt.unscheduled_quantity = 3
+const freeStockRow = groupSupplyOrderAggregatesBySupplyDate([freeStockReceipt], 'date_asc')
+  .find((group) => group.dateKey === '2026-10-15')?.rows[0]
+assert.ok(freeStockRow)
+assert.equal(freeStockRow.deliveredQuantity, 2)
+assert.deepEqual(supplyOrderDateSliceItems(freeStockRow), [],
+  'free stock must not be counted as allocated request volume')
+assert.deepEqual(supplyOrderDateSliceScheduleSources(freeStockRow).map((source) => source.request_id),
+  ['new-stock-request'], 'the closed delivery retains its original stock request')
 
 const combinedMatPlanDates = structuredClone(scheduledStockRow)
 combinedMatPlanDates.aggregate.factories[0].items[0].planned_material_date = '2026-10-01'

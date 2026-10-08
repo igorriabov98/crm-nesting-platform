@@ -72,6 +72,14 @@ run(
 )
 assertCutoverState()
 run(
+  'stock request supply visibility scenarios',
+  'psql',
+  [
+    '-v', 'ON_ERROR_STOP=1', connection,
+    '-f', path.join(root, 'supabase/tests/stock_material_request_lifecycle_test.sql'),
+  ],
+)
+run(
   'matrix permission scenarios',
   'psql',
   [
