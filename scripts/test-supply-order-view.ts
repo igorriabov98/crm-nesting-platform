@@ -10,6 +10,8 @@ import {
   buildSupplyOrderDetailContexts,
   deliveredScheduleQuantity,
   filterAndSortAggregates,
+  filterSupplyOrderAggregatesByMaterialQuery,
+  filterSupplySummaryAggregates,
   filterAndSortHistory,
   filterSupplyOrderDateSlices,
   filterSupplyOrderItems,
@@ -361,6 +363,18 @@ assert.deepEqual(
 )
 
 const aggregate = makeAggregate()
+assert.deepEqual(filterSupplyOrderAggregatesByMaterialQuery([aggregate], '  ЛИСТ 8  ').map((row) => row.id),
+  ['aggregate'], 'list search matches material names independent of cards search')
+assert.deepEqual(filterSupplyOrderAggregatesByMaterialQuery([aggregate], 'толщина: 8 мм').map((row) => row.id),
+  ['aggregate'], 'list search includes material characteristics')
+assert.deepEqual(filterSupplyOrderAggregatesByMaterialQuery([aggregate], 'Металл А'), [],
+  'material search must not match supplier or machine fields')
+const independentSearchFilters = { query: 'нет такого материала', supplier: 'all', category: 'all' as const,
+  status: 'open' as const, schedule: 'all' as const, sort: 'date_asc' as const }
+assert.deepEqual(filterSupplySummaryAggregates([aggregate], 'list', independentSearchFilters, 'лист 8').map((row) => row.id),
+  ['aggregate'], 'cards query cannot hide a matching list material')
+assert.deepEqual(filterSupplySummaryAggregates([aggregate], 'cards', independentSearchFilters, 'лист 8'), [],
+  'cards search keeps its own query')
 const wireAggregate = { ...aggregate, id: 'wire-aggregate', category: 'pipe' as const, unit: 'кг' }
 assert.deepEqual(filterAndSortAggregates([wireAggregate], {
   query: '', supplier: 'all', category: 'circle', status: 'all', sort: 'date_asc',

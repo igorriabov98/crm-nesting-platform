@@ -886,6 +886,27 @@ export function filterAndSortAggregates(aggregates: SupplyOrderAggregate[], filt
   })
 }
 
+export function filterSupplyOrderAggregatesByMaterialQuery(aggregates: SupplyOrderAggregate[], query: string) {
+  const normalizedQuery = normalize(query)
+  if (!normalizedQuery) return aggregates
+  return aggregates.filter((aggregate) => normalize([
+    aggregate.item_name,
+    ...aggregate.characteristics.map((part) => `${part.label}: ${part.value}`),
+  ].filter(Boolean).join(' ')).includes(normalizedQuery))
+}
+
+export function filterSupplySummaryAggregates(
+  aggregates: SupplyOrderAggregate[], view: 'list' | 'cards',
+  filters: AggregateFiltersState, listQuery: string,
+) {
+  return view === 'list'
+    ? filterSupplyOrderAggregatesByMaterialQuery(
+      filterAndSortAggregates(aggregates, { ...filters, query: '', status: 'all', schedule: 'all' }),
+      listQuery,
+    )
+    : filterAndSortAggregates(aggregates, filters)
+}
+
 export function isSupplyOrderAggregateClosed(aggregate: SupplyOrderAggregate) {
   const items = aggregate.factories.flatMap((factory) => factory.items)
   if (items.some(isReturnedSupplyOrderSource)) return false
