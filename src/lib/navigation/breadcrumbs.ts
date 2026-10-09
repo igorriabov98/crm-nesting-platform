@@ -24,6 +24,7 @@ export const BREADCRUMB_SEGMENT_LABELS: Record<string, string> = {
   receiving: 'Приём материала',
   invoices: 'Инвойсы',
   reports: 'Отчёты',
+  'supply-deadlines': 'Недовоз и просрочка дедлайнов',
   complex: 'Комплексные отчёты',
   contracts: 'Контракты',
   notifications: 'Уведомления',

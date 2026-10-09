@@ -42,6 +42,7 @@ export const ROUTES = {
   REPORTS_COMPLEX: '/reports/complex',
   REPORTS_PRODUCTION: '/reports/production',
   REPORTS_PRODUCTION_SETTINGS: '/reports/production/settings',
+  REPORTS_SUPPLY_DEADLINES: '/reports/supply-deadlines',
   TASKS:          '/tasks',
   CUSTOMS_CLEARANCE: '/customs-clearance',
   REQUESTS:       '/requests',

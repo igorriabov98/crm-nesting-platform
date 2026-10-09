@@ -58,7 +58,7 @@ const policySnapshotPath = join(root, 'supabase/reports/rls_dependency_affected_
 const functionSnapshotPath = join(root, 'supabase/reports/rls_legacy_function_snapshot.json')
 
 const codeResources = PERMISSION_RESOURCES.map(({ key }) => key).sort()
-assert.deepEqual([...manifest.resources].sort(), codeResources, 'Manifest должен содержать ровно 64 runtime-ресурса')
+assert.deepEqual([...manifest.resources].sort(), codeResources, 'Manifest должен содержать все runtime-ресурсы')
 assert.equal(new Set(manifest.resources).size, manifest.resources.length, 'Ресурсы manifest не должны повторяться')
 
 const policyTables = [...new Set(affected.policies.map(({ tablename }) => tablename))].sort()
@@ -255,6 +255,7 @@ assert.deepEqual(
     '20261007150000_supply_schedule_payment_dates.sql',
     '20261007170000_receipt_keeps_future_supply_schedule.sql',
     '20261008150000_supply_orders_all_factory_stock_visibility.sql',
+    '20261009120000_supply_deadline_report.sql',
 
   ],
   'После cutover разрешены только проверенные follow-up миграции',

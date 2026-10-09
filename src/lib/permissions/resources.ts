@@ -26,6 +26,7 @@ export type ResourceKey =
   | 'supply_finance'
   | 'complex_reports'
   | 'production_reports'
+  | 'supply_deadline_report'
   | 'tasks'
   | 'customs_clearance'
   | 'department_requests'
@@ -407,6 +408,17 @@ export const PERMISSION_RESOURCES = [
     ],
     sidebar: { section: 'reports', icon: 'production', order: 20 },
     supportsFactoryScope: true,
+  },
+  {
+    key: 'supply_deadline_report',
+    label: 'Недовоз и просрочка дедлайнов',
+    description: 'Факт приёмки, срок Мат.плана и открытый недовоз по заводам',
+    group: 'Отчёты',
+    defaultHref: ROUTES.REPORTS_SUPPLY_DEADLINES,
+    defaultViewRoles: [],
+    defaultManageRoles: [],
+    routes: [{ path: ROUTES.REPORTS_SUPPLY_DEADLINES, match: 'prefix', operation: 'view', priority: 180 }],
+    sidebar: { section: 'reports', icon: 'reports', order: 30 },
   },
   {
     key: 'tasks',

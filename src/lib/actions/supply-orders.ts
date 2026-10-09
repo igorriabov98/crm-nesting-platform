@@ -17,6 +17,7 @@ import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notificat
 import { formatCompanyLocation } from '@/lib/transport/company-location'
 import { getRequestItemSelect, withRequestSteelType } from '@/lib/supply-orders/pipe-steel-grade'
 import { formatSupplyOrderCharacteristicValue } from '@/lib/supply-orders/characteristic-labels'
+import { requestedSupplyQuantity as requestedQuantity, reservedSupplyStockQuantity as reservedQuantity, supplyQuantityUnit as primaryUnit } from '@/lib/supply-orders/demand-quantity'
 import {
   deliveryScheduleBelongsToScope,
   type SupplyOrderDeliveryScheduleScope,
@@ -701,48 +702,6 @@ function pipeItemFallback(row: RequestItemRow) {
     return diameter ? `Ø${diameter} мм` : 'Труба круглая'
   }
   return row.size
-}
-
-function requestedQuantity(table: string, row: RequestItemRow) {
-  if (table === 'request_sheet_metal') return Number(row.remainder_qty || row.to_order_kg || 0)
-  // @deprecated — round_tube excluded from new UI
-  if (table === 'request_round_tube') return Number(row.order_kg || 0)
-  if (table === 'request_circle') return Number(row.remainder_mm || 0)
-  if (table === 'request_pipe') return row.pipe_type === 'wire' ? Number(row.remainder_kg || 0) : Number(row.remainder_length_mm || 0)
-  if (table === 'request_knives') {
-    const meters = Number(row.remainder_meters || 0)
-    return meters > 0 ? meters * 1000 : Number(row.to_order_mm || 0)
-  }
-  if (table === 'request_components') return Math.max(Number(row.quantity_needed || 0) - Number(row.stock_remainder || 0), 0)
-  if (table === 'request_mesh') return Number(row.remainder_qty || 0)
-  if (table === 'request_chain_cord') return Number(row.remainder_meters || 0) * 1000
-  return Number(row.remainder_kg || row.to_order_kg || 0)
-}
-
-function reservedQuantity(table: string, row: RequestItemRow) {
-  if (table === 'request_sheet_metal') return Number(row.reserved_from_stock_kg || 0)
-  // @deprecated — round_tube excluded from new UI
-  if (table === 'request_round_tube') return Number(row.reserved_from_stock_kg || 0)
-  if (table === 'request_circle') return Number(row.reserved_from_stock_mm || 0)
-  if (table === 'request_pipe') return row.pipe_type === 'wire' ? Number(row.reserved_from_stock_kg || 0) : Number(row.reserved_from_stock_length_mm || 0)
-  if (table === 'request_knives') return Number(row.reserved_from_stock_mm || 0)
-  if (table === 'request_components') return Number(row.reserved_from_stock || 0)
-  if (table === 'request_mesh') return Number(row.reserved_from_stock_qty || 0)
-  if (table === 'request_chain_cord') return Number(row.reserved_from_stock_meters || 0) * 1000
-  return Number(row.reserved_from_stock_kg || 0)
-}
-
-function primaryUnit(table: string, row: RequestItemRow) {
-  if (table === 'request_sheet_metal') return 'шт'
-  // @deprecated — round_tube excluded from new UI
-  if (table === 'request_round_tube') return 'кг'
-  if (table === 'request_circle') return 'мм'
-  if (table === 'request_pipe') return row.pipe_type === 'wire' ? 'кг' : 'мм'
-  if (table === 'request_knives') return 'мм'
-  if (table === 'request_components') return String(row.unit || 'шт')
-  if (table === 'request_mesh') return 'шт'
-  if (table === 'request_chain_cord') return 'мм'
-  return 'кг'
 }
 
 async function getDeliveryDays(db: LooseDb, supplierIds: string[]) {
