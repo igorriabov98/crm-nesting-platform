@@ -62,6 +62,14 @@ assert.equal(resolveLegacyRedeliverySchedules([source, confirmedAgain, { ...lega
 assert.deepEqual(parseSummaryPreferences('{invalid'), defaultSummaryPreferences)
 assert.equal(parseSummaryPreferences(JSON.stringify({ ...defaultSummaryPreferences,
   view: 'cards', section: 'all', allStatus: 'closed' })).allStatus, 'closed')
+assert.deepEqual(parseSummaryPreferences(JSON.stringify({ ...defaultSummaryPreferences,
+  filters: { ...defaultSummaryPreferences.filters, query: 'поиск карточек' }, listQuery: 'поиск списка',
+})), { ...defaultSummaryPreferences,
+  filters: { ...defaultSummaryPreferences.filters, query: 'поиск карточек' }, listQuery: 'поиск списка',
+}, 'list and cards searches persist independently')
+assert.equal(parseSummaryPreferences(JSON.stringify({ ...defaultSummaryPreferences,
+  filters: { ...defaultSummaryPreferences.filters, query: 'старый поиск карточек' }, listQuery: undefined,
+})).listQuery, '', 'older saved preferences do not copy cards search into the list')
 
 const migration = readFileSync(new URL('../supabase/migrations/20261006160000_supply_summary_redelivery.sql', import.meta.url), 'utf8')
 assert.match(migration, /create policy "Supplier categories read supply roles"[\s\S]*supply_orders', 'view'/i)

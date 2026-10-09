@@ -68,6 +68,7 @@ import { SupplyDateOrderExportButton } from './SupplyDateOrderExportButton'
 import { SupplyOrderFactoryToggle } from './SupplyOrderFactoryToggle'
 import {
   filterAndSortAggregates,
+  filterSupplySummaryAggregates,
   filterSupplyOrderDateSlices,
   getSupplyOrderItemOrderProgress,
   groupSupplyOrderAggregatesBySupplyDate,
@@ -190,8 +191,7 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
   const { view, section, allStatus, filters } = preferences
   const setFilters = (next: AggregateFiltersState | ((current: AggregateFiltersState) => AggregateFiltersState)) =>
     setPreferences({ ...preferences, filters: typeof next === 'function' ? next(filters) : next })
-  const visibleAggregates = filterAndSortAggregates(aggregates,
-    view === 'list' ? { ...filters, status: 'all', schedule: 'all' } : filters)
+  const visibleAggregates = filterSupplySummaryAggregates(aggregates, view, filters, preferences.listQuery)
   const otherMaterialsCount = useMemo(() => filterAndSortAggregates(aggregates, { ...defaultFilters, status: 'all' }).length,
     [aggregates, defaultFilters])
   const openMaterialsCount = useMemo(() => filterAndSortAggregates(aggregates, defaultFilters).length,
@@ -227,10 +227,11 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
     }
   })()
   const filtersPanel = <AggregateFilters
-    compact={view === 'list'} value={filters} suppliers={suppliers}
+    compact={view === 'list'} listQuery={preferences.listQuery} value={filters} suppliers={suppliers}
     resultCount={totals.aggregateCount} totalCount={aggregates.length}
     onChange={setFilters}
-    onReset={() => setPreferences({ ...preferences, allStatus: 'all', filters: defaultFilters })}
+    onReset={() => setPreferences({ ...preferences, allStatus: 'all', listQuery: view === 'list' ? '' : preferences.listQuery,
+      filters: view === 'list' ? { ...defaultFilters, query: filters.query } : defaultFilters })}
   />
 
 
@@ -260,19 +261,40 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
         }}
       />}
 
-      {view === 'list' && <div className="flex flex-wrap items-center gap-2" aria-label="Раздел итогов">
-        {([['unscheduled', 'Без графика'], ['ordered', 'Заказано'], ['redelivery', 'Нужно довезти'], ['all', 'Все']] as const).map(([key, label]) => {
-          const count = matchingRows.flatMap(group => group.rows).filter(row => key === 'all' || row.state === key).length
-          return <Button key={key} size="sm" variant={section === key ? 'default' : 'outline'} className={key === 'redelivery' && count > 0 ? 'border-destructive bg-destructive text-white hover:bg-destructive/90 hover:text-white focus-visible:ring-destructive' : undefined} aria-pressed={section === key} onClick={() => setPreferences({ ...preferences, section: key })}>{label} <span className="tabular-nums">{count}</span></Button>
-        })}
-        {section === 'all' && <SummaryFilterSelect label="Состояние" value={allStatus} display={{ all: 'Все состояния', open: 'Незакрытые', closed: 'Закрытые' }[allStatus]} items={[['all', 'Все состояния'], ['open', 'Незакрытые'], ['closed', 'Закрытые']]} onValueChange={(value) => setPreferences({ ...preferences, allStatus: value as typeof allStatus })} />}
-      </div>}
+      {view === 'list' && <section className="rounded-xl border border-border/70 bg-card p-3 shadow-sm sm:p-4" aria-label="Раздел итогов">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+          <div className="min-w-0 space-y-2">
+            <p className="text-xs font-medium text-muted-foreground">Состояние поставок</p>
+            <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Состояние поставок">
+              {([['unscheduled', 'Без графика'], ['ordered', 'Заказано'], ['redelivery', 'Нужно довезти'], ['all', 'Все']] as const).map(([key, label]) => {
+                const count = matchingRows.flatMap(group => group.rows).filter(row => key === 'all' || row.state === key).length
+                const urgent = key === 'redelivery' && count > 0
+                return <Button key={key} type="button" size="sm" variant={section === key ? 'default' : 'outline'}
+                  className={`min-h-10 gap-2 rounded-lg px-3 ${urgent ? 'border-destructive bg-destructive text-white hover:bg-destructive/90 hover:text-white focus-visible:ring-destructive' : ''}`}
+                  aria-pressed={section === key} onClick={() => setPreferences({ ...preferences, section: key })}>
+                  {label}<span className={`rounded-md px-1.5 py-0.5 text-xs tabular-nums ${urgent || section === key ? 'bg-white/20' : 'bg-muted text-muted-foreground'}`}>{count}</span>
+                </Button>
+              })}
+              {section === 'all' && <SummaryFilterSelect label="Состояние" value={allStatus} display={{ all: 'Все состояния', open: 'Незакрытые', closed: 'Закрытые' }[allStatus]} items={[['all', 'Все состояния'], ['open', 'Незакрытые'], ['closed', 'Закрытые']]} onValueChange={(value) => setPreferences({ ...preferences, allStatus: value as typeof allStatus })} />}
+            </div>
+          </div>
+          <label className="grid min-w-0 gap-2 xl:w-64 xl:shrink-0">
+            <span className="text-xs font-medium text-muted-foreground">Поиск материала в списке</span>
+            <span className="relative block">
+              <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input type="search" value={preferences.listQuery}
+                onChange={(event) => setPreferences({ ...preferences, listQuery: event.target.value })}
+                placeholder="Название или характеристика" className="h-10 min-w-0 pl-9" />
+            </span>
+          </label>
+        </div>
+      </section>}
 
       {view === 'list' ? <details className="rounded-xl border bg-card open:border-transparent">
         <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
           <span>Фильтры · показано {totals.aggregateCount} из {aggregates.length}</span>
           <span className="flex items-center gap-2 text-xs text-muted-foreground">
-            {filters.query || filters.supplier !== 'all' || filters.category !== 'all' || filters.sort !== 'date_asc' ? 'Заданы фильтры' : ''}
+            {preferences.listQuery || filters.supplier !== 'all' || filters.category !== 'all' || filters.sort !== 'date_asc' ? 'Заданы фильтры' : ''}
             <ChevronDown className="h-4 w-4" />
           </span>
         </summary>
@@ -283,11 +305,12 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
         <div className="rounded-xl border border-[#E8ECF0] bg-white p-10 text-center text-[#6B7280]">
           {aggregates.length === 0
             ? 'Нет материалов для закупки или истории закрытых поставок по выбранному заводу.'
-            : filters.status === 'open' && openMaterialsCount === 0 && otherMaterialsCount > 0
+            : view === 'cards' && filters.status === 'open' && openMaterialsCount === 0 && otherMaterialsCount > 0
               ? `Незакрытых материалов нет. Остальных материалов: ${otherMaterialsCount}.`
               : 'По выбранным фильтрам материалы не найдены.'}
           {aggregates.length > 0 && (
-            <div><Button type="button" variant="outline" className="mt-4" onClick={() => setPreferences({ ...preferences, section: 'all', allStatus: 'all', filters: { ...defaultFilters, status: 'all' } })}>Показать все</Button></div>
+            <div><Button type="button" variant="outline" className="mt-4" onClick={() => setPreferences({ ...preferences, section: 'all', allStatus: 'all', listQuery: view === 'list' ? '' : preferences.listQuery,
+              filters: { ...defaultFilters, query: view === 'list' ? filters.query : '', status: 'all' } })}>Показать все</Button></div>
           )}
         </div>
       ) : (
@@ -675,8 +698,9 @@ const aggregateSortLabels: Record<SupplyOrderAggregateSort, string> = {
   remaining_desc: 'Нужно довезти: по убыванию',
 }
 
-function AggregateFilters({ value, suppliers, resultCount, totalCount, onChange, onReset, compact = false }: {
+function AggregateFilters({ value, suppliers, resultCount, totalCount, onChange, onReset, compact = false, listQuery = '' }: {
   compact?: boolean
+  listQuery?: string
   value: AggregateFiltersState
   suppliers: SupplierWithRelations[]
   resultCount: number
@@ -684,7 +708,7 @@ function AggregateFilters({ value, suppliers, resultCount, totalCount, onChange,
   onChange: (value: AggregateFiltersState) => void
   onReset: () => void
 }) {
-  const activeCount = [value.query, value.supplier !== 'all', value.category !== 'all', !compact && value.status !== 'open', !compact && value.schedule && value.schedule !== 'all', value.sort !== 'date_asc']
+  const activeCount = [compact ? listQuery : value.query, value.supplier !== 'all', value.category !== 'all', !compact && value.status !== 'open', !compact && value.schedule && value.schedule !== 'all', value.sort !== 'date_asc']
     .filter(Boolean).length
 
   return (
@@ -702,13 +726,13 @@ function AggregateFilters({ value, suppliers, resultCount, totalCount, onChange,
         </Button>
       </div>
       <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-12">
-        <label className="grid gap-1.5 md:col-span-2 xl:col-span-4">
+        {!compact && <label className="grid gap-1.5 md:col-span-2 xl:col-span-4">
           <span className="text-xs font-medium text-muted-foreground">Поиск</span>
           <span className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input type="search" value={value.query} onChange={(event) => onChange({ ...value, query: event.target.value })} placeholder="Материал, характеристика, машина" className="h-11 pl-9" />
           </span>
-        </label>
+        </label>}
         <SummaryFilterSelect
           className="xl:col-span-3"
           label="Поставщик"

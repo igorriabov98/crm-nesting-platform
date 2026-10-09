@@ -7,10 +7,11 @@ export type SupplySummaryPreferences = {
   view: 'list' | 'cards'
   section: 'unscheduled' | 'ordered' | 'redelivery' | 'all'
   allStatus: 'all' | 'open' | 'closed'
+  listQuery: string
   filters: AggregateFiltersState
 }
 export const defaultSummaryPreferences: SupplySummaryPreferences = {
-  view: 'list', section: 'unscheduled', allStatus: 'all',
+  view: 'list', section: 'unscheduled', allStatus: 'all', listQuery: '',
   filters: { query: '', supplier: 'all', category: 'all', status: 'open', schedule: 'all', sort: 'date_asc' },
 }
 export function parseSummaryPreferences(raw: string | null): SupplySummaryPreferences {
@@ -25,7 +26,8 @@ export function parseSummaryPreferences(raw: string | null): SupplySummaryPrefer
       || !['all', 'open', 'closed', 'review', 'scheduled', 'unscheduled', 'pending', 'ordered'].includes(filters.status)
       || !['all', 'scheduled', 'unscheduled'].includes(filters.schedule)
       || !['date_asc', 'date_desc', 'material_asc', 'quantity_desc', 'remaining_desc'].includes(filters.sort)) return defaultSummaryPreferences
-    return { view: value.view, section: value.section, allStatus: value.allStatus, filters }
+    return { view: value.view, section: value.section, allStatus: value.allStatus,
+      listQuery: typeof value.listQuery === 'string' ? value.listQuery : '', filters }
   } catch { return defaultSummaryPreferences }
 }
 const subscribe = (callback: () => void) => {
