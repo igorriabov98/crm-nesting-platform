@@ -100,6 +100,8 @@ const replayPreludes = new Map([
   ],
   [
     '20260916090000_department_rls_matrix_cutover.sql',
+    // Replay the resource set as it existed at cutover; later resources are
+    // inserted by their own migrations after the historical count assertion.
     `INSERT INTO public.departments(id, name, is_active)
      VALUES ('97000000-0000-4000-8000-000000000064', 'RLS replay fixture', true)
      ON CONFLICT (id) DO NOTHING;
@@ -110,7 +112,7 @@ const replayPreludes = new Map([
      SELECT
        '97000000-0000-4000-8000-000000000064'::uuid,
        'member', resource_key, false, false, 'own', 'own', 'own'
-     FROM unnest(ARRAY[${rlsManifest.resources.map((resource) => `'${resource.replaceAll("'", "''")}'`).join(', ')}]::text[]) AS resource_key
+     FROM unnest(ARRAY[${rlsManifest.resources.filter((resource) => resource !== 'supply_deadline_report').map((resource) => `'${resource.replaceAll("'", "''")}'`).join(', ')}]::text[]) AS resource_key
      ON CONFLICT (department_id, subject_scope, resource_key) DO NOTHING;
     `,
   ],

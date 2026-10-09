@@ -197,6 +197,14 @@ export type RolePermissionsPageData = {
   }>
   adminUsers: AccessUserSummary[]
   previewUsers: AccessUserSummary[]
+  supplyDeadlineFactories: Array<{ id: string; name: string }>
+  supplyDeadlineFactoryGrants: Array<{
+    departmentId: string
+    subjectScope: DepartmentAccessSubjectScope
+    factoryId: string
+    canView: boolean
+    canManage: boolean
+  }>
 }
 
 function accessKey(departmentId: string, subjectScope: DepartmentAccessSubjectScope, resourceKey: ResourceKey) {
@@ -413,13 +421,16 @@ export async function getRolePermissionsPageData(): Promise<{ data: RolePermissi
   try {
     const context = await requirePermission('access_settings', 'view')
     const db = createAdminClient() as unknown as LooseAuthAdminClient
-    const [departments, users, memberships, accessRows, auditRows] = await Promise.all([
+    const [departments, users, memberships, accessRows, auditRows, factoriesResult, grantsResult] = await Promise.all([
       getDepartments(db),
       getUsers(db),
       getMembershipRows(db),
       getAccessRows(db),
       getAuditRows(db),
+      db.from<Array<{ id: string; name: string }>>('factories').select('id, name').order('name'),
+      db.from<Array<{ department_id: string; subject_scope: DepartmentAccessSubjectScope; factory_id: string; can_view: boolean; can_manage: boolean }>>('supply_deadline_factory_grants').select('department_id, subject_scope, factory_id, can_view, can_manage'),
     ])
+    if (factoriesResult.error || grantsResult.error) throw new Error(factoriesResult.error?.message || grantsResult.error?.message || 'Не удалось загрузить права по заводам')
     const {data: adminRows, error: adminError} = await db.from<Array<{user_id: string}>>('user_system_roles').select('user_id')
     if (adminError) throw new Error(adminError.message)
     const userSummaries = buildUserSummaries(users, memberships, new Set((adminRows || []).map(row => row.user_id)))
@@ -470,11 +481,49 @@ export async function getRolePermissionsPageData(): Promise<{ data: RolePermissi
           })),
         adminUsers: userSummaries.filter((user) => user.isAdminPosition),
         previewUsers: userSummaries,
+        supplyDeadlineFactories: factoriesResult.data || [],
+        supplyDeadlineFactoryGrants: (grantsResult.data || []).map((row) => ({
+          departmentId: row.department_id,
+          subjectScope: row.subject_scope,
+          factoryId: row.factory_id,
+          canView: row.can_view,
+          canManage: row.can_manage,
+        })),
       },
       error: null,
     }
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить права доступа' }
+  }
+}
+
+export async function saveSupplyDeadlineFactoryGrants(input: {
+  departmentId: string
+  subjectScope: DepartmentAccessSubjectScope
+  viewFactoryIds: string[]
+  manageFactoryIds: string[]
+}) {
+  try {
+    const context = await requireAccessSettingsPermission()
+    if (!/^[0-9a-f-]{36}$/i.test(input.departmentId)
+      || !['head', 'member'].includes(input.subjectScope)
+      || !Array.isArray(input.viewFactoryIds) || !Array.isArray(input.manageFactoryIds)
+      || [...input.viewFactoryIds, ...input.manageFactoryIds].some((id) => !/^[0-9a-f-]{36}$/i.test(id))
+      || input.manageFactoryIds.some((id) => !input.viewFactoryIds.includes(id))) {
+      throw new Error('Некорректная область доступа к заводам')
+    }
+    const { data, error } = await (context.supabase as unknown as RpcClient).rpc('fn_set_supply_deadline_factory_grants', {
+      p_department_id: input.departmentId,
+      p_subject_scope: input.subjectScope,
+      p_view_factory_ids: [...new Set(input.viewFactoryIds)],
+      p_manage_factory_ids: [...new Set(input.manageFactoryIds)],
+    })
+    if (error) throw new Error(error.message || 'Не удалось сохранить заводы отчёта')
+    revalidatePath('/', 'layout')
+    revalidatePath(ROUTES.ADMIN_ACCESS_SETTINGS)
+    return { success: true as const, data }
+  } catch (error) {
+    return { success: false as const, error: error instanceof Error ? error.message : 'Не удалось сохранить заводы отчёта' }
   }
 }
 

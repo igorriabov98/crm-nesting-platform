@@ -23,6 +23,7 @@ import {
 import { toast } from 'sonner'
 import {
   saveDepartmentAccessPermissions,
+  saveSupplyDeadlineFactoryGrants,
   type DepartmentAccessPermissionInput,
   type DepartmentAccessSubjectScope,
   type RolePermissionsPageData,
@@ -72,6 +73,69 @@ type PermissionState = {
 type PermissionStateMap = Record<string, PermissionState>
 type PermissionField = 'view' | 'manage'
 type Resource = RolePermissionsPageData['resources'][number]
+
+function SupplyDeadlineFactoryAccess({
+  data, departmentId, scope,
+}: {
+  data: RolePermissionsPageData
+  departmentId: string
+  scope: DepartmentAccessSubjectScope
+}) {
+  const initial = data.supplyDeadlineFactoryGrants.filter((grant) =>
+    grant.departmentId === departmentId && grant.subjectScope === scope)
+  const [viewIds, setViewIds] = useState<string[]>(initial.filter((grant) => grant.canView).map((grant) => grant.factoryId))
+  const [manageIds, setManageIds] = useState<string[]>(initial.filter((grant) => grant.canManage).map((grant) => grant.factoryId))
+  const [saving, setSaving] = useState(false)
+  const changed = data.supplyDeadlineFactories.some((factory) =>
+    viewIds.includes(factory.id) !== initial.some((grant) => grant.factoryId === factory.id && grant.canView)
+      || manageIds.includes(factory.id) !== initial.some((grant) => grant.factoryId === factory.id && grant.canManage))
+
+  async function save() {
+    setSaving(true)
+    try {
+      const result = await saveSupplyDeadlineFactoryGrants({
+        departmentId, subjectScope: scope, viewFactoryIds: viewIds, manageFactoryIds: manageIds,
+      })
+      if (!result.success) throw new Error(result.error)
+      toast.success('Доступ к заводам отчёта сохранён')
+      window.dispatchEvent(new Event(ACCESS_REFRESH_EVENT))
+      window.location.reload()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось сохранить доступ')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <fieldset className="space-y-2 text-left" disabled={!data.canManage || saving}>
+      <legend className="text-xs font-semibold text-foreground">{subjectLabel(scope)} · заводы отчёта</legend>
+      <p className="text-xs text-muted-foreground">Доступ действует и без завода в профиле. Право на страницу задаётся переключателями выше.</p>
+      {data.supplyDeadlineFactories.map((factory) => (
+        <div key={factory.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border bg-background px-3 py-2 text-xs">
+          <span className="min-w-24 font-medium">{factory.name}</span>
+          <label className="inline-flex min-h-8 items-center gap-1.5">
+            <input type="checkbox" className="size-4 accent-primary" checked={viewIds.includes(factory.id)}
+              onChange={(event) => {
+                setViewIds((ids) => event.target.checked ? [...ids, factory.id] : ids.filter((id) => id !== factory.id))
+                if (!event.target.checked) setManageIds((ids) => ids.filter((id) => id !== factory.id))
+              }} /> Просмотр
+          </label>
+          <label className="inline-flex min-h-8 items-center gap-1.5">
+            <input type="checkbox" className="size-4 accent-primary" checked={manageIds.includes(factory.id)}
+              onChange={(event) => {
+                setManageIds((ids) => event.target.checked ? [...ids, factory.id] : ids.filter((id) => id !== factory.id))
+                if (event.target.checked) setViewIds((ids) => ids.includes(factory.id) ? ids : [...ids, factory.id])
+              }} /> Управление исключениями
+          </label>
+        </div>
+      ))}
+      <Button type="button" size="sm" variant="outline" disabled={!data.canManage || saving || !changed} onClick={save}>
+        {saving ? 'Сохраняем…' : 'Сохранить заводы'}
+      </Button>
+    </fieldset>
+  )
+}
 
 const SUBJECT_SCOPES = ['head', 'member'] as const satisfies readonly DepartmentAccessSubjectScope[]
 const EMPTY_PERMISSION: PermissionState = {
@@ -830,6 +894,19 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                                   </TableCell>
                                 </TableRow>
                               )}
+                              {resource.key === 'supply_deadline_report' && selectedDepartment && (
+                                <TableRow className="bg-muted/20 hover:bg-muted/20">
+                                  <TableCell className="whitespace-normal px-4 py-3 align-top text-xs text-muted-foreground">
+                                    Явные права по заводам
+                                  </TableCell>
+                                  <TableCell colSpan={2} className="border-l px-4 py-3 align-top">
+                                    <SupplyDeadlineFactoryAccess key={`${selectedDepartment.id}-head`} data={data} departmentId={selectedDepartment.id} scope="head" />
+                                  </TableCell>
+                                  <TableCell colSpan={2} className="border-l px-4 py-3 align-top">
+                                    <SupplyDeadlineFactoryAccess key={`${selectedDepartment.id}-member`} data={data} departmentId={selectedDepartment.id} scope="member" />
+                                  </TableCell>
+                                </TableRow>
+                              )}
                               {resource.supportsCompanyScope && (
                                 <TableRow className="bg-muted/20 hover:bg-muted/30">
                                   <TableCell className="whitespace-normal px-4 py-3 align-top">
@@ -893,6 +970,12 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                             <div className="mt-3 grid gap-3 rounded-lg border bg-muted/25 p-3 sm:grid-cols-2">
                               <div>{renderFactoryScopeSelect(resource, 'head', 'mobile')}</div>
                               <div>{renderFactoryScopeSelect(resource, 'member', 'mobile')}</div>
+                            </div>
+                          )}
+                          {resource.key === 'supply_deadline_report' && selectedDepartment && (
+                            <div className="mt-3 space-y-3 rounded-lg border bg-muted/25 p-3">
+                              <SupplyDeadlineFactoryAccess key={`${selectedDepartment.id}-head-mobile`} data={data} departmentId={selectedDepartment.id} scope="head" />
+                              <SupplyDeadlineFactoryAccess key={`${selectedDepartment.id}-member-mobile`} data={data} departmentId={selectedDepartment.id} scope="member" />
                             </div>
                           )}
                           {resource.supportsCompanyScope && (

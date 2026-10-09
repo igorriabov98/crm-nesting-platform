@@ -70,6 +70,8 @@ jobs:
         run: npm run test:supply-reservation-scope
       - name: Supply order filters and sorting
         run: npm run test:supply-order-view && npm run test:approval-procurement
+      - name: Supply deadline report
+        run: npm run test:supply-deadline-report
       - name: Inventory cutting write-off source matching
         run: npx tsx --test src/lib/inventory/cutting-writeoff-source.test.ts
       - name: Inventory history metal, paint, wire and weekly totals
@@ -214,6 +216,8 @@ jobs:
         run: psql "$FULL_SCHEMA_TEST_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/tests/stock_material_request_lifecycle_test.sql
       - name: Stock request insert returning RLS
         run: psql "$FULL_SCHEMA_TEST_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/tests/stock_request_returning_visibility_test.sql
+      - name: Supply deadline factory permissions and receipt snapshot
+        run: psql "$FULL_SCHEMA_TEST_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/tests/supply_deadline_report_test.sql
       - name: Organization commands, RLS and concurrency
         env:
           ORGANIZATION_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/inventory_test

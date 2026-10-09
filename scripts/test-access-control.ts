@@ -82,8 +82,8 @@ function pagePath(filePath: string) {
   return `/${route}`
 }
 
-assert.equal(PERMISSION_RESOURCES.length, 64, 'Реестр должен содержать все 64 ресурса')
-assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 64, 'Ключи ресурсов должны быть уникальными')
+assert.equal(PERMISSION_RESOURCES.length, 65, 'Реестр должен содержать все 65 ресурсов')
+assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 65, 'Ключи ресурсов должны быть уникальными')
 
 const technologistPermissions = getDefaultPermissionMap('technologist')
 const procurementHeadPermissions = getDefaultPermissionMap('procurement_head')
@@ -112,6 +112,8 @@ assert(hasPermission(getFullPermissionMap(), 'product_production_drawings', 'man
 assert(!hasPermission(getDefaultPermissionMap('financial_director'), 'complex_reports', 'view'), 'Комплексные отчёты по умолчанию выдаются только через матрицу доступа')
 assert(!hasPermission(getDefaultPermissionMap('sales_manager'), 'complex_reports', 'view'), 'Роль не должна автоматически открывать комплексные отчёты')
 assert(hasPermission(getFullPermissionMap(), 'complex_reports', 'view'), 'CRM-администратор должен видеть комплексные отчёты')
+assert(hasPermission(getFullPermissionMap(), 'supply_deadline_report', 'manage'), 'CRM-администратор управляет исключениями отчёта')
+assert(!hasPermission(supplyManagerPermissions, 'supply_deadline_report', 'view'), 'Роль сама не открывает отчёт без явной записи матрицы')
 assert(!hasPermission(getDefaultPermissionMap('planning_director'), 'production_reports', 'view'), 'Производственная аналитика по умолчанию закрыта')
 assert(!hasPermission(getDefaultPermissionMap('production_manager'), 'production_reports', 'manage'), 'Роль производства не должна автоматически управлять отчётом')
 assert(hasPermission(getFullPermissionMap(), 'production_reports', 'manage'), 'CRM-администратор должен управлять производственной аналитикой')

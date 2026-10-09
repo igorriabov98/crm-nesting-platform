@@ -5,7 +5,7 @@
     "dashboard", "sales_plan", "my_orders", "client_identity", "client_prices",
     "technologist_requests", "material_request_queue", "technologist_request_results", "business_scrap_reservations",
     "products", "product_production_drawings", "product_projects", "clients", "contracts", "client_payments",
-    "invoices", "finance_calendar", "supply_finance", "complex_reports", "production_reports", "tasks",
+    "invoices", "finance_calendar", "supply_finance", "complex_reports", "production_reports", "supply_deadline_report", "tasks",
     "customs_clearance", "department_requests", "production", "production_fact", "production_cutting_area",
     "consumable_requests", "consumables", "supply", "supply_orders", "supply_material_requests",
     "supply_consumable_requests", "supply_transport", "inventory_detailing", "inventory_detailing_receiving",
