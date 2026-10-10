@@ -4,6 +4,8 @@ import { hasPermission } from '@/lib/permissions/resources'
 import { requirePermission } from '@/lib/permissions/server'
 import type { MachineWithTotals, Task, TechnologistRequest } from '@/lib/types'
 import { sortMaterialRequestQueueItems } from '@/lib/material-request-queue'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { isListedTechnologistRequest, isRequestVisibleForPermissions, REQUEST_SECTION_TABLES } from '@/lib/technologist-request-visibility'
 import type {
   MaterialRequestQueueItem,
   MaterialRequestQueuePayload,
@@ -22,7 +24,7 @@ type QueueMachine = Pick<
 
 type QueueRequest = Pick<
   TechnologistRequest,
-  'machine_id' | 'status' | 'submitted_at' | 'created_at'
+  'id' | 'machine_id' | 'status' | 'submitted_at' | 'created_at' | 'is_recalculation_staging'
 >
 
 type QueueResult = {
@@ -82,7 +84,7 @@ export async function getMaterialRequestQueue(): Promise<QueueResult> {
         .order('created_at', { ascending: true }),
       supabase
         .from('technologist_requests')
-        .select('machine_id, status, submitted_at, created_at')
+        .select('id, machine_id, status, submitted_at, created_at, is_recalculation_staging')
         .in('machine_id', machineIds),
     ])
 
@@ -91,6 +93,23 @@ export async function getMaterialRequestQueue(): Promise<QueueResult> {
     }
     if (requestsResult.error) {
       throw new Error(requestsResult.error.message || 'Не удалось загрузить заявки')
+    }
+
+    const allRequests = (requestsResult.data || []) as QueueRequest[]
+    const requestIds = allRequests.map((request) => request.id)
+    const [revisionDrafts, ...itemResults] = await Promise.all([
+      requestIds.length ? createAdminClient().from('technologist_request_revision_drafts')
+        .select('request_id').in('request_id', requestIds) : Promise.resolve({ data: [], error: null }),
+      ...REQUEST_SECTION_TABLES.map((table) => requestIds.length
+        ? supabase.from(table).select('request_id').in('request_id', requestIds)
+        : Promise.resolve({ data: [], error: null })),
+    ])
+    if (revisionDrafts.error) throw new Error(revisionDrafts.error.message)
+    const revisionDraftIds = new Set(((revisionDrafts.data || []) as Array<{ request_id: string }>).map((row) => row.request_id))
+    const itemPresence = new Set<string>()
+    for (const result of itemResults) {
+      if (result.error) throw new Error(result.error.message || 'Не удалось проверить позиции заявок')
+      for (const row of (result.data || []) as Array<{ request_id: string }>) itemPresence.add(row.request_id)
     }
 
     const tasks = ((tasksResult.data || []) as QueueTask[])
@@ -107,8 +126,10 @@ export async function getMaterialRequestQueue(): Promise<QueueResult> {
     }
 
     const requestsByMachine = new Map<string, QueueRequest[]>()
-    for (const request of (requestsResult.data || []) as QueueRequest[]) {
+    for (const request of allRequests) {
       if (!request.machine_id) continue
+      if (!isRequestVisibleForPermissions(request, permissions)
+        || !isListedTechnologistRequest(request, itemPresence, revisionDraftIds)) continue
       const current = requestsByMachine.get(request.machine_id) || []
       current.push(request)
       requestsByMachine.set(request.machine_id, current)

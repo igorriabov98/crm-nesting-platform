@@ -17,6 +17,7 @@ import { syncOutsourcingTransportForProductionPlan } from '@/lib/actions/outsour
 import { STAGES } from '@/lib/constants/stages'
 import type { StageType } from '@/lib/types'
 import { promoteDueFutureBusinessScrap } from '@/lib/inventory/secure-rpc'
+import { resolveMachinePlanLocation } from '@/lib/production-plan-target'
 
 type DbError = { message: string } | null
 type DbResult = { data: unknown; error: DbError }
@@ -181,10 +182,10 @@ async function getTargetPlan(client: Db, patch: ProductionPlanDraftPatch) {
     if (result.error || !result.data) throw new Error('Машина не найдена')
     const machine = result.data as { factory_id: string | null; production_month: string | null; is_archived: boolean }
     if (machine.is_archived) throw new Error('Машина архивирована')
-    const factoryId = machine.factory_id || (patch.fields.factory_id as string | null)
-    const month = machine.production_month || (patch.fields.production_month as string | null)
-    if (!factoryId || !month) throw new Error('Сначала укажите завод и месяц производства')
-    return { factoryId, month: normalizedMonth(month) }
+    const pending = await findDraftMachinePlacement(client, patch.id)
+    const location = resolveMachinePlanLocation(machine, pending, patch.fields)
+    if (!location) throw new Error('Сначала укажите завод и месяц производства')
+    return { factoryId: location.factoryId, month: normalizedMonth(location.month) }
   }
   if (patch.target === 'stage' || patch.target === 'interval') {
     const result = await client.from('production_stages')
@@ -194,12 +195,12 @@ async function getTargetPlan(client: Db, patch: ProductionPlanDraftPatch) {
     const row = result.data as { id: string; machine_id: string; stage_type: string; machines: { factory_id: string | null; production_month: string | null; is_archived: boolean } | null }
     if (row.stage_type === 'actual_shipping') throw new Error('Факт отгрузки не входит в версии плана')
     if (row.machines?.is_archived) throw new Error('Машина этапа архивирована')
+    const pending = await findDraftMachinePlacement(client, row.machine_id)
+    if (pending) return pending
     if (row.machines?.factory_id && row.machines.production_month) {
       return { factoryId: row.machines.factory_id, month: normalizedMonth(row.machines.production_month) }
     }
-    const pending = await findDraftMachinePlacement(client, row.machine_id)
-    if (!pending) throw new Error('Машина этапа не входит в активный план')
-    return pending
+    throw new Error('Машина этапа не входит в активный план')
   }
   const result = await client.from('machine_outsourcing_operations')
     .select('machine_id, executor_factory_id, incoming_production_month, archived_at, machines(factory_id, production_month, is_archived)')
@@ -214,14 +215,14 @@ async function getTargetPlan(client: Db, patch: ProductionPlanDraftPatch) {
   }
   if (operation.archived_at || operation.machines?.is_archived) throw new Error('Операция аутсорсинга архивирована')
   const incoming = Object.keys(patch.fields).some((field) => field.startsWith('incoming_'))
+  if (!incoming) {
+    const pending = await findDraftMachinePlacement(client, operation.machine_id)
+    if (pending) return pending
+  }
   const factoryId = incoming ? operation.executor_factory_id : operation.machines?.factory_id
   const month = incoming
     ? operation.incoming_production_month || (patch.fields.incoming_production_month as string | null)
     : operation.machines?.production_month
-  if (!incoming && (!factoryId || !month)) {
-    const pending = await findDraftMachinePlacement(client, operation.machine_id)
-    if (pending) return pending
-  }
   if (!factoryId || !month) throw new Error('Аутсорсинг не входит в план месяца')
   return { factoryId, month: normalizedMonth(month) }
 }
@@ -230,18 +231,22 @@ async function findDraftMachinePlacement(client: Db, machineId: string) {
   const result = await client.from('production_plan_drafts')
     .select('changes, production_month_plans(factory_id, production_month)')
   if (result.error) throw new Error(result.error.message)
+  const placements: PlanLocation[] = []
   for (const item of result.data as Array<{
     changes: Record<string, ProductionPlanDraftPatch>
     production_month_plans: { factory_id: string; production_month: string } | null
   }>) {
     if (item.changes[`machine:${machineId}`] && item.production_month_plans) {
-      return {
+      placements.push({
         factoryId: item.production_month_plans.factory_id,
         month: normalizedMonth(item.production_month_plans.production_month),
-      }
+      })
     }
   }
-  return null
+  if (placements.length > 1) {
+    throw new Error('Машина найдена в нескольких черновиках плана. Сначала устраните конфликт размещения.')
+  }
+  return placements[0] ?? null
 }
 
 function mergePatch(previous: ProductionPlanDraftPatch | undefined, next: ProductionPlanDraftPatch) {

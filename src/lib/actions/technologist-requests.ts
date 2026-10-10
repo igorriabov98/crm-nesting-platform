@@ -25,12 +25,13 @@ import {
   REQUEST_LIFECYCLE_LABELS,
   type RequestLifecycleStatus,
 } from '@/lib/technologist-request-lifecycle'
+import { isListedTechnologistRequest, isRequestVisibleForPermissions, REQUEST_SECTION_TABLES } from '@/lib/technologist-request-visibility'
 export type {
   TechnologistRequestPayload,
   WithMaterialName,
 } from '@/lib/technologist-requests/request-payload'
 export type { RequestLifecycleStatus } from '@/lib/technologist-request-lifecycle'
-import { hasPermission, type PermissionMap, type PermissionOperation } from '@/lib/permissions/resources'
+import { type PermissionMap, type PermissionOperation } from '@/lib/permissions/resources'
 import {
   availabilitySchema,
   chainCordSchema,
@@ -88,17 +89,6 @@ export type TechnologistRequestListItem = Pick<
   lifecycle_label: string
 }
 
-type RequestSectionTable =
-  | 'request_sheet_metal'
-  | 'request_circle'
-  | 'request_pipe'
-  | 'request_knives'
-  | 'request_paint'
-  | 'request_components'
-  | 'request_mesh'
-  | 'request_chain_cord'
-  | 'request_round_tube'
-
 type ActionResult<T = unknown> = {
   success: boolean
   error?: string
@@ -106,6 +96,7 @@ type ActionResult<T = unknown> = {
 }
 
 type RequestOrderStatusRow = {
+  id?: string | null
   request_id?: string | null
   order_status?: OrderItemStatus | null
 }
@@ -116,17 +107,7 @@ type MaterialVariantModeRow = Record<string, unknown> & {
   is_custom_material_variant?: boolean | null
 }
 
-const REQUEST_SECTION_TABLES: RequestSectionTable[] = [
-  'request_sheet_metal',
-  'request_round_tube',
-  'request_circle',
-  'request_pipe',
-  'request_knives',
-  'request_components',
-  'request_paint',
-  'request_mesh',
-  'request_chain_cord',
-]
+type RequestSectionTable = typeof REQUEST_SECTION_TABLES[number]
 
 const MATERIAL_CHARACTERISTIC_FIELDS: Record<RequestSectionTable, Set<string>> = {
   request_sheet_metal: new Set(['material_name', 'material_grade', 'steel_type_id', 'sheet_size', 'thickness_mm']),
@@ -255,13 +236,6 @@ function pickActiveRequest(requests: TechnologistRequest[]) {
     .at(0) || null
 }
 
-function isRequestVisibleForPermissions(request: TechnologistRequest, permissions: PermissionMap) {
-  const isSupplyOnly = hasPermission(permissions, 'supply_material_requests', 'view')
-    && !hasPermission(permissions, 'technologist_requests', 'manage')
-  if (!isSupplyOnly) return true
-  return request.status === 'submitted_to_supply' || request.status === 'completed'
-}
-
 async function loadMachineRequests(db: LooseDb, machineId: string, permissions: PermissionMap) {
   const { data, error } = await db
     .from('technologist_requests')
@@ -277,28 +251,45 @@ async function loadMachineRequests(db: LooseDb, machineId: string, permissions: 
 
 async function loadRequestOrderStatuses(db: LooseDb, requestIds: string[]) {
   const statuses = new Map<string, OrderItemStatus[]>()
+  const activeDeliveryRequests = new Set<string>()
   const ids = Array.from(new Set(requestIds.filter(Boolean)))
   for (const requestId of ids) statuses.set(requestId, [])
-  if (ids.length === 0) return statuses
+  if (ids.length === 0) return { statuses, activeDeliveryRequests }
 
   const results = await Promise.all(
     REQUEST_SECTION_TABLES.map((table) => db
       .from(table)
-      .select('request_id, order_status')
+      .select('id, request_id, order_status')
       .in('request_id', ids))
   )
 
-  for (const result of results) {
+  const itemOwners = new Map<string, string>()
+  for (const [index, result] of results.entries()) {
     if (result.error) throw new Error(result.error.message || 'Не удалось загрузить статусы закупки')
     for (const row of (result.data || []) as RequestOrderStatusRow[]) {
       if (!row.request_id || !row.order_status) continue
       const list = statuses.get(row.request_id) || []
       list.push(row.order_status)
       statuses.set(row.request_id, list)
+      if (row.id) itemOwners.set(`${REQUEST_SECTION_TABLES[index]}:${row.id}`, row.request_id)
     }
   }
-
-  return statuses
+  if (itemOwners.size > 0) {
+    const itemIds = [...new Set([...itemOwners.keys()].map((key) => key.split(':')[1]))]
+    const schedules = await (createAdminClient() as unknown as LooseDb).from('supply_order_delivery_schedules')
+      .select('request_item_table,request_item_id,status,quantity,received_quantity,supplier_id,delivery_date')
+      .in('request_item_id', itemIds)
+    if (schedules.error) throw new Error(schedules.error.message || 'Не удалось загрузить позиции доставки')
+    for (const schedule of (schedules.data || []) as Array<{
+      request_item_table: string; request_item_id: string; status: string; quantity: number | null;
+      received_quantity: number | null; supplier_id: string | null; delivery_date: string | null;
+    }>) {
+      const owner = itemOwners.get(`${schedule.request_item_table}:${schedule.request_item_id}`)
+      if (!owner || schedule.status !== 'planned' || !schedule.supplier_id || !schedule.delivery_date) continue
+      if (Number(schedule.quantity || 0) > Number(schedule.received_quantity || 0)) activeDeliveryRequests.add(owner)
+    }
+  }
+  return { statuses, activeDeliveryRequests }
 }
 
 async function loadRequestItemPresence(db: LooseDb, requestIds: string[]) {
@@ -495,7 +486,7 @@ export async function getRequestsForMachine(machineId: string) {
     const { db, permissions } = await requireRequestPermission('view')
     const requests = await loadMachineRequests(db, machineId, permissions)
     const requestIds = requests.map((request) => request.id)
-    const [statusesByRequest, itemPresence, revisionDrafts] = await Promise.all([
+    const [orderState, itemPresence, revisionDrafts] = await Promise.all([
       loadRequestOrderStatuses(db, requestIds),
       loadRequestItemPresence(db, requestIds),
       requestIds.length ? createAdminClient().from('technologist_request_revision_drafts')
@@ -515,7 +506,10 @@ export async function getRequestsForMachine(machineId: string) {
     }
     const numbering = await getRequestNumbers(requestIds)
     const data: TechnologistRequestListItem[] = requests.map((request) => {
-      const lifecycleStatus = deriveRequestLifecycleStatus(request, statusesByRequest.get(request.id) || [], latestApprovalState.get(request.id))
+      const lifecycleStatus = deriveRequestLifecycleStatus(
+        request, orderState.statuses.get(request.id) || [], latestApprovalState.get(request.id),
+        orderState.activeDeliveryRequests.has(request.id),
+      )
       return {
         id: request.id,
         machine_id: request.machine_id,
@@ -528,10 +522,7 @@ export async function getRequestsForMachine(machineId: string) {
         lifecycle_status: lifecycleStatus,
         lifecycle_label: REQUEST_LIFECYCLE_LABELS[lifecycleStatus],
       }
-    }).filter((request) => {
-      const isDraft = request.status === 'draft' || revisionDraftIds.has(request.id)
-      return !isDraft || itemPresence.has(request.id)
-    })
+    }).filter((request) => isListedTechnologistRequest(request, itemPresence, revisionDraftIds))
 
     return { data, error: null }
   } catch (error) {

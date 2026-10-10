@@ -31,6 +31,8 @@ interface ProductionWorkspaceProps {
   monthPlans: ProductionMonthPlanSummary[]
   drafts: ProductionPlanDraftSummary[]
   canManageFactory: boolean
+  focusedMachineId?: string | null
+  relocatedMachineNotice?: boolean
   outsourcingSummary: ProductionOutsourcingSummary
   monthPlanError?: string | null
 }
@@ -307,6 +309,8 @@ export function ProductionWorkspace({
   monthPlans,
   drafts,
   canManageFactory,
+  focusedMachineId,
+  relocatedMachineNotice = false,
   outsourcingSummary,
   monthPlanError,
 }: ProductionWorkspaceProps) {
@@ -371,6 +375,12 @@ export function ProductionWorkspace({
 
   return (
     <div className="space-y-4">
+      {relocatedMachineNotice && (
+        <p role="status" className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+          Машина перенесена в черновике плана на завод {factories.find((factory) => factory.id === activeFactoryId)?.name || 'выбранный завод'}.
+          Открыт её новый завод; черновик ещё не опубликован.
+        </p>
+      )}
       <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm sm:px-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <h1 className="text-xl font-bold leading-tight text-blue-950 sm:text-2xl">Производство</h1>
@@ -423,6 +433,8 @@ export function ProductionWorkspace({
         monthPlans={monthPlans}
         drafts={drafts}
         canManageFactory={canManageFactory}
+        activeFactoryId={activeFactoryId}
+        focusedMachineId={focusedMachineId}
         outsourcingOperations={visibleOutsourcing.outgoing.concat(visibleOutsourcing.incoming)}
         filters={plannerFilters}
         onFiltersChange={setPlannerFilters}

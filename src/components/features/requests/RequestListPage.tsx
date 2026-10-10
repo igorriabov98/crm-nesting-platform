@@ -36,6 +36,7 @@ const lifecycleClasses: Record<RequestLifecycleStatus, string> = {
   financial_approval: 'border-violet-200 bg-violet-50 text-violet-700',
   returned: 'border-red-200 bg-red-50 text-red-700',
   submitted_to_supply: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  ordered: 'border-indigo-200 bg-indigo-50 text-indigo-700',
   delivery: 'border-blue-200 bg-blue-50 text-blue-700',
   received: 'border-green-300 bg-green-100 text-green-800',
   cancelled: 'border-slate-300 bg-slate-100 text-slate-700',
@@ -57,6 +58,10 @@ export function RequestListPage({ machine, requests, canCreate }: Props) {
   const [isCreating, setIsCreating] = useState(false)
   const [requestToDelete, setRequestToDelete] = useState<TechnologistRequestListItem | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const requestNumbers = new Set(requests.map((request) => request.request_number))
+  const highestRequestNumber = Math.max(0, ...requestNumbers)
+  const missingRequestNumbers = Array.from({ length: highestRequestNumber }, (_, index) => index + 1)
+    .filter((number) => !requestNumbers.has(number))
 
   const handleCreate = async () => {
     setIsCreating(true)
@@ -165,6 +170,14 @@ export function RequestListPage({ machine, requests, canCreate }: Props) {
                 </div>
               </div>
             ))}
+            {missingRequestNumbers.length > 0 && (
+              <p className="p-4 text-sm text-slate-500 sm:px-5">
+                {missingRequestNumbers.length === 1 ? 'Номер заявки' : 'Номера заявок'}{' '}
+                {missingRequestNumbers.map((number) => `№${number}`).join(', ')}{' '}
+                {missingRequestNumbers.length === 1 ? 'отсутствует' : 'отсутствуют'} в списке.
+                Номер может принадлежать пустому черновику, служебной заявке или сохраниться после удаления. Номера не переиспользуются.
+              </p>
+            )}
           </div>
         )}
       </section>

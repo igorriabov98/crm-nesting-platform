@@ -62,7 +62,7 @@ import {
 import type { SupplierWithRelations } from '@/lib/actions/suppliers'
 import { ReturnLongStockPositionButton } from './ReturnLongStockPositionButton'
 import { CancelReturnedSupplyPositionDialog } from '@/components/features/requests/CancelReturnedSupplyPositionDialog'
-import type { SupplyPositionTable } from '@/lib/supply-orders/position-revisions'
+import { supplyPositionHasPhysicalReceipt, type SupplyPositionTable } from '@/lib/supply-orders/position-revisions'
 import { SupplyQuantitySummary } from './SupplyQuantitySummary'
 import { SupplyDateOrderExportButton } from './SupplyDateOrderExportButton'
 import { SupplyOrderFactoryToggle } from './SupplyOrderFactoryToggle'
@@ -1529,7 +1529,7 @@ function MachineItems({ factory, id, dateSlice }: { factory: SupplyOrderAggregat
             {plan && <div className="mt-3 rounded-lg bg-muted/50 p-2 text-xs"><span className="font-medium text-muted-foreground">К закупке по карте: </span><PurchasePlanSummary plans={[plan]} compact /></div>}
             <div className="mt-3 flex flex-wrap gap-2 border-t border-border/60 pt-3">
               <Link href={`${ROUTES.SUPPLY_REQUEST}/${item.request_id}`} className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-border px-3 text-xs font-medium text-primary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><ExternalLink className="h-3.5 w-3.5" />Открыть заявку</Link>
-              {!returnedToTechnologist && !cancelledReturn && <ReturnLongStockPositionButton requestItemTable={item.table} requestItemId={item.id} itemName={item.item_name} categoryLabel={MATERIAL_CATEGORY_LABELS[displayMaterialCategory(item.category, null, item.unit)!]} planNumber={plan?.plan_number} versionNumber={plan?.version_number} />}
+              {!returnedToTechnologist && !cancelledReturn && !supplyPositionHasPhysicalReceipt(item.delivery_schedules) && <ReturnLongStockPositionButton requestItemTable={item.table} requestItemId={item.id} itemName={item.item_name} categoryLabel={MATERIAL_CATEGORY_LABELS[displayMaterialCategory(item.category, null, item.unit)!]} planNumber={plan?.plan_number} versionNumber={plan?.version_number} />}
               {item.can_cancel_return && <CancelReturnedSupplyPositionDialog table={item.table as SupplyPositionTable} itemId={item.id} compact />}
             </div>
           </li>
@@ -1579,7 +1579,7 @@ function MachineItems({ factory, id, dateSlice }: { factory: SupplyOrderAggregat
                   <ExternalLink className="h-3.5 w-3.5" />
                   Заявка
                 </Link>
-                {!returnedToTechnologist && !cancelledReturn && (
+                {!returnedToTechnologist && !cancelledReturn && !supplyPositionHasPhysicalReceipt(item.delivery_schedules) && (
                   <ReturnLongStockPositionButton
                     requestItemTable={item.table}
                     requestItemId={item.id}
@@ -1637,7 +1637,7 @@ function MachineItems({ factory, id, dateSlice }: { factory: SupplyOrderAggregat
                 <Link href={`${ROUTES.SUPPLY_REQUEST}/${item.request_id}`} className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-border px-3 text-xs font-medium text-primary hover:bg-muted">
                   <ExternalLink className="h-3.5 w-3.5" />Открыть заявку
                 </Link>
-                {!returnedToTechnologist && !cancelledReturn && (
+                {!returnedToTechnologist && !cancelledReturn && !supplyPositionHasPhysicalReceipt(item.delivery_schedules) && (
                   <ReturnLongStockPositionButton
                     requestItemTable={item.table}
                     requestItemId={item.id}

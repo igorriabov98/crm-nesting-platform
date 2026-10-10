@@ -6,6 +6,7 @@ export type RequestLifecycleStatus =
   | 'financial_approval'
   | 'returned'
   | 'submitted_to_supply'
+  | 'ordered'
   | 'delivery'
   | 'received'
   | 'cancelled'
@@ -16,6 +17,7 @@ export const REQUEST_LIFECYCLE_LABELS: Record<RequestLifecycleStatus, string> = 
   financial_approval: 'На финансовом согласовании',
   returned: 'Возвращена на доработку',
   submitted_to_supply: 'Отправлена в снабжение',
+  ordered: 'Заказано',
   delivery: 'Доставка',
   received: 'Принята на склад',
   cancelled: 'Отменена',
@@ -25,14 +27,13 @@ export function deriveRequestLifecycleStatus(
   request: { status: RequestStatus },
   orderStatuses: OrderItemStatus[],
   approvalState?: string | null,
+  hasActiveDelivery = false,
 ): RequestLifecycleStatus {
   if (request.status === 'cancelled') return 'cancelled'
   if (request.status === 'draft') return 'draft'
   if (approvalState === 'returned' && (request.status === 'pending_stock_check' || request.status === 'stock_checked')) return 'returned'
   if (request.status === 'pending_financial_approval') return 'financial_approval'
   if (request.status === 'pending_stock_check' || request.status === 'stock_checked') return 'stock_check'
-  if (request.status === 'completed') return 'received'
-
   if (orderStatuses.length > 0 && orderStatuses.every((status) => status === 'cancelled')) {
     return 'cancelled'
   }
@@ -42,7 +43,7 @@ export function deriveRequestLifecycleStatus(
     return 'received'
   }
   if (activeOrderStatuses.some((status) => status === 'ordered' || status === 'delivered')) {
-    return 'delivery'
+    return hasActiveDelivery ? 'delivery' : 'ordered'
   }
   return 'submitted_to_supply'
 }

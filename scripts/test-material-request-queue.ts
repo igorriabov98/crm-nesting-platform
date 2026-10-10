@@ -4,6 +4,7 @@ import {
   getMaterialRequestQueueMonthOptions,
   sortMaterialRequestQueueItems,
 } from '../src/lib/material-request-queue'
+import { isListedTechnologistRequest } from '../src/lib/technologist-request-visibility'
 import type {
   MaterialRequestQueueItem,
   MaterialRequestQueueState,
@@ -35,6 +36,15 @@ const queue = [
   item('Старая', 'none', '2026-07-01', '2026-07-01'),
   item('Готовая', 'submitted', '2026-08-01', '2026-08-01'),
 ]
+
+const visibleRequestIds = [
+  { id: 'one', status: 'submitted_to_supply' as const, is_recalculation_staging: false },
+  { id: 'two', status: 'draft' as const, is_recalculation_staging: false },
+  { id: 'three', status: 'draft' as const, is_recalculation_staging: false },
+  { id: 'service', status: 'submitted_to_supply' as const, is_recalculation_staging: true },
+].filter((request) => isListedTechnologistRequest(request, new Set(['three']), new Set<string>()))
+  .map((request) => request.id)
+assert.deepEqual(visibleRequestIds, ['one', 'three'], 'Очередь и список должны исключать служебную заявку и пустой черновик')
 
 assert.deepEqual(
   sortMaterialRequestQueueItems(queue, 'deadline_asc').map((row) => row.machineName),

@@ -50,6 +50,15 @@ BEGIN
     0, v_actor);
   IF v_revision <> 1 THEN RAISE EXCEPTION 'Draft revision was not incremented'; END IF;
   BEGIN
+    PERFORM public.fn_patch_production_plan_draft(v_plan_b, 'machine:' || v_machine::text,
+      jsonb_build_object('target', 'machine', 'id', v_machine,
+        'fields', jsonb_build_object('planned_material_date', '2026-10-15')),
+      0, v_actor);
+    RAISE EXCEPTION 'Same machine entered two drafts';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM <> 'Эта запись уже находится в другом черновике плана. Обновите страницу.' THEN RAISE; END IF;
+  END;
+  BEGIN
     PERFORM public.fn_patch_production_plan_draft(v_plan_a, 'machine:' || v_machine::text,
       '{}'::jsonb, 0, v_actor);
     RAISE EXCEPTION 'Stale draft unexpectedly accepted';

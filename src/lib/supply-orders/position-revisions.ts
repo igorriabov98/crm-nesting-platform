@@ -91,6 +91,22 @@ export function isSupplyPositionTable(value: string): value is SupplyPositionTab
   return (SUPPLY_POSITION_TABLES as readonly string[]).includes(value)
 }
 
+export function supplyPositionHasPhysicalReceipt(schedules: readonly {
+  status: string
+  received_quantity: number | null
+  allocated_quantity: number | null
+  allocated_physical_quantity: number | null
+  received_piece_count: number | null
+  allocated_piece_count: number | null
+}[]) {
+  return schedules.some((schedule) => schedule.status === 'delivered'
+    || Number(schedule.received_quantity || 0) > 0
+    || Number(schedule.allocated_quantity || 0) > 0
+    || Number(schedule.allocated_physical_quantity || 0) > 0
+    || Number(schedule.received_piece_count || 0) > 0
+    || Number(schedule.allocated_piece_count || 0) > 0)
+}
+
 export function supplyPositionRevisionKey(table: string, id: string) {
   return `${table}:${id}`
 }
