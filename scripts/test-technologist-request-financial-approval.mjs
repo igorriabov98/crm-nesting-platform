@@ -78,7 +78,7 @@ for (const expected of [
 assert.ok(approvalActions.includes("requirePermission('technologist_request_results', 'view')"), 'finance head decisions must use exact-head RPC authorization')
 assert.ok(!approvalActions.includes("hasPermission(permissions, 'technologist_request_results', 'manage') && head.data === userId"), 'finance head UI must not depend on a stale member/head flag')
 assert.ok(requestActions.includes('loadRequestItemPresence'), 'draft visibility must check whether the draft contains positions')
-assert.ok(requestActions.includes("request.status === 'draft' || revisionDraftIds.has(request.id)"), 'regular and rework drafts must share the non-empty visibility rule')
+assert.ok(requestActions.includes('isListedTechnologistRequest(request, itemPresence, revisionDraftIds)'), 'regular and rework drafts must share the non-empty visibility rule')
 
 assert.ok(requestCompletion.includes("rpc('fn_submit_technologist_request_for_approval'"), 'wizard must submit approval version')
 assert.match(

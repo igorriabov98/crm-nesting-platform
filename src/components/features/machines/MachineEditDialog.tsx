@@ -690,17 +690,17 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                         <SelectTrigger className="h-11 border-slate-200 bg-slate-50">
                           <SelectValue placeholder="Выберите материал">
                             {() => field.value === 'standard'
-                              ? 'Стандартный (чёрный металл)'
+                              ? 'Стандартный'
                               : field.value === 'non_standard'
-                                ? 'Нестандартный (нержавейка)'
+                                ? 'Нестандартный'
                                 : 'Не определён'}
                           </SelectValue>
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
                         <SelectItem value="undefined">Не определён</SelectItem>
-                        <SelectItem value="standard">Стандартный (Черный металл)</SelectItem>
-                        <SelectItem value="non_standard">Нестандартный (Нержавейка)</SelectItem>
+                        <SelectItem value="standard">Стандартный</SelectItem>
+                        <SelectItem value="non_standard">Нестандартный</SelectItem>
                       </SelectContent>
                     </Select>
                     <FormMessage className="text-[#DC2626]" />

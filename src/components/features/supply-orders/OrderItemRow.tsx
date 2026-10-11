@@ -16,6 +16,7 @@ import type {
 import type { SupplierWithRelations } from '@/lib/actions/suppliers'
 import { FactoryDeliveryEditor } from './SupplyOrderSummaryPage'
 import { ReturnLongStockPositionButton } from './ReturnLongStockPositionButton'
+import { supplyPositionHasPhysicalReceipt } from '@/lib/supply-orders/position-revisions'
 import type { SupplyOrderDetailContext } from './supply-order-view'
 
 type OrderItemRowProps = {
@@ -208,7 +209,7 @@ export function OrderItemRow({ item, suppliers, detailContext }: OrderItemRowPro
                 <p className="mt-0.5 text-xs text-muted-foreground">Поставщик, объём и дата поступления. Приёмка выполняется на странице склада.</p>
               </div>
             </div>
-            {!returnedToTechnologist && !isCoveredByStock && (
+            {!returnedToTechnologist && !isCoveredByStock && !supplyPositionHasPhysicalReceipt(item.delivery_schedules) && (
               <ReturnLongStockPositionButton
                 requestItemTable={item.table}
                 requestItemId={item.id}

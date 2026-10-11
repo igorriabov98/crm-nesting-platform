@@ -76,6 +76,8 @@ interface ProductionPlannerProps {
   monthPlans?: ProductionMonthPlanSummary[]
   drafts?: ProductionPlanDraftSummary[]
   canManageFactory?: boolean
+  activeFactoryId?: string
+  focusedMachineId?: string | null
   filters?: GanttFilters
   onFiltersChange?: (filters: GanttFilters) => void
   height?: string
@@ -1754,6 +1756,8 @@ export function ProductionPlanner({
   monthPlans = [],
   drafts = [],
   canManageFactory = true,
+  activeFactoryId,
+  focusedMachineId,
   filters: externalFilters,
   onFiltersChange,
   height = 'clamp(430px, 62dvh, 700px)',
@@ -1767,7 +1771,7 @@ export function ProductionPlanner({
   const [rangeStart, setRangeStart] = useState<Date>(() => subDays(findEarliestDate(data), 30))
   const [rangeEnd, setRangeEnd] = useState<Date>(() => addDays(findLatestDate(data), 60))
   const [internalFilters, setInternalFilters] = useState<GanttFilters>(defaultFilters)
-  const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null)
+  const [selectedMachineId, setSelectedMachineId] = useState<string | null>(focusedMachineId ?? null)
   const [selectedIntervalId, setSelectedIntervalId] = useState<string | null>(null)
   const [desktopInspectorOpen, setDesktopInspectorOpen] = useState(true)
   const [unscheduledOpen, setUnscheduledOpen] = useState(true)
@@ -1789,6 +1793,31 @@ export function ProductionPlanner({
   const scrollCheckTimeoutRef = useRef<number | null>(null)
   const scrollSyncLockRef = useRef(false)
   const draftRevisionsRef = useRef(new Map<string, number>())
+  const lastFocusedDraftRef = useRef<string | null>(null)
+
+  const selectMachine = useCallback((machineId: string) => {
+    setSelectedMachineId(machineId)
+    if (activeFactoryId) {
+      router.replace(`/production?factory=${encodeURIComponent(activeFactoryId)}&machine=${encodeURIComponent(machineId)}`, { scroll: false })
+    }
+  }, [activeFactoryId, router])
+
+  useEffect(() => {
+    if (!selectedMachineId) return
+    const sourceDraft = drafts.find((draft) => draft.changes[`machine:${selectedMachineId}`])
+    const nextMonth = sourceDraft?.changes[`machine:${selectedMachineId}`]?.fields.production_month
+    const selectedRow = productionData.find((row) => row.machine.id === selectedMachineId)
+    const normalized = normalizeProductionMonthValue(
+      typeof nextMonth === 'string' ? nextMonth : selectedRow?.machine.production_month,
+    )
+    const signature = sourceDraft ? `${selectedMachineId}:${sourceDraft.revision}:${normalized}` : null
+    if (!signature || signature === lastFocusedDraftRef.current) return
+    lastFocusedDraftRef.current = signature
+    if (normalized && filters.productionMonth && filters.productionMonth !== normalized) {
+      setFilters({ ...filters, productionMonth: normalized })
+      toast.info(`Машина находится в ${formatProductionMonth(normalized)}. Фильтр месяца обновлён.`)
+    }
+  }, [drafts, filters, productionData, selectedMachineId, setFilters])
 
   useEffect(() => {
     draftRevisionsRef.current = new Map(drafts.map((draft) => [
@@ -2856,7 +2885,7 @@ export function ProductionPlanner({
           selectedMachineId={selectedMachineId}
           onToggle={() => setUnscheduledOpen((current) => !current)}
           onSelect={(machineId) => {
-            setSelectedMachineId(machineId)
+            selectMachine(machineId)
             setSelectedIntervalId(null)
             setDesktopInspectorOpen(true)
           }}
@@ -2955,7 +2984,7 @@ export function ProductionPlanner({
                         selected={row.machine.id === selectedMachineId}
                         showSupply={filters.showSupply}
                         onSelect={(machineId, intervalId) => {
-                          setSelectedMachineId(machineId)
+                          selectMachine(machineId)
                           if (intervalId !== undefined) setSelectedIntervalId(intervalId)
                         }}
                       />
@@ -2993,7 +3022,7 @@ export function ProductionPlanner({
             visibleStageTypes={filters.visibleStages}
             selectedMachineId={selectedMachineId}
             onSelectMachine={(machineId) => {
-              setSelectedMachineId(machineId)
+              selectMachine(machineId)
               setSelectedIntervalId(null)
               setDesktopInspectorOpen(true)
             }}

@@ -11,6 +11,7 @@ import { getProductionPlanDraftsForFactory } from '@/lib/actions/production-plan
 import { applyProductionPlanDraftOverlay } from '@/lib/production-plan-draft-overlay'
 import type { ProductionPlanDraftSummary } from '@/lib/actions/production-plan-versions'
 import type { FactorySummary } from '@/lib/types'
+import { redirect } from 'next/navigation'
 
 export const metadata = { title: 'Производство — CRM Leda' }
 
@@ -21,7 +22,7 @@ function getErrorMessage(error: unknown) {
 async function ProductionPage({
   searchParams
 }: {
-  searchParams?: Promise<{ factory?: string }>
+  searchParams?: Promise<{ factory?: string; machine?: string; moved?: string }>
 }) {
   const resolvedSearchParams = await searchParams
   const permission = await requirePermission('production', 'view')
@@ -32,6 +33,9 @@ async function ProductionPage({
     canAccessFactory(permission, 'production', 'view', factory.id))
 
   const requestedFactory = resolvedSearchParams?.factory || ''
+  const focusedMachineId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(resolvedSearchParams?.machine || '')
+    ? resolvedSearchParams!.machine!
+    : null
   const activeFactoryId = visibleFactories.some((factory) => factory.id === requestedFactory)
     ? requestedFactory
     : visibleFactories[0]?.id
@@ -58,7 +62,7 @@ async function ProductionPage({
 
   try {
     drafts = canManage
-      ? (await Promise.all((allFactoryDrafts ? visibleFactories : visibleFactories.filter((factory) => factory.id === activeFactoryId && canManageFactory))
+      ? (await Promise.all(visibleFactories.filter((factory) => canAccessFactory(permission, 'production', 'manage', factory.id))
         .map((factory) => getProductionPlanDraftsForFactory(factory.id)))).flat()
       : []
     const draftMachineIds: string[] = [...new Set(drafts.flatMap((draft) => Object.values(draft.changes)
@@ -90,6 +94,17 @@ async function ProductionPage({
     )
   }
 
+  if (focusedMachineId) {
+    const relocation = drafts.flatMap((draft) => Object.values(draft.changes))
+      .find((patch) => patch.target === 'machine' && patch.id === focusedMachineId)
+    const targetFactory = relocation?.fields.factory_id
+    if (typeof targetFactory === 'string' && targetFactory !== activeFactoryId
+      && canAccessFactory(permission, 'production', 'manage', targetFactory)
+      && visibleFactories.some((factory) => factory.id === targetFactory)) {
+      redirect(`/production?factory=${encodeURIComponent(targetFactory)}&machine=${focusedMachineId}&moved=1`)
+    }
+  }
+
   const editorView = canManage
     ? applyProductionPlanDraftOverlay(data, [ganttData], drafts, activeFactoryId)
     : { productionData: data, ganttData }
@@ -103,6 +118,8 @@ async function ProductionPage({
       monthPlans={monthPlansResult.data}
       drafts={canManage ? drafts : []}
       canManageFactory={canManageFactory}
+      focusedMachineId={focusedMachineId}
+      relocatedMachineNotice={resolvedSearchParams?.moved === '1'}
       monthPlanError={monthPlanError}
       outsourcingSummary={outsourcingSummaryResult.data}
     />

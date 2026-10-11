@@ -95,7 +95,9 @@ export function AssignFactoryDialog({ machine, factories, meetingId, open, onOpe
             <Label>Завод *</Label>
             <Select value={selectedFactory} onValueChange={(v) => setSelectedFactory(v ?? '')}>
               <SelectTrigger className="mt-1.5">
-                <SelectValue placeholder="Выберите завод..." />
+                <SelectValue placeholder="Выберите завод...">
+                  {selectedFactory ? factories.find((factory) => factory.id === selectedFactory)?.name || 'Выберите завод...' : null}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {factories.map((f) => (
@@ -110,7 +112,7 @@ export function AssignFactoryDialog({ machine, factories, meetingId, open, onOpe
             <Label>Тип материала</Label>
             <Select value={selectedMaterial} onValueChange={(v) => v && setSelectedMaterial(v as MaterialType)}>
               <SelectTrigger className="mt-1.5">
-                <SelectValue />
+                <SelectValue>{MATERIAL_TYPES[selectedMaterial]?.label || 'Не определён'}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {Object.entries(MATERIAL_TYPES).map(([k, v]) => (

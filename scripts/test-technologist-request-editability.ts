@@ -30,13 +30,23 @@ assert.equal(
 )
 assert.equal(
   deriveRequestLifecycleStatus({ status: 'submitted_to_supply' }, ['cancelled', 'ordered']),
+  'ordered',
+  'Оформленная закупка без позиции доставки должна показываться как заказанная',
+)
+assert.equal(
+  deriveRequestLifecycleStatus({ status: 'submitted_to_supply' }, ['cancelled', 'ordered'], null, true),
   'delivery',
-  'Отменённая позиция не должна скрывать доставку оставшихся активных позиций',
+  'Активная позиция доставки должна переводить заказанную заявку в доставку',
 )
 assert.equal(
   deriveRequestLifecycleStatus({ status: 'submitted_to_supply' }, ['cancelled', 'delivered']),
   'received',
   'Отменённая позиция не должна мешать завершению остальных принятых позиций',
+)
+assert.equal(
+  deriveRequestLifecycleStatus({ status: 'completed' }, ['ordered']),
+  'ordered',
+  'Статус шапки заявки не должен объявлять непринятую позицию принятой на склад',
 )
 assert.equal(
   deriveRequestLifecycleStatus({ status: 'cancelled' }, []),
