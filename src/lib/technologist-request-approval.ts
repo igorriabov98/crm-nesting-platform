@@ -16,12 +16,16 @@ export type ApprovalSummaryItem = {
   businessScrapWeightKg?: number
   metalScrapKg?: number | null
   processedUsefulKg?: number | null
-  futureSheetScraps?: Array<{ lengthMm: number; widthMm: number; quantity: number; weightKg: number }>
+  kerfWeightKg?: number | null
+  totalLossPercent?: number | null
+  inputMode?: 'manual' | 'pdf'
+  pdfReport?: { reportId: string; fileName: string; sha256: string; pageCount: number; weightDifferenceReason: string | null; crmWeightKg: number; createdBy: string; createdAt: string; sheets: Array<{ page: number; layoutNumber: number; instanceNumber: number; reason: string; usefulWeightKg: number; remnants: Array<{ lengthMm: number; widthMm: number; weightKg?: number }> }> }
+  futureSheetScraps?: Array<{ lengthMm: number; widthMm: number; quantity: number; weightKg: number; warehouseWeightKg?: number; page?: number; layoutNumber?: number; instanceNumber?: number }>
   attributes?: Record<string, unknown>
 }
 
 export type ApprovalSummarySnapshot = {
-  schemaVersion: 1
+  schemaVersion: 1 | 2
   requestKind?: 'stock' | 'machine'
   factoryId?: string | null
   neededBy?: string | null
@@ -33,6 +37,8 @@ export type ApprovalSummarySnapshot = {
   items: ApprovalSummaryItem[]
   futureItems: unknown[]
   enteredPlasmaMinutes: number
+  enteredPlasmaSeconds?: number
+  actualPlasmaSeconds?: number
   archives: Array<{ objectPath: string; fileName: string; mimeType: string | null; fileSize: number }>
 }
 
@@ -73,7 +79,7 @@ export function compareApprovalSnapshots(before: ApprovalSummarySnapshot, after:
   const removed = before.items.filter((item) => !afterByKey.has(item.key))
   const comparable: Array<keyof ApprovalSummaryItem> = [
     'name', 'quantity', 'unit', 'weightKg', 'businessScrapReserved', 'regularStockReserved', 'wastePercent',
-    'wasteBasisKg', 'businessScrapWeightKg', 'metalScrapKg', 'processedUsefulKg',
+    'wasteBasisKg', 'businessScrapWeightKg', 'metalScrapKg', 'processedUsefulKg', 'kerfWeightKg', 'totalLossPercent', 'inputMode',
   ]
   const changed = after.items.flatMap((item) => {
     const previous = beforeByKey.get(item.key)
@@ -82,6 +88,7 @@ export function compareApprovalSnapshots(before: ApprovalSummarySnapshot, after:
     if (stableValue(previous.attributes) !== stableValue(item.attributes)) fields.push('attributes')
     if (stableValue(previous.procurement) !== stableValue(item.procurement)) fields.push('procurement')
     if (stableValue(previous.futureSheetScraps) !== stableValue(item.futureSheetScraps)) fields.push('futureSheetScraps')
+    if (stableValue(previous.pdfReport) !== stableValue(item.pdfReport)) fields.push('pdfReport')
     return fields.length ? [{ before: previous, after: item, fields }] : []
   })
   const completionChanged: string[] = []

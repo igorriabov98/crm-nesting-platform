@@ -9,6 +9,7 @@ const fieldLabels: Record<string, string> = {
   attributes: 'характеристики позиции', procurement: 'закупка по согласованию',
   wasteBasisKg: 'база отходности', businessScrapWeightKg: 'вес будущего делового остатка',
   metalScrapKg: 'металлолом', processedUsefulKg: 'полезный вес обработанного листа', futureSheetScraps: 'будущие листовые остатки',
+  kerfWeightKg: 'потери на пропил', totalLossPercent: 'общая отходность', inputMode: 'способ заполнения', pdfReport: 'отчёт PDF',
 }
 
 function percent(value: number | null) { return value === null ? '—' : `${value.toFixed(1)}%` }
@@ -45,8 +46,11 @@ function SheetWasteDetails({ item, states, approvalState }: {
   }
   const kg = (value: number | null | undefined) => value == null ? '—' : `${value.toFixed(3)} кг`
   return <div className="space-y-2 rounded-lg bg-blue-50/60 p-3 text-xs text-slate-700">
+    {item.inputMode === 'pdf' && item.pdfReport && <div className="space-y-1 border-b border-blue-100 pb-2"><p className="font-semibold text-blue-950">Заполнено из PDF ProNest · <a className="underline" href={`/api/pronest/reports/${item.pdfReport.reportId}/file`} target="_blank" rel="noreferrer">{item.pdfReport.fileName}</a></p><p>Исходный вес PDF: {kg(item.weightKg)} · вес позиции CRM: {kg(item.pdfReport.crmWeightKg)} · страниц: {item.pdfReport.pageCount}</p>{item.pdfReport.weightDifferenceReason && <p>Причина расхождения веса: {item.pdfReport.weightDifferenceReason}</p>}</div>}
     <div className="flex flex-wrap gap-x-4 gap-y-1"><span>Полный вес: {kg(item.weightKg)}</span><span>Будущий деловой остаток: {kg(item.businessScrapWeightKg)}</span><span>База отходности: {kg(item.wasteBasisKg)}</span><span>Металлолом: {kg(item.metalScrapKg)}</span><span>Полезный вес обработанного листа: {kg(item.processedUsefulKg)}</span></div>
-    {rows.length > 0 && <ul className="space-y-1 border-t border-blue-100 pt-2">{rows.map((row, index) => <li key={index}>{row.lengthMm} × {row.widthMm} мм · {row.quantity} шт. · {kg(row.weightKg)} · {status(index)}</li>)}</ul>}
+    {item.inputMode === 'pdf' && <p>Пропил: {kg(item.kerfWeightKg)} · Отходность: металлолом + пропил: {item.totalLossPercent?.toFixed(2)}% · Полезный вес с остатком: {kg(Number(item.processedUsefulKg || 0) + Number(item.businessScrapWeightKg || 0))}</p>}
+    {item.pdfReport && <ul className="space-y-1 border-t border-blue-100 pt-2">{item.pdfReport.sheets.map((sheet, index) => <li key={`${sheet.layoutNumber}:${sheet.instanceNumber}`}>Лист {index + 1} · страница {sheet.page} · раскрой {sheet.layoutNumber}, экземпляр {sheet.instanceNumber} · детали {kg(sheet.usefulWeightKg)}{sheet.reason ? ` · причина: ${sheet.reason}` : ''}</li>)}</ul>}
+    {rows.length > 0 && <ul className="space-y-1 border-t border-blue-100 pt-2">{rows.map((row, index) => <li key={index}>{row.lengthMm} × {row.widthMm} мм · {row.quantity} шт. · вес PDF {kg(row.weightKg)}{row.warehouseWeightKg != null && Math.abs(row.warehouseWeightKg - row.weightKg) > 0.01 ? ` · складской расчёт ${kg(row.warehouseWeightKg)}` : ''}{row.page ? ` · стр. ${row.page}, раскрой ${row.layoutNumber}, экземпляр ${row.instanceNumber}` : ''} · {status(index)}</li>)}</ul>}
   </div>
 }
 
@@ -92,7 +96,7 @@ export function ApprovalSummary({ snapshot, sheetScrapStates, approvalState }: {
     <div className="grid gap-3 rounded-lg bg-slate-50 p-4 text-sm sm:grid-cols-3">
       <div><span className="text-slate-500">По всей заявке, взвешенный</span><p className="mt-1 font-semibold">{percent(total.weightedPercent)}</p></div>
       <div><span className="text-slate-500">По всей заявке, средний</span><p className="mt-1 font-semibold">{percent(total.averagePercent)}</p></div>
-      <div><span className="text-slate-500">Время плазмы</span><p className="mt-1 font-semibold">{snapshot.enteredPlasmaMinutes} мин. + 25% = {snapshot.enteredPlasmaMinutes + Math.ceil(snapshot.enteredPlasmaMinutes * 0.25)} мин.</p></div>
+      <div><span className="text-slate-500">Время плазмы</span><p className="mt-1 font-semibold">{snapshot.enteredPlasmaSeconds != null && snapshot.actualPlasmaSeconds != null ? `${Math.floor(snapshot.enteredPlasmaSeconds / 3600)}:${String(Math.floor(snapshot.enteredPlasmaSeconds % 3600 / 60)).padStart(2,'0')}:${String(snapshot.enteredPlasmaSeconds % 60).padStart(2,'0')} + 25% = ${Math.floor(snapshot.actualPlasmaSeconds / 3600)}:${String(Math.floor(snapshot.actualPlasmaSeconds % 3600 / 60)).padStart(2,'0')}:${String(snapshot.actualPlasmaSeconds % 60).padStart(2,'0')}` : `${snapshot.enteredPlasmaMinutes} мин. + 25% = ${snapshot.enteredPlasmaMinutes + Math.ceil(snapshot.enteredPlasmaMinutes * 0.25)} мин.`}</p></div>
     </div>
     {snapshot.items.some((item) => item.category === 'request_sheet_metal' && item.wastePercent !== null && item.wasteBasisKg != null) && <div className="grid gap-2 rounded-lg border border-blue-100 bg-blue-50/50 p-4 text-sm sm:grid-cols-4">
       <div>Полный вес листов: <strong>{snapshot.items.filter((item) => item.category === 'request_sheet_metal' && item.wastePercent !== null).reduce((sum, item) => sum + Number(item.weightKg || 0), 0).toFixed(3)} кг</strong></div>

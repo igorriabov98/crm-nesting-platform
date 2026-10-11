@@ -15,6 +15,7 @@ import * as materialScope from '../src/lib/request-completion-material-scope'
 import * as navigation from '../src/lib/request-completion-navigation'
 import * as errors from '../src/lib/utils/get-error-message'
 import * as sheetScrap from '../src/lib/request-completion-sheet-scrap'
+import * as pronestReport from '../src/lib/pronest/report'
 
 type Row = Record<string, unknown>
 type DbResult = { data: Row | Row[] | null; error: { message: string } | null }
@@ -65,6 +66,7 @@ function fixture(options: {
     request_knives: [],
     long_stock_cutting_business_scraps: [...links, { version_id: 'unrelated-version', inventory_id: 'unrelated-inventory' }],
     inventory: categories.flatMap((category) => scraps.map((scrap) => ({ ...scrap, id: `${category}-${scrap.id}` }))),
+    technologist_pronest_reports: [],
   }
   for (const category of categories) {
     tables[category] = [{
@@ -84,6 +86,7 @@ function fixture(options: {
         select() { return query },
         eq(key: string, value: unknown) { filters[key] = value; return query },
         in(key: string, values: unknown[]) { filters[key] = [...values]; return query },
+        not() { return query },
         order() { return query },
         single() { return query },
         then(...args: Parameters<Promise<DbResult>['then']>) {
@@ -122,6 +125,7 @@ function fixture(options: {
     '@/lib/materials/pipe-profile': pipeProfile,
     '@/lib/metal-scrap': metalScrap,
     '@/lib/request-completion-sheet-scrap': sheetScrap,
+    '@/lib/pronest/report': pronestReport,
     '@/lib/server/detailing-request-check': { getDetailingCheckState: async () => ({ ready: options.detailingReady !== false }) },
     '@/lib/server/technologist-approval-snapshot': { buildTechnologistApprovalSnapshot: forbiddenMutation },
     '@/lib/technologist-request-access': { requireTechnologistRequestAccess: async (id: string, access: { workflowOperation: string; inventoryOperation: string }) => {

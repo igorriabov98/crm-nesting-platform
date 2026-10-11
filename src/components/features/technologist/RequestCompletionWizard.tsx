@@ -36,6 +36,7 @@ import { validateMachineCuttingUploadRequest, type DirectMachineCuttingUpload } 
 import { hasSheetMetalForCompletion } from '@/lib/request-completion-material-scope'
 import { CompletionCuttingPlanCard } from './CompletionCuttingPlanCard'
 import { calculateSheetScrap } from '@/lib/request-completion-sheet-scrap'
+import { ProNestPositionCard, type AppliedProNest } from './ProNestPositionCard'
 
 type PartSearch = { id: string; name: string; drawing_number: string; unit_weight_kg: number; width_mm: number | null; height_mm: number | null; thickness_mm: number | null }
 type ProductOption = { id: string; name_uk: string; name_en: string; drawing_number: string; versions: Array<{ id: string; version_number: number; drawing_number: string }> }
@@ -67,6 +68,9 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
   const [newRow, setNewRow] = useState<FutureRow>({ key: 'new', name: '', drawingNumber: '', unitWeightKg: 0, quantity: 1 })
   const [percentages, setPercentages] = useState<Record<string, string>>(() => Object.fromEntries(manualWasteItems.map((item) => [item.sourceId, '0'])))
   const [sheetScraps, setSheetScraps] = useState<Record<string, ScrapDraft[]>>({})
+  const [sheetModes, setSheetModes] = useState<Record<string, 'manual' | 'pdf'>>({})
+  const [pdfApplied, setPdfApplied] = useState<Record<string, AppliedProNest | null>>({})
+  const [manualTimeScopeConfirmed, setManualTimeScopeConfirmed] = useState(false)
   const [hours, setHours] = useState('0')
   const [minutes, setMinutes] = useState('0')
   const [archiveFiles, setArchiveFiles] = useState<File[]>([])
@@ -114,7 +118,9 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
         (sheetScraps[item.sourceId] || []).map((row) => ({ lengthMm: Number(row.lengthMm), widthMm: Number(row.widthMm), quantity: Number(row.quantity) })), pct)
     } catch { return null }
   }
-  const totals = manualWasteItems.reduce((acc, item) => {
+  const pdfItems = manualWasteItems.filter(item => item.sourceTable === 'request_sheet_metal' && sheetModes[item.sourceId] === 'pdf')
+  const activeManualWasteItems = manualWasteItems.filter(item => sheetModes[item.sourceId] !== 'pdf')
+  const totals = activeManualWasteItems.reduce((acc, item) => {
     const weight = item.weightKg || 0
     const pct = Number(percentages[item.sourceId] || 0)
     const sheet = item.sourceTable === 'request_sheet_metal' ? sheetResult(item, pct) : null
@@ -122,12 +128,22 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
     const remainder = sheet?.scrapWeightKg || 0
     return { weight: acc.weight + weight, remainder: acc.remainder + remainder, scrap: acc.scrap + scrap, useful: acc.useful + weight - remainder - scrap }
   }, { weight: 0, remainder: 0, scrap: 0, useful: 0 })
-  const hasInvalidSheetScraps = manualWasteItems.some((item) => item.sourceTable === 'request_sheet_metal'
+  for (const item of pdfItems) {
+    const pdf = pdfApplied[item.sourceId]?.totals
+    if (!pdf) continue
+    totals.weight += pdf.sourceWeightKg
+    totals.remainder += pdf.remnantKg
+    totals.scrap += pdf.metalScrapKg
+    totals.useful += pdf.usefulKg
+  }
+  const hasInvalidSheetScraps = activeManualWasteItems.some((item) => item.sourceTable === 'request_sheet_metal'
     && (sheetScraps[item.sourceId] || []).length > 0
     && !sheetResult(item, Number(percentages[item.sourceId] || 0)))
-  const plasmaTime = calculatePlasmaTime(Number(hours) || 0, Number(minutes) || 0)
-  const enteredMinutes = plasmaTime.enteredMinutes
-  const finalMinutes = plasmaTime.actualMinutes
+  const manualEnteredMinutes = Number(hours) * 60 + Number(minutes)
+  const pdfEnteredSeconds = pdfItems.reduce((sum, item) => sum + (pdfApplied[item.sourceId]?.totals.enteredSeconds || 0), 0)
+  const enteredSeconds = pdfEnteredSeconds + manualEnteredMinutes * 60
+  const enteredMinutes = pdfItems.length ? Math.ceil(enteredSeconds / 60) : calculatePlasmaTime(Number(hours) || 0, Number(minutes) || 0).enteredMinutes
+  const finalMinutes = pdfItems.length ? Math.ceil(Math.ceil(enteredSeconds * 1.25) / 60) : calculatePlasmaTime(Number(hours) || 0, Number(minutes) || 0).actualMinutes
 
   function addExisting(part: PartSearch) {
     if (rows.some((row) => row.partId === part.id)) return
@@ -154,9 +170,11 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
     return {
       requestId: workspace.requestId,
       decision,
-      hours: hasSheetMetal ? Number(hours) : 0,
-      minutes: hasSheetMetal ? Number(minutes) : 0,
-      wasteItems: manualWasteItems.map((item) => ({ ...item, wastePercent: Number(percentages[item.sourceId]), futureScraps: item.sourceTable === 'request_sheet_metal' ? (sheetScraps[item.sourceId] || []).map((scrap) => ({ lengthMm: Number(scrap.lengthMm), widthMm: Number(scrap.widthMm), quantity: Number(scrap.quantity) })) : [] })),
+      hours: hasSheetMetal ? pdfItems.length ? Math.floor(enteredMinutes / 60) : Number(hours) : 0,
+      minutes: hasSheetMetal ? pdfItems.length ? enteredMinutes % 60 : Number(minutes) : 0,
+      wasteItems: manualWasteItems.map((item) => sheetModes[item.sourceId] === 'pdf'
+        ? { ...item, mode: 'pdf' as const, reportId: pdfApplied[item.sourceId]?.reportId, manualPlasmaMinutes: manualEnteredMinutes, wastePercent: 0, futureScraps: [] }
+        : { ...item, mode: 'manual' as const, wastePercent: Number(percentages[item.sourceId]), futureScraps: item.sourceTable === 'request_sheet_metal' ? (sheetScraps[item.sourceId] || []).map((scrap) => ({ lengthMm: Number(scrap.lengthMm), widthMm: Number(scrap.widthMm), quantity: Number(scrap.quantity) })) : [] }),
       futureItems: decision === 'none' ? [] : rows.map((row) => ({
         partId: row.partId || null, quantity: row.quantity, name: row.name, drawingNumber: row.drawingNumber, unitWeightKg: row.unitWeightKg,
         widthMm: row.widthMm ?? null, heightMm: row.heightMm ?? null, thicknessMm: row.thicknessMm ?? null,
@@ -192,14 +210,16 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
   }
 
   function submit() {
-    const missing = manualWasteItems.find((item) => item.weightKg == null || item.weightKg <= 0)
+    const missing = activeManualWasteItems.find((item) => item.weightKg == null || item.weightKg <= 0)
     if (missing) return toast.error(`CRM не рассчитала вес: ${missing.itemName}`)
     const incompletePlan = approvedPlanItems.find((item) => !item.planSummary?.readyForSupply)
     if (incompletePlan) return toast.error(`Нет утверждённой карты раскроя: ${incompletePlan.itemName}`)
-    const invalid = Object.values(percentages).some((value) => value === '' || Number(value) < 0 || Number(value) > 100 || Math.round(Number(value) * 10) !== Number(value) * 10)
+    const invalid = activeManualWasteItems.some(item => { const value = percentages[item.sourceId]; return value === '' || Number(value) < 0 || Number(value) > 100 || Math.round(Number(value) * 10) !== Number(value) * 10 })
     if (invalid || (hasSheetMetal && Number(minutes) > 59)) return toast.error('Проверьте проценты отходности и время')
+    if (pdfItems.some(item => !pdfApplied[item.sourceId])) return toast.error('Примените PDF для каждой позиции с режимом PDF')
+    if (pdfItems.length && manualEnteredMinutes > 0 && !manualTimeScopeConfirmed) return toast.error('Подтвердите, что ручное время относится только к позициям без PDF')
     try {
-      for (const item of manualWasteItems) {
+      for (const item of activeManualWasteItems) {
         if (item.sourceTable !== 'request_sheet_metal') continue
         calculateSheetScrap(item.sheetSize || '', item.sheetQuantity || 0, item.weightKg || 0,
           (sheetScraps[item.sourceId] || []).map((scrap) => ({ lengthMm: Number(scrap.lengthMm), widthMm: Number(scrap.widthMm), quantity: Number(scrap.quantity) })),
@@ -414,7 +434,10 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
         </CardHeader>
         <CardContent className="space-y-3 p-5 sm:p-7">{manualWasteItems.map((item) => {
         const pct = Number(percentages[item.sourceId] || 0); const weight = item.weightKg || 0; const sheet = sheetResult(item, pct); const scrap = sheet ? sheet.metalScrapKg : calculateWaste(weight, pct).scrapKg; const invalidSheet = item.sourceTable === 'request_sheet_metal' && (sheetScraps[item.sourceId] || []).length > 0 && !sheet
+        const pdfMode = item.sourceTable === 'request_sheet_metal' && sheetModes[item.sourceId] === 'pdf'
         return <div key={item.sourceId} className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
+          {item.sourceTable === 'request_sheet_metal' && <fieldset className="flex flex-wrap gap-3 border-b pb-3"><legend className="mb-2 text-sm font-medium">Способ заполнения: {item.itemName}</legend><Label className="flex min-h-10 items-center gap-2 rounded-lg border px-3"><input type="radio" name={`mode-${item.sourceId}`} checked={!pdfMode} onChange={() => setSheetModes(current => ({ ...current, [item.sourceId]: 'manual' }))} />Ввести вручную</Label><Label className="flex min-h-10 items-center gap-2 rounded-lg border px-3"><input type="radio" name={`mode-${item.sourceId}`} checked={pdfMode} onChange={() => { setSheetModes(current => ({ ...current, [item.sourceId]: 'pdf' })); setManualTimeScopeConfirmed(false) }} />Заполнить из PDF</Label></fieldset>}
+          {!pdfMode && <>
           <div className="grid gap-4 md:grid-cols-[minmax(220px,1fr)_120px_140px_140px] md:items-center">
           <div><p className="font-semibold text-slate-900">{item.itemName}</p><p className="mt-1 text-sm text-slate-500">{item.quantityLabel} · полный вес {item.weightKg == null ? 'не рассчитан' : `${weight.toFixed(3)} кг`}</p></div>
           <div className="space-y-1.5"><Label htmlFor={`pct-${item.sourceId}`}>Отход, %</Label><Input id={`pct-${item.sourceId}`} className="h-11 text-center" type="number" min="0" max="100" step="0.1" inputMode="decimal" value={percentages[item.sourceId]} onChange={(e) => setPercentages({ ...percentages, [item.sourceId]: e.target.value })} /></div>
@@ -430,6 +453,8 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
             <p className="text-sm text-slate-600">Вес делового остатка: {sheet?.scrapWeightKg.toFixed(3) ?? '—'} кг · База отходности: {sheet?.wasteBasisKg.toFixed(3) ?? '—'} кг</p>
             {invalidSheet && <p className="text-sm text-amber-700">Проверьте размеры, количество и суммарную площадь остатков.</p>}
           </div>}
+          </>}
+          {item.sourceTable === 'request_sheet_metal' && <ProNestPositionCard item={item} requestId={workspace.requestId} active={pdfMode} applied={pdfApplied[item.sourceId] || null} onApplied={value => setPdfApplied(current => ({ ...current, [item.sourceId]: value }))} />}
         </div>
       })}
           <div className="grid gap-3 rounded-xl bg-slate-900 p-4 text-white sm:grid-cols-4">
@@ -457,7 +482,7 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
       <Card className="overflow-hidden rounded-2xl border-slate-200 shadow-sm">
         <CardHeader className="border-b border-slate-100 bg-slate-50/70 px-5 py-5 sm:px-7">
           <CardTitle className="flex items-center gap-2 text-xl text-slate-950"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 text-blue-700"><Clock3 className="h-5 w-5" /></span>Время работы плазмы</CardTitle>
-          <CardDescription>К введённому времени CRM автоматически добавит технологический коэффициент 25%.</CardDescription>
+          <CardDescription>{pdfItems.length ? 'Время PDF уже учтено. Здесь укажите время только позиций без PDF; к общей сумме CRM добавит 25%.' : 'К введённому времени CRM автоматически добавит технологический коэффициент 25%.'}</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 p-5 sm:grid-cols-2 sm:p-7 lg:grid-cols-[150px_150px_1fr] lg:items-end">
           <div className="space-y-1.5"><Label htmlFor="hours">Часы</Label><Input id="hours" className="h-11 text-center" type="number" min="0" step="1" inputMode="numeric" value={hours} onChange={(e) => setHours(e.target.value)} /></div>
@@ -467,6 +492,7 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
             <div className="border-blue-200 px-2 py-1 sm:border-l"><p className="text-xs font-medium text-blue-700">Коэффициент 25%</p><strong className="mt-1 block text-lg text-blue-950">+{finalMinutes - enteredMinutes} мин</strong></div>
             <div className="border-blue-200 px-2 py-1 sm:border-l"><p className="text-xs font-medium text-blue-700">Фактическое</p><strong className="mt-1 block text-lg text-blue-950">{finalMinutes} мин</strong></div>
           </div>
+          {pdfItems.length > 0 && <Label className="flex items-center gap-2 text-sm sm:col-span-2 lg:col-span-3"><input type="checkbox" checked={manualTimeScopeConfirmed} onChange={event => setManualTimeScopeConfirmed(event.target.checked)} />Ручное время относится только к позициям без PDF; время импортированных раскроев не добавлено повторно.</Label>}
         </CardContent>
       </Card>
       </>}

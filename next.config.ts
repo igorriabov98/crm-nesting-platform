@@ -14,6 +14,7 @@ const contentSecurityPolicy = [
   "font-src 'self' data:",
   "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.telegram.org",
   "object-src 'none'",
+  "frame-src 'self' blob:",
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
@@ -32,6 +33,11 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '8mb',
+    },
+  },
   outputFileTracingIncludes: {
     '/*': ['./public/fonts/**/*'],
   },

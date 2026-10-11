@@ -19,6 +19,7 @@ import type { CompletionFutureBusinessScrap } from '@/lib/request-completion-fut
 import { buildTechnologistApprovalSnapshot } from '@/lib/server/technologist-approval-snapshot'
 import { requireTechnologistRequestAccess } from '@/lib/technologist-request-access'
 import { calculateSheetScrap, type SheetScrapInput } from '@/lib/request-completion-sheet-scrap'
+import { calculateProNestPosition, validateProNestForPosition, validateProNestLayouts, type ProNestSheet, type ProNestParsedReport } from '@/lib/pronest/report'
 
 const sheetScrapSchema = z.object({
   lengthMm: z.coerce.number().positive(),
@@ -45,6 +46,9 @@ const wasteSchema = z.object({
   materialGrade: z.string().trim().nullable().optional(),
   wastePercent: z.coerce.number().min(0).max(100).refine((value) => Math.round(value * 10) === value * 10, 'Точность — до 0,1%'),
   futureScraps: z.array(sheetScrapSchema).default([]),
+  mode: z.enum(['manual','pdf']).default('manual'),
+  reportId: z.string().uuid().optional(),
+  manualPlasmaMinutes: z.number().int().nonnegative().optional(),
 })
 
 const compatibilitySchema = z.object({
@@ -103,6 +107,8 @@ export type CompletionWasteItem = {
   weightKg: number | null
   sheetSize: string | null
   sheetQuantity: number | null
+  thicknessMm: number | null
+  previousPdfReports: Array<{ id: string; importVersion: number; fileName: string; createdAt: string }>
   accountingMode: 'manual_percent' | 'approved_plan'
   planSummary: CompletionPlanSummary | null
 }
@@ -166,6 +172,8 @@ function mapWaste(sourceTable: CompletionWasteItem['sourceTable'], row: RawWaste
     weightKg: num(row.calculated_weight_kg),
     sheetSize: sourceTable === 'request_sheet_metal' ? String(row.sheet_size || '') : null,
     sheetQuantity: sourceTable === 'request_sheet_metal' ? num(row.quantity_sheets) : null,
+    thicknessMm: sourceTable === 'request_sheet_metal' ? num(row.thickness_mm) : null,
+    previousPdfReports: [],
     accountingMode: 'manual_percent',
     planSummary: null,
   }
@@ -192,18 +200,26 @@ export async function getCompletionWorkspace(requestId: string): Promise<Complet
     if (navigation.kind === 'unavailable') throw new Error('Заявка не находится на этапе бронирования')
     const detailingCheck = await getDetailingCheckState(id)
     if (!detailingCheck.ready) return { data: null, error: null, redirectTo: `/supply/request/${id}` }
-    const [machineResult, sheet, pipe, circle, knives, planFactsResult] = await Promise.all([
+    const [machineResult, sheet, pipe, circle, knives, planFactsResult, pdfReportsResult] = await Promise.all([
       client.from('machines').select('id,name,factory_id,factories(id,name)').eq('id', requestResult.data.machine_id).single(),
       client.from('request_sheet_metal').select('id,material_id,material_variant_id,material_name,material_grade,sheet_size,quantity_sheets,calculated_weight_kg,steel_type_id,thickness_mm').eq('request_id', id).order('sort_order'),
       client.from('request_pipe').select('id,material_id,material_variant_id,pipe_type,size,remainder_qty,calculated_weight_kg').eq('request_id', id).eq('is_cutting_plan_draft', false).order('sort_order'),
       client.from('request_circle').select('id,material_id,material_variant_id,steel_grade,diameter_mm,remainder_mm,calculated_weight_kg').eq('request_id', id).eq('is_cutting_plan_draft', false).order('sort_order'),
       client.from('request_knives').select('id,material_id,material_variant_id,knife_type,steel_grade,remainder_qty,calculated_weight_kg').eq('request_id', id).eq('is_cutting_plan_draft', false).order('sort_order'),
       client.rpc('fn_get_long_stock_completion_plan_facts_v1', { p_request_id: id }),
+      db().from('technologist_pronest_reports').select('id,source_item_id,import_version,file_name,created_at').eq('request_id', id).order('import_version', { ascending: false }),
     ])
     if (machineResult.error || !machineResult.data) throw new Error('Не удалось определить завод машины')
     const factory = Array.isArray(machineResult.data.factories) ? machineResult.data.factories[0] : machineResult.data.factories
     if (!machineResult.data.factory_id || !factory) throw new Error('У машины не указан завод')
     if (planFactsResult.error) throw new Error(planFactsResult.error.message || 'Не удалось загрузить факты карт раскроя')
+    if (pdfReportsResult.error) throw new Error(pdfReportsResult.error.message || 'Не удалось загрузить историю PDF')
+    const previousPdfBySource = new Map<string, CompletionWasteItem['previousPdfReports']>()
+    for (const row of pdfReportsResult.data || []) {
+      const existing = previousPdfBySource.get(row.source_item_id) || []
+      existing.push({ id: row.id, importVersion: row.import_version, fileName: row.file_name, createdAt: row.created_at })
+      previousPdfBySource.set(row.source_item_id, existing)
+    }
     const planFactRows = (planFactsResult.data || []) as RawPlanFactRow[]
     const planVersionIds = [...new Set(planFactRows
       .filter((row) => row.version_id)
@@ -254,7 +270,8 @@ export async function getCompletionWorkspace(requestId: string): Promise<Complet
       ...(knives.data || []).map((row: RawWasteRow) => mapWaste('request_knives', row)),
     ].map((item) => {
       const planSummary = planSummaries.get(planFactKey(item.sourceTable, item.sourceId)) || null
-      return planSummary ? { ...item, accountingMode: 'approved_plan' as const, planSummary } : item
+      const pdfItem = { ...item, previousPdfReports: previousPdfBySource.get(item.sourceId) || [] }
+      return planSummary ? { ...pdfItem, accountingMode: 'approved_plan' as const, planSummary } : pdfItem
     })
     return { data: { requestId: id, machineId: machineResult.data.id, machineName: machineResult.data.name, factoryId: machineResult.data.factory_id, factoryName: factory.name, wasteItems }, error: null, redirectTo: null }
   } catch (error) { return { data: null, error: getErrorMessage(error), redirectTo: null } }
@@ -311,13 +328,49 @@ export async function finalizeTechnologistRequest(input: z.input<typeof finalize
       .eq('request_id', parsed.requestId)
     if (sheets.error) throw sheets.error
     const sheetById = new Map<string, any>((sheets.data || []).map((row: any) => [row.id, row]))
+    let pdfEnteredSeconds = 0
+    let manualPlasmaMinutes: number | null = null
+    const pdfSummaries = new Map<string, Record<string, unknown>>()
     for (const item of parsed.wasteItems) {
       if (item.sourceTable !== 'request_sheet_metal') {
+        if (item.mode === 'pdf') throw new Error('PDF доступен только для листовой позиции')
         if (item.futureScraps.length) throw new Error('Деловой остаток в этом мастере доступен только для листового металла')
         continue
       }
       const sheet = sheetById.get(item.sourceId)
       if (!sheet) throw new Error('Листовая позиция не относится к заявке')
+      if (item.mode === 'pdf') {
+        if (!item.reportId || item.futureScraps.length) throw new Error('Укажите применённый PDF без ручных остатков')
+        const { data: report, error: reportError } = await db().from('technologist_pronest_reports')
+          .select('id,request_id,source_item_id,approval_version_id,confirmed_sheets,original_layouts,material_confirmed,weight_difference_reason,file_name,sha256,page_count,created_by,created_at')
+          .eq('id', item.reportId).eq('request_id', parsed.requestId).eq('source_item_id', item.sourceId).maybeSingle()
+        if (reportError || !report || report.approval_version_id || !report.material_confirmed) throw new Error('Отчёт PDF не относится к текущей версии заявки')
+        const reportSheets = report.confirmed_sheets as ProNestSheet[]
+        if (!Array.isArray(reportSheets) || reportSheets.length !== Number(sheet.quantity_sheets)) throw new Error('Количество листов PDF изменилось')
+        const layouts = reportSheets.filter(row => row.instanceNumber === 1).map(row => row.source)
+        const currentReport: ProNestParsedReport = { layouts, extraPages: [], unrecognizedPages: [], issues: validateProNestLayouts(layouts) }
+        const reportIssues = validateProNestForPosition(currentReport, {
+          quantity: Number(sheet.quantity_sheets), sheetSize: String(sheet.sheet_size),
+          thicknessMm: Number(sheet.thickness_mm), materialConfirmed: report.material_confirmed,
+        })
+        if (reportIssues.length || reportSheets.some(row => !row.reviewed || Object.entries(row.source.evidence || {}).some(([field, evidence]) => evidence.reviewRequired && !row.reviewedFields.includes(field)))) {
+          throw new Error('После импорта позиция изменилась или не все поля PDF подтверждены: ' + reportIssues.join('; '))
+        }
+        const result = calculateProNestPosition(reportSheets)
+        if (reportSheets.some((row) => Math.abs(row.source.sheetWeightKg - Number(sheet.calculated_weight_kg) / Number(sheet.quantity_sheets)) > 0.01) && !report.weight_difference_reason) throw new Error('Подтвердите расхождение веса PDF и CRM')
+        pdfSummaries.set(item.sourceId, {
+          reportId: report.id, fileName: report.file_name, sha256: report.sha256,
+          pageCount: report.page_count, weightDifferenceReason: report.weight_difference_reason,
+          crmWeightKg: Number(sheet.calculated_weight_kg), sourceWeightKg: result.sourceWeightKg,
+          createdBy: report.created_by, createdAt: report.created_at,
+          totals: result, sheets: reportSheets,
+        })
+        pdfEnteredSeconds += result.enteredSeconds
+        if (manualPlasmaMinutes !== null && item.manualPlasmaMinutes !== manualPlasmaMinutes) throw new Error('Ручное время плазмы указано неодинаково')
+        manualPlasmaMinutes = item.manualPlasmaMinutes ?? 0
+        continue
+      }
+      if (item.reportId) throw new Error('PDF указан для ручного режима')
       if (item.futureScraps.length && (!sheet.material_id || !sheet.steel_type_id || !(Number(sheet.thickness_mm) > 0))) {
         throw new Error('Для делового остатка у исходного листа нужны карточка материала, тип стали и толщина')
       }
@@ -331,15 +384,18 @@ export async function finalizeTechnologistRequest(input: z.input<typeof finalize
       if (archive.completionId !== null) throw new Error('Архив уже относится к завершённой заявке')
       validateMachineCuttingRegistration({ machineId: machineResult.data.machine_id, ...archive })
     }
+    const enteredMinutes = parsed.hours * 60 + parsed.minutes
+    if (manualPlasmaMinutes !== null && enteredMinutes !== Math.ceil((pdfEnteredSeconds + manualPlasmaMinutes * 60) / 60)) {
+      throw new Error('Время плазмы не совпадает с отчётами PDF')
+    }
     const readiness = await completeStockReservation(parsed.requestId)
     if (!readiness.success) throw new Error(readiness.error || 'Заявка не готова к завершению')
-    const enteredMinutes = parsed.hours * 60 + parsed.minutes
     const machineRelation = Array.isArray(machineResult.data.machines) ? machineResult.data.machines[0] : machineResult.data.machines
     if (!machineRelation) throw new Error('Заказ заявки не найден')
     const completionPayload = {
       decision: parsed.decision,
       enteredPlasmaMinutes: enteredMinutes,
-      wasteItems: parsed.wasteItems,
+      wasteItems: parsed.wasteItems.map(item => pdfSummaries.has(item.sourceId) ? { ...item, pdfSummary: pdfSummaries.get(item.sourceId) } : item),
       futureItems: parsed.futureItems,
       archives: stagedArchives,
     }
@@ -371,9 +427,9 @@ export async function getCompletionCorrectionWorkspace(requestId: string) {
     const approved = await client.from('technologist_request_approval_versions').select('id').eq('request_id', id).eq('state', 'approved').maybeSingle()
     if (approved.error) throw approved.error
     if (approved.data) throw new Error('Одобренную заявку нельзя редактировать')
-    const completion = await client.from('technologist_request_completions').select('request_id,machine_id,created_by,entered_plasma_minutes,actual_plasma_minutes,machines(name)').eq('request_id', id).single()
+    const completion = await client.from('technologist_request_completions').select('request_id,machine_id,created_by,entered_plasma_minutes,actual_plasma_minutes,entered_plasma_seconds,actual_plasma_seconds,machines(name)').eq('request_id', id).single()
     if (completion.error || !completion.data || completion.data.created_by !== userId) throw new Error('Корректировка недоступна')
-    const waste = await client.from('technologist_request_waste_items').select('id,item_name,weight_snapshot_kg,waste_percent,scrap_weight_kg,useful_weight_kg').eq('request_id', id).order('created_at')
+    const waste = await (client as any).from('technologist_request_waste_items').select('id,item_name,weight_snapshot_kg,waste_percent,scrap_weight_kg,useful_weight_kg,input_mode,total_loss_percent,kerf_weight_kg').eq('request_id', id).order('created_at')
     return { data: { completion: completion.data, wasteItems: waste.data || [] }, error: null }
   } catch (error) { return { data: null, error: getErrorMessage(error) } }
 }
@@ -382,6 +438,13 @@ export async function correctTechnologistCompletion(input: { requestId: string; 
   try {
     const parsed = z.object({ requestId: z.string().uuid(), hours: z.coerce.number().int().nonnegative(), minutes: z.coerce.number().int().min(0).max(59), reason: z.string().trim().min(1), wasteItems: z.array(z.object({ wasteItemId: z.string().uuid(), wastePercent: z.coerce.number().min(0).max(100) })) }).parse(input)
     const { supabase, userId } = await requirePermission('technologist_requests', 'manage')
+    const pdfRows = await (createAdminClient() as any).from('technologist_request_waste_items').select('id').eq('request_id', parsed.requestId).eq('input_mode', 'pdf')
+    if (pdfRows.error) throw pdfRows.error
+    if (pdfRows.data?.length) {
+      if (parsed.wasteItems.some(item => pdfRows.data.some((row: { id: string }) => row.id === item.wasteItemId))) throw new Error('PDF-позиции исправляются через новую версию отчёта в мастере после возврата заявки')
+      const completion = await (createAdminClient() as any).from('technologist_request_completions').select('entered_plasma_minutes').eq('request_id', parsed.requestId).single()
+      if (completion.error || !completion.data || parsed.hours * 60 + parsed.minutes !== Number(completion.data.entered_plasma_minutes)) throw new Error('Время PDF исправляется через новую версию отчёта в мастере после возврата заявки')
+    }
     const { error } = await (supabase as any).rpc('fn_correct_technologist_completion', { p_request_id: parsed.requestId, p_entered_plasma_minutes: parsed.hours * 60 + parsed.minutes, p_waste_items: parsed.wasteItems, p_reason: parsed.reason, p_actor: userId })
     if (error) throw error
     const request = await db().from('technologist_requests').select('machine_id').eq('id', parsed.requestId).single()
