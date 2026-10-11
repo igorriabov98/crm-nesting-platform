@@ -20,7 +20,7 @@ const CATEGORY_TABLES = [
 type CompletionInput = {
   decision: 'has_items' | 'none'
   enteredPlasmaMinutes: number
-  wasteItems: Array<{ sourceTable: string; sourceId: string; wastePercent: number; futureScraps?: SheetScrapInput[] }>
+  wasteItems: Array<{ sourceTable: string; sourceId: string; wastePercent: number; futureScraps?: SheetScrapInput[]; mode?: 'manual' | 'pdf'; pdfSummary?: any; manualPlasmaMinutes?: number }>
   futureItems: unknown[]
   archives: Array<{ objectPath: string; fileName: string; mimeType: string | null; fileSize: number }>
 }
@@ -95,28 +95,35 @@ export function snapshotFromSource(
         .reduce((sum: number, reservation: any) => sum + Number(reservation.logical_reserved_quantity ?? reservation.reserved_quantity ?? 0), 0)
       const described = describeRow(table, raw)
       const waste = wasteByKey.get(key)
+      const pdf = waste?.mode === 'pdf' ? waste.pdfSummary : null
+      const pdfTotals = pdf?.totals
       let sheetCalculation: ReturnType<typeof calculateSheetScrap> | null = null
-      if (table === 'request_sheet_metal' && waste && described.weightKg && raw.sheet_size && raw.quantity_sheets) {
+      if (!pdf && table === 'request_sheet_metal' && waste && described.weightKg && raw.sheet_size && raw.quantity_sheets) {
         try {
           sheetCalculation = calculateSheetScrap(String(raw.sheet_size), Number(raw.quantity_sheets), described.weightKg, waste.futureScraps || [], waste.wastePercent)
         } catch { /* A returned draft can contain an older completion payload. */ }
       }
       items.push({
         key, category: table, categoryLabel, ...described,
+        weightKg: pdfTotals?.sourceWeightKg ?? described.weightKg,
         attributes: Object.fromEntries(Object.entries(raw).filter(([field]) => !['id','request_id','created_at','sort_order','order_status','ordered_at','delivered_at','supplier_id','custom_delivery_date'].includes(field))),
         businessScrapReserved: reservationTotal(true) / (table === 'request_chain_cord' ? 1000 : 1),
         regularStockReserved: reservationTotal(false) / (table === 'request_chain_cord' ? 1000 : 1),
-        wastePercent: waste?.wastePercent ?? null,
-        wasteBasisKg: sheetCalculation?.wasteBasisKg ?? described.weightKg,
-        businessScrapWeightKg: sheetCalculation?.scrapWeightKg ?? 0,
-        metalScrapKg: sheetCalculation?.metalScrapKg ?? null,
-        processedUsefulKg: sheetCalculation?.usefulKg ?? null,
-        futureSheetScraps: sheetCalculation?.rows ?? [],
+        wastePercent: pdfTotals?.wastePercent ?? waste?.wastePercent ?? null,
+        wasteBasisKg: pdfTotals?.wasteBasisKg ?? sheetCalculation?.wasteBasisKg ?? described.weightKg,
+        businessScrapWeightKg: pdfTotals?.remnantKg ?? sheetCalculation?.scrapWeightKg ?? 0,
+        metalScrapKg: pdfTotals?.metalScrapKg ?? sheetCalculation?.metalScrapKg ?? null,
+        processedUsefulKg: pdfTotals?.usefulKg ?? sheetCalculation?.usefulKg ?? null,
+        kerfWeightKg: pdfTotals?.kerfKg ?? null,
+        totalLossPercent: pdfTotals?.wastePercent ?? null,
+        inputMode: pdf ? 'pdf' : 'manual',
+        pdfReport: pdf ? { reportId: pdf.reportId, fileName: pdf.fileName, sha256: pdf.sha256, pageCount: pdf.pageCount, weightDifferenceReason: pdf.weightDifferenceReason, crmWeightKg: pdf.crmWeightKg, createdBy: pdf.createdBy, createdAt: pdf.createdAt, sheets: pdf.sheets } : undefined,
+        futureSheetScraps: pdfTotals?.rows?.flatMap((row: any, index: number) => row.remnants.map((remnant: any) => ({ ...remnant, quantity: 1, warehouseWeightKg: Math.round(Number(described.weightKg || 0) / Number(raw.quantity_sheets || 1) * remnant.lengthMm * remnant.widthMm / (pdf.sheets[index].source.sheetWidthMm * pdf.sheets[index].source.sheetLengthMm) * 1000) / 1000, page: pdf.sheets[index].page, layoutNumber: pdf.sheets[index].layoutNumber, instanceNumber: pdf.sheets[index].instanceNumber }))) ?? sheetCalculation?.rows ?? [],
       })
     }
   })
   return {
-    schemaVersion: 1,
+    schemaVersion: completion.wasteItems.some(item => item.mode === 'pdf') ? 2 : 1,
     sourceData,
     requestId,
     machineId: machine.id,
@@ -125,6 +132,14 @@ export function snapshotFromSource(
     items,
     futureItems: completion.futureItems,
     enteredPlasmaMinutes: completion.enteredPlasmaMinutes,
+    enteredPlasmaSeconds: completion.wasteItems.some(item => item.mode === 'pdf')
+      ? completion.wasteItems.reduce((sum, item) => sum + (item.pdfSummary?.totals?.enteredSeconds || 0), 0)
+        + (completion.wasteItems.find(item => item.mode === 'pdf')?.manualPlasmaMinutes || 0) * 60
+      : undefined,
+    actualPlasmaSeconds: completion.wasteItems.some(item => item.mode === 'pdf')
+      ? Math.ceil((completion.wasteItems.reduce((sum, item) => sum + (item.pdfSummary?.totals?.enteredSeconds || 0), 0)
+        + (completion.wasteItems.find(item => item.mode === 'pdf')?.manualPlasmaMinutes || 0) * 60) * 1.25)
+      : undefined,
     archives: completion.archives,
   }
 }
