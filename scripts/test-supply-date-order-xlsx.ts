@@ -10,11 +10,16 @@ import type {
 } from '@/lib/actions/supply-orders'
 import {
   buildSupplyDateOrderReport,
+  buildSupplyOrderExportReport,
   supplyDateOrderFilename,
+  supplyOrderExportFilename,
 } from '@/lib/reports/supply-date-order-report'
 import { buildSupplyDateOrderXlsx } from '@/lib/reports/supply-date-order-xlsx'
+import { parseSupplyOrderExportScope } from '@/lib/reports/supply-order-export-scope'
 import {
   getSupplyDateOrderOptions,
+  getSupplyOrderExportMachines,
+  getSupplyOrderExportOptions,
   MISSING_STEEL_TYPE,
   selectSupplyDateOrderAggregates,
 } from '@/lib/reports/supply-date-order-selection'
@@ -310,19 +315,116 @@ assert.deepEqual(undatedStockReport.rows.map((row) => [row.quantity, row.machine
 assert.equal(buildSupplyDateOrderReport([splitPurchase], reportDate).rows.length, 0,
   'the accepted machine receipt must not be exported as an unplaced purchase')
 
+const orderA = '11111111-1111-4111-8111-111111111111'
+const orderB = '22222222-2222-4222-8222-222222222222'
+function datedSheet(id: string, date: string | null, quantity: number, machineId = orderA) {
+  const aggregate = structuredClone(typedSheet)
+  aggregate.id = id
+  aggregate.planned_material_date = date
+  aggregate.quantity = aggregate.requested_quantity = aggregate.unscheduled_quantity = quantity
+  aggregate.weight_kg = quantity * 56.16
+  const factory = aggregate.factories[0]
+  factory.quantity = factory.requested_quantity = factory.unscheduled_quantity = quantity
+  factory.weight_kg = aggregate.weight_kg
+  factory.production_date = date
+  factory.supply_delivery_date = date
+  const item = factory.items[0]
+  item.id = `${id}-item`
+  item.machine_id = machineId
+  item.machine_name = machineId === orderA ? 'ТЕС.КОМ-20-2026' : 'ТЕС.КОМ-21-2026'
+  item.planned_material_date = date
+  item.supply_delivery_date = date
+  item.quantity = item.unscheduled_quantity = quantity
+  item.weight_kg = aggregate.weight_kg
+  item.delivery_schedules = []
+  return aggregate
+}
+
+const periodFirst = datedSheet('period-first', '2026-09-01', 2)
+const periodLast = datedSheet('period-last', '2026-09-20', 5)
+periodLast.material_id = 'duplicate-catalog-id'
+const periodOutside = datedSheet('period-outside', '2026-09-21', 11)
+const periodUndated = datedSheet('period-undated', null, 1)
+const periodScope = { kind: 'period' as const, from: '2026-09-01', to: '2026-09-20' }
+assert.deepEqual(parseSupplyOrderExportScope(new URLSearchParams('from=2026-09-01&to=2026-09-20')), periodScope)
+assert.deepEqual(parseSupplyOrderExportScope(new URLSearchParams(`machine=${orderA}`)),
+  { kind: 'machine', machineId: orderA })
+assert.deepEqual(parseSupplyOrderExportScope(new URLSearchParams('date=no_supply_date')),
+  { kind: 'date', dateKey: 'no_supply_date' })
+for (const invalid of [
+  'date=2026-09-01&machine=11111111-1111-4111-8111-111111111111',
+  'from=2026-09-20&to=2026-09-01',
+  'from=2026-09-01',
+  'machine=not-a-uuid',
+  'date=2026-02-30',
+]) assert.throws(() => parseSupplyOrderExportScope(new URLSearchParams(invalid)))
+const periodReport = buildSupplyOrderExportReport(
+  [periodFirst, periodLast, periodOutside, periodUndated], periodScope,
+)
+assert.equal(periodReport.rows.length, 1, 'the same material must be one purchase row across dates')
+assert.equal(periodReport.rows[0].quantity, 7, 'the period includes both boundaries, not the next day or undated demand')
+assert.equal(periodReport.rows[0].steelType, 'Hardox')
+assert.doesNotMatch(periodReport.rows[0].characteristics, /Тип стали/u)
+assert.equal(buildSupplyOrderExportReport([periodFirst, periodLast], {
+  kind: 'period', from: '2026-09-02', to: '2026-09-19',
+}).rows.length, 0)
+assert.equal(supplyOrderExportFilename(periodScope), 'zakaz-materialov-2026-09-01_2026-09-20.xlsx')
+assert.deepEqual(getSupplyOrderExportOptions([periodFirst, periodLast], periodScope)
+  .map((option) => option.category), ['sheet_metal'])
+const firstKnife = structuredClone(pendingKnife)
+firstKnife.id = 'period-knife-1'
+firstKnife.planned_material_date = firstKnife.factories[0].production_date = '2026-09-01'
+firstKnife.factories[0].items[0].id = 'period-knife-item-1'
+firstKnife.factories[0].items[0].planned_material_date = '2026-09-01'
+firstKnife.factories[0].items[0].supply_delivery_date = '2026-09-01'
+const lastKnife = structuredClone(pendingKnife)
+lastKnife.id = 'period-knife-2'
+lastKnife.planned_material_date = lastKnife.factories[0].production_date = '2026-09-20'
+lastKnife.factories[0].items[0].id = 'period-knife-item-2'
+lastKnife.factories[0].items[0].planned_material_date = '2026-09-20'
+lastKnife.factories[0].items[0].supply_delivery_date = '2026-09-20'
+const combinedKnife = buildSupplyOrderExportReport([firstKnife, lastKnife], periodScope).rows[0]
+assert.equal(combinedKnife.quantity, 12_000)
+assert.equal(combinedKnife.barLengthMm, 6_000)
+assert.equal(combinedKnife.barCount, 2)
+assert.equal(combinedKnife.purchaseComposition, '6\u00A0000 × 2')
+
+const shared = datedSheet('shared-order', reportDate, 7)
+const sharedA = shared.factories[0].items[0]
+sharedA.quantity = sharedA.unscheduled_quantity = 2
+sharedA.weight_kg = 112.32
+const sharedB = { ...sharedA, id: 'shared-order-b', machine_id: orderB,
+  machine_name: 'ТЕС.КОМ-21-2026', quantity: 5, unscheduled_quantity: 5, weight_kg: 280.8 }
+shared.factories[0].items.push(sharedB)
+const orderReport = buildSupplyOrderExportReport([shared, periodUndated], { kind: 'machine', machineId: orderA })
+assert.deepEqual(orderReport.rows.map((row) => [row.quantity, row.machines]),
+  [[3, 'ТЕС.КОМ-20-2026']], 'the selected order includes its undated need but not another order\'s quantity')
+assert.deepEqual(getSupplyOrderExportMachines([shared, periodUndated]).map((machine) => machine.id), [orderA, orderB])
+assert.equal(buildSupplyOrderExportReport([shared], { kind: 'machine', machineId: orderB }).rows[0].quantity, 5)
+assert.equal(buildSupplyOrderExportReport([shared], { kind: 'machine', machineId: orderA }, {
+  categories: ['components'], steelTypes: {},
+}).rows.length, 0, 'server-side category selection limits the selected order')
+
+const unattributed = structuredClone(shared)
+unattributed.factories[0].unscheduled_quantity = unattributed.unscheduled_quantity = 9
+assert.equal(buildSupplyOrderExportReport([unattributed], { kind: 'machine', machineId: orderA }).rows[0].quantity, 2,
+  'an unattributed aggregate remainder must never be assigned to the selected order')
+
 async function verifyWorkbook() {
 const stockWorkbook = new ExcelJS.Workbook()
 await stockWorkbook.xlsx.load(await buildSupplyDateOrderXlsx(undatedStockReport))
 const stockSheet = stockWorkbook.getWorksheet('Заказ без даты')
 assert(stockSheet)
-assert.equal(stockSheet.getRow(7).getCell(8).value, 5)
-assert.equal(stockSheet.getRow(7).getCell(12).value, 'На склад · новая заявка')
+assert.equal(stockSheet.getRow(7).getCell(9).value, 5)
+assert.equal(stockSheet.getRow(7).getCell(13).value, 'На склад · новая заявка')
 const selectedBuffer = await buildSupplyDateOrderXlsx(sheetOnly, new Date('2026-09-07T09:30:00Z'))
 const selectedWorkbook = new ExcelJS.Workbook()
 await selectedWorkbook.xlsx.load(selectedBuffer)
 const selectedWorksheet = selectedWorkbook.getWorksheet('Заказ 10.09.2026')
 assert(selectedWorksheet)
 assert.equal(selectedWorksheet.getRow(7).getCell(3).value, 'Лист Hardox')
+assert.equal(selectedWorksheet.getRow(7).getCell(4).value, 'Hardox')
+assert.doesNotMatch(String(selectedWorksheet.getRow(7).getCell(5).value), /Тип стали/u)
 assert.equal(selectedWorksheet.getRow(8).getCell(3).value, null,
   'the selected XLSX must not include another category or steel type')
 const buffer = await buildSupplyDateOrderXlsx(report, new Date('2026-09-07T09:30:00Z'))
@@ -337,6 +439,7 @@ assert.deepEqual((worksheet.getRow(6).values as unknown[]).slice(1), [
   '№',
   'Категория',
   'Материал',
+  'Тип стали',
   'Характеристики',
   'Состав закупки',
   'Длина хлыста, мм',
@@ -350,25 +453,26 @@ assert.deepEqual((worksheet.getRow(6).values as unknown[]).slice(1), [
 assert.equal(worksheet.views[0]?.state, 'frozen')
 assert.equal(worksheet.views[0]?.ySplit, 6)
 assert.equal(worksheet.views[0]?.showGridLines, false)
-assert.equal(worksheet.autoFilter, 'A6:L13')
+assert.equal(worksheet.autoFilter, 'A6:M13')
 const dataRows = Array.from(
   { length: worksheet.rowCount - 6 },
   (_, index) => worksheet.getRow(index + 7),
 )
 const circleRow = dataRows.find((row) => row.getCell(3).value === 'Круг')
 assert(circleRow)
-assert.equal(circleRow.getCell(5).value, '6\u00A0000 × 1')
-assert.equal(circleRow.getCell(6).value, 6_000, 'bar length must remain a numeric Excel cell')
-assert.equal(circleRow.getCell(7).value, 1, 'bar count must remain a numeric Excel cell')
-assert.equal(circleRow.getCell(8).value, 6_000, 'purchase quantity must remain a numeric Excel cell')
-assert.equal(circleRow.getCell(10).value, 236.64, 'known proportional weight must remain numeric')
+assert.equal(circleRow.getCell(4).value, 'Не указан')
+assert.equal(circleRow.getCell(6).value, '6\u00A0000 × 1')
+assert.equal(circleRow.getCell(7).value, 6_000, 'bar length must remain a numeric Excel cell')
+assert.equal(circleRow.getCell(8).value, 1, 'bar count must remain a numeric Excel cell')
+assert.equal(circleRow.getCell(9).value, 6_000, 'purchase quantity must remain a numeric Excel cell')
+assert.equal(circleRow.getCell(11).value, 236.64, 'known proportional weight must remain numeric')
 
 const pipeRows = dataRows.filter((row) => row.getCell(3).value === 'Труба к заказу')
 assert.deepEqual(
   pipeRows.map((row) => ({
-    length: row.getCell(6).value,
-    count: row.getCell(7).value,
-    quantity: row.getCell(8).value,
+    length: row.getCell(7).value,
+    count: row.getCell(8).value,
+    quantity: row.getCell(9).value,
   })),
   [
     { length: 12_000, count: 1, quantity: 12_000 },
@@ -378,21 +482,31 @@ assert.deepEqual(
 
 const planlessKnifeSheetRow = dataRows.find((row) => row.getCell(3).value === 'Ножи без карты')
 assert(planlessKnifeSheetRow)
-assert.match(String(planlessKnifeSheetRow.getCell(5).value), /Требуется утверждённая карта раскроя/u)
-assert.equal(planlessKnifeSheetRow.getCell(6).value, '—')
+assert.match(String(planlessKnifeSheetRow.getCell(6).value), /Требуется утверждённая карта раскроя/u)
 assert.equal(planlessKnifeSheetRow.getCell(7).value, '—')
+assert.equal(planlessKnifeSheetRow.getCell(8).value, '—')
 
 const sheetRow = dataRows.find((row) => row.getCell(3).value === 'Лист Hardox')
 assert(sheetRow)
-assert.equal(sheetRow.getCell(8).value, 2)
-assert.equal(sheetRow.getCell(10).value, 112.32)
+assert.equal(sheetRow.getCell(9).value, 2)
+assert.equal(sheetRow.getCell(11).value, 112.32)
+
+const periodWorkbook = new ExcelJS.Workbook()
+await periodWorkbook.xlsx.load(await buildSupplyDateOrderXlsx(periodReport))
+const periodSheet = periodWorkbook.getWorksheet('Заказ за период')
+assert(periodSheet)
+assert.equal(periodSheet.getCell('B3').value, 'Период поставки')
+assert.equal(periodSheet.getRow(7).getCell(9).value, 7)
+const orderWorkbook = new ExcelJS.Workbook()
+await orderWorkbook.xlsx.load(await buildSupplyDateOrderXlsx(orderReport))
+assert.equal(orderWorkbook.getWorksheet('Заказ клиента')?.getRow(7).getCell(9).value, 3)
 
 const routeSource = readFileSync(
   new URL('../src/app/api/reports/supply/date-order.xlsx/route.ts', import.meta.url),
   'utf8',
 )
 assert.match(routeSource, /await requirePermission\('supply_orders', 'view'\)/u)
-assert.match(routeSource, /getSupplyOrderAggregates\(params\.factory\)/u)
+assert.match(routeSource, /getSupplyOrderAggregates\(factory\)/u)
 assert.match(routeSource, /Cache-Control': 'private, no-store'/u)
 
 const pageSource = readFileSync(

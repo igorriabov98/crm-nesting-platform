@@ -8,6 +8,7 @@ const COLUMN_HEADERS = [
   '№',
   'Категория',
   'Материал',
+  'Тип стали',
   'Характеристики',
   'Состав закупки',
   'Длина хлыста, мм',
@@ -51,6 +52,7 @@ export async function buildSupplyDateOrderXlsx(
     { key: 'index', width: 6 },
     { key: 'category', width: 18 },
     { key: 'material', width: 24 },
+    { key: 'steelType', width: 18 },
     { key: 'characteristics', width: 38 },
     { key: 'purchaseComposition', width: 28 },
     { key: 'barLengthMm', width: 20 },
@@ -66,10 +68,13 @@ export async function buildSupplyDateOrderXlsx(
   worksheet.getCell('A1').font = { name: 'Arial', size: 16, bold: true, color: { argb: HEADER_COLOR } }
   worksheet.getRow(1).height = 26
 
-  worksheet.getCell('A2').value = 'Только материалы и остатки, которые ещё не заказаны.'
+  worksheet.getCell('A2').value = report.dateKey === 'machine'
+    ? 'Только незаказанные остатки, привязанные к выбранному заказу клиента.'
+    : 'Только материалы и остатки, которые ещё не заказаны.'
   worksheet.getCell('A2').font = { name: 'Arial', size: 10, italic: true, color: { argb: MUTED_COLOR } }
 
-  setMetaPair(worksheet, 'B3', 'C3', 'Дата поставки', report.dateLabel)
+  setMetaPair(worksheet, 'B3', 'C3', report.scopeLabel, report.dateLabel)
+  if (report.dateKey === 'period' || report.dateKey === 'machine') worksheet.getRow(3).height = 48
   setMetaPair(worksheet, 'E3', 'F3', 'Завод', report.factoryLabel)
   setMetaPair(worksheet, 'H3', 'I3', 'Позиций', report.rows.length)
   setMetaPair(worksheet, 'B4', 'C4', 'Сформировано', formatGeneratedAt(generatedAt))
@@ -107,6 +112,7 @@ export async function buildSupplyDateOrderXlsx(
       index + 1,
       reportRow.category,
       reportRow.material,
+      reportRow.steelType,
       reportRow.characteristics || '—',
       reportRow.purchaseComposition || '—',
       reportRow.barLengthMm ?? '—',
@@ -132,17 +138,17 @@ export async function buildSupplyDateOrderXlsx(
   }
 
   const lastRow = Math.max(worksheet.rowCount, 6)
-  worksheet.autoFilter = { from: 'A6', to: `L${lastRow}` }
+  worksheet.autoFilter = { from: 'A6', to: `M${lastRow}` }
   worksheet.getColumn(1).alignment = { horizontal: 'center', vertical: 'top' }
-  worksheet.getColumn(6).alignment = { horizontal: 'right', vertical: 'top' }
-  worksheet.getColumn(6).numFmt = '#,##0'
   worksheet.getColumn(7).alignment = { horizontal: 'right', vertical: 'top' }
   worksheet.getColumn(7).numFmt = '#,##0'
   worksheet.getColumn(8).alignment = { horizontal: 'right', vertical: 'top' }
-  worksheet.getColumn(8).numFmt = '#,##0.###'
-  worksheet.getColumn(9).alignment = { horizontal: 'center', vertical: 'top' }
-  worksheet.getColumn(10).alignment = { horizontal: 'right', vertical: 'top' }
-  worksheet.getColumn(10).numFmt = '#,##0.###'
+  worksheet.getColumn(8).numFmt = '#,##0'
+  worksheet.getColumn(9).alignment = { horizontal: 'right', vertical: 'top' }
+  worksheet.getColumn(9).numFmt = '#,##0.###'
+  worksheet.getColumn(10).alignment = { horizontal: 'center', vertical: 'top' }
+  worksheet.getColumn(11).alignment = { horizontal: 'right', vertical: 'top' }
+  worksheet.getColumn(11).numFmt = '#,##0.###'
   worksheet.pageSetup.printTitlesRow = '6:6'
   worksheet.headerFooter.oddFooter = `Заказ материалов · ${report.dateLabel}`
 
@@ -175,6 +181,8 @@ function formatGeneratedAt(value: Date) {
 
 function sheetName(dateKey: string) {
   if (dateKey === 'no_supply_date') return 'Заказ без даты'
+  if (dateKey === 'period') return 'Заказ за период'
+  if (dateKey === 'machine') return 'Заказ клиента'
   const [year, month, day] = dateKey.split('-')
   return `Заказ ${day}.${month}.${year}`.slice(0, 31)
 }

@@ -64,7 +64,7 @@ import { ReturnLongStockPositionButton } from './ReturnLongStockPositionButton'
 import { CancelReturnedSupplyPositionDialog } from '@/components/features/requests/CancelReturnedSupplyPositionDialog'
 import { supplyPositionHasPhysicalReceipt, type SupplyPositionTable } from '@/lib/supply-orders/position-revisions'
 import { SupplyQuantitySummary } from './SupplyQuantitySummary'
-import { SupplyDateOrderExportButton } from './SupplyDateOrderExportButton'
+import { SupplyDateOrderExportButton, SupplyOrderCustomExportButton } from './SupplyDateOrderExportButton'
 import { SupplyOrderFactoryToggle } from './SupplyOrderFactoryToggle'
 import {
   filterAndSortAggregates,
@@ -209,11 +209,6 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
   const grouped = matchingRows.map((group) => ({ ...group, rows: group.rows.filter((row) =>
     view === 'cards' || (section === 'all' ? allStatus === 'all' || (allStatus === 'closed' ? row.state === 'closed' : row.state !== 'closed')
       : row.state === section)) })).filter((group) => group.rows.length > 0)
-  const exportableCountByDate = useMemo(() => new Map(
-    groupSupplyOrderAggregatesBySupplyDate(aggregates, 'date_asc').map((group) => [
-      group.dateKey, group.rows.filter((slice) => slice.unscheduledQuantity > 0.000001).length,
-    ]),
-  ), [aggregates])
   const totals = (() => {
     const slices = grouped.flatMap((group) => group.rows)
     const materials = new Map(slices.map((slice) => [slice.aggregate.id, slice.aggregate]))
@@ -242,8 +237,12 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
       <PendingSupplyReviewBanner cases={pendingReviewCases} error={reviewCasesError} canAssign={canAssignReviewCases} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-base font-semibold">Итоги по дню</h2>
-        <div className="inline-flex gap-1 rounded-lg border p-1" aria-label="Вид итогов по дню">
-          {(['list', 'cards'] as const).map((option) => <Button key={option} variant={view === option ? 'default' : 'ghost'} size="sm" aria-pressed={view === option} onClick={() => setPreferences({ ...preferences, view: option })}>{option === 'list' ? 'Список' : 'Карточки'}</Button>)}
+        <div className="flex flex-wrap items-center gap-2">
+          <SupplyOrderCustomExportButton mode="period" factoryId={activeFactoryId} aggregates={aggregates} categoryFilter={filters.category} />
+          <SupplyOrderCustomExportButton mode="machine" factoryId={activeFactoryId} aggregates={aggregates} categoryFilter={filters.category} />
+          <div className="inline-flex gap-1 rounded-lg border p-1" aria-label="Вид итогов по дню">
+            {(['list', 'cards'] as const).map((option) => <Button key={option} variant={view === option ? 'default' : 'ghost'} size="sm" aria-pressed={view === option} onClick={() => setPreferences({ ...preferences, view: option })}>{option === 'list' ? 'Список' : 'Карточки'}</Button>)}
+          </div>
         </div>
       </div>
       <SupplyOrderFactoryToggle factories={factories} activeFactoryId={activeFactoryId} view="summary" />
@@ -276,6 +275,10 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
                 </Button>
               })}
               {section === 'all' && <SummaryFilterSelect label="Состояние" value={allStatus} display={{ all: 'Все состояния', open: 'Незакрытые', closed: 'Закрытые' }[allStatus]} items={[['all', 'Все состояния'], ['open', 'Незакрытые'], ['closed', 'Закрытые']]} onValueChange={(value) => setPreferences({ ...preferences, allStatus: value as typeof allStatus })} />}
+              <SummaryFilterSelect label="Категория металла" value={filters.category}
+                display={filters.category === 'all' ? 'Все категории' : MATERIAL_CATEGORY_LABELS[filters.category]}
+                items={[['all', 'Все категории'], ...MATERIAL_CATEGORIES.map((category) => [category, MATERIAL_CATEGORY_LABELS[category]])]}
+                onValueChange={(category) => setFilters((current) => ({ ...current, category: category as AggregateFiltersState['category'] }))} />
             </div>
           </div>
           <label className="grid min-w-0 gap-2 xl:w-64 xl:shrink-0">
@@ -358,8 +361,8 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
                 <SupplyDateOrderExportButton
                   dateKey={group.dateKey}
                   factoryId={activeFactoryId}
-                  itemCount={exportableCountByDate.get(group.dateKey) || 0}
                   aggregates={aggregates}
+                  categoryFilter={filters.category}
                 />
               </div>
 
