@@ -5,46 +5,46 @@ import { getSupplyOrderAggregates } from '@/lib/actions/supply-orders'
 import { AuthRequiredError } from '@/lib/auth/current-user'
 import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
 import {
-  buildSupplyDateOrderReport,
-  supplyDateOrderFilename,
+  buildSupplyOrderExportReport,
+  supplyOrderExportFilename,
 } from '@/lib/reports/supply-date-order-report'
 import { buildSupplyDateOrderXlsx } from '@/lib/reports/supply-date-order-xlsx'
 import { MATERIAL_CATEGORIES } from '@/lib/constants/procurement'
 import type { MaterialCategory } from '@/lib/types'
 import {
-  getSupplyDateOrderOptions,
-  selectSupplyDateOrderAggregates,
+  getSupplyOrderExportMachines,
+  getSupplyOrderExportOptions,
   STEEL_TYPE_CATEGORIES,
   type SupplyDateOrderSelection,
+  type SupplyOrderExportScope,
 } from '@/lib/reports/supply-date-order-selection'
+import { InvalidSupplyOrderExportScopeError, parseSupplyOrderExportScope } from '@/lib/reports/supply-order-export-scope'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const paramsSchema = z.object({
-  date: z.union([z.literal('no_supply_date'), z.string().date()]),
-  factory: z.string().uuid().nullable(),
-})
+const factorySchema = z.string().uuid().nullable()
 
 export async function GET(request: Request) {
   try {
     await requirePermission('supply_orders', 'view')
     const url = new URL(request.url)
-    const params = paramsSchema.parse({
-      date: url.searchParams.get('date'),
-      factory: url.searchParams.get('factory'),
-    })
-    const result = await getSupplyOrderAggregates(params.factory)
+    const scope = parseSupplyOrderExportScope(url.searchParams)
+    if (url.searchParams.getAll('factory').length > 1) throw new InvalidSelectionError('Укажите один завод')
+    const factory = factorySchema.parse(url.searchParams.get('factory'))
+    const result = await getSupplyOrderAggregates(factory)
     if (result.error) throw new Error(result.error)
+    const aggregates = result.data || []
+    if (scope.kind === 'machine' && !getSupplyOrderExportMachines(aggregates)
+      .some((machine) => machine.id === scope.machineId)) {
+      return NextResponse.json({ error: 'Заказ клиента не найден среди доступных потребностей' }, { status: 404 })
+    }
 
-    const selection = readSelection(url.searchParams, result.data || [], params.date)
-    const report = buildSupplyDateOrderReport(
-      selection ? selectSupplyDateOrderAggregates(result.data || [], selection) : result.data || [],
-      params.date,
-    )
+    const selection = readSelection(url.searchParams, aggregates, scope)
+    const report = buildSupplyOrderExportReport(aggregates, scope, selection)
     if (report.rows.length === 0) {
       return NextResponse.json(
-        { error: 'На эту дату нет материалов, которые ещё не заказаны' },
+        { error: 'По выбранным условиям нет материалов, которые ещё не заказаны' },
         { status: 409 },
       )
     }
@@ -54,7 +54,7 @@ export async function GET(request: Request) {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'Content-Disposition': `attachment; filename="${supplyDateOrderFilename(params.date)}"`,
+        'Content-Disposition': `attachment; filename="${supplyOrderExportFilename(scope)}"`,
         'Cache-Control': 'private, no-store',
       },
     })
@@ -66,9 +66,12 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Недостаточно прав' }, { status: 403 })
     }
     if (error instanceof ZodError) {
-      return NextResponse.json({ error: 'Некорректная дата или завод' }, { status: 400 })
+      return NextResponse.json({ error: 'Некорректная дата, период, заказ или завод' }, { status: 400 })
     }
     if (error instanceof InvalidSelectionError) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
+    }
+    if (error instanceof InvalidSupplyOrderExportScopeError) {
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
     console.error('Supply date order XLSX error:', error)
@@ -81,7 +84,7 @@ class InvalidSelectionError extends Error {}
 function readSelection(
   params: URLSearchParams,
   aggregates: NonNullable<Awaited<ReturnType<typeof getSupplyOrderAggregates>>['data']>,
-  dateKey: string,
+  scope: SupplyOrderExportScope,
 ): SupplyDateOrderSelection | null {
   const categories = params.getAll('category')
   const steelKeys = [...params.keys()].filter((key) => key.startsWith('steel_type.'))
@@ -89,7 +92,7 @@ function readSelection(
   if (categories.length === 0 || categories.length > MATERIAL_CATEGORIES.length) {
     throw new InvalidSelectionError('Выберите хотя бы одну категорию')
   }
-  const allowedOptions = new Map(getSupplyDateOrderOptions(aggregates, dateKey)
+  const allowedOptions = new Map(getSupplyOrderExportOptions(aggregates, scope)
     .map((option) => [option.category, option]))
   const selectedCategories = [...new Set(categories)] as MaterialCategory[]
   if (selectedCategories.length !== categories.length || selectedCategories.some((category) => (
